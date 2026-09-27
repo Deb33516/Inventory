@@ -1,21 +1,48 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
+import EmptyState from "../../components/catalog/EmptyState.astro";
+import KpiCard from "../../components/dashboard/KpiCard.astro";
+import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
+import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
+import { resolveDashboardRange } from "../../lib/dashboardRange";
 
-const { data: orders } = await Astro.locals.supabase.from("orders").select("status, total, created_at");
+const url = Astro.url;
+const range = resolveDashboardRange(url.searchParams.get("range"));
 
-const rows = orders ?? [];
-const pendingCount = rows.filter((o) => o.status === "pending").length;
-const inProgressCount = rows.filter((o) => o.status === "confirmed" || o.status === "processing").length;
+// Current-state counts — not range-filtered, since these describe the
+// operational queue right now, not a historical trend.
+const { data: currentOrders } = await Astro.locals.supabase.from("orders").select("status");
+const currentRows = currentOrders ?? [];
+const pendingCount = currentRows.filter((o) => o.status === "pending").length;
+const inProgressCount = currentRows.filter((o) => o.status === "confirmed" || o.status === "processing").length;
 
-const now = new Date();
-const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-const revenueThisMonth = rows
-  .filter((o) => new Date(o.created_at) >= startOfMonth && o.status !== "cancelled")
-  .reduce((sum, o) => sum + Number(o.total), 0);
+const [{ data: revenueTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
+  Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
+  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
+]);
+
+const revenueRows = revenueTrend ?? [];
+const statusRows = ordersByStatus ?? [];
+const productRows = topProducts ?? [];
+
+const totalRevenue = revenueRows.reduce((sum, r) => sum + Number(r.revenue), 0);
+const totalOrders = revenueRows.reduce((sum, r) => sum + Number(r.order_count), 0);
+const aov = totalOrders > 0 ? totalRevenue / totalOrders : null;
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+const statusColors: Record<string, string> = {
+  pending: "#f59e0b",
+  confirmed: "#6b6b6b",
+  processing: "#6b6b6b",
+  shipped: "#22c55e",
+  delivered: "#22c55e",
+  cancelled: "#dc2626",
+  refunded: "#dc2626",
+};
 ---
 
 <BaseLayout title="Sales dashboard">
@@ -43,9 +70,106 @@ const formatCurrency = (value: number) =>
         <p class="mt-xs text-3xl font-bold text-ink">{inProgressCount}</p>
       </Card>
       <Card>
-        <p class="text-xs uppercase tracking-[0.5px] text-muted">Revenue this month</p>
-        <p class="mt-xs text-3xl font-bold text-ink">{formatCurrency(revenueThisMonth)}</p>
+        <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders (all time)</p>
+        <p class="mt-xs text-3xl font-bold text-ink">{currentRows.length}</p>
       </Card>
+    </div>
+
+    <div class="mt-xl flex items-center justify-between flex-wrap gap-md">
+      <h2 class="text-lg font-bold text-ink">Revenue analytics</h2>
+      <DateRangeFilter current={range.preset} url={url} pathname="/sales" />
+    </div>
+    <p class="mt-xs text-xs text-muted">{range.label}</p>
+
+    <div class="mt-md grid grid-cols-1 sm:grid-cols-3 gap-lg">
+      <KpiCard label="Revenue in range" value={formatCurrency(totalRevenue)} />
+      <KpiCard label="Orders in range" value={String(totalOrders)} />
+      <KpiCard label="Average order value" value={aov !== null ? formatCurrency(aov) : "—"} />
+    </div>
+
+    <div class="mt-lg grid grid-cols-1 lg:grid-cols-2 gap-lg">
+      <div>
+        <h3 class="font-bold text-ink">Revenue trend</h3>
+        <div class="mt-sm">
+          {
+            revenueRows.length > 0 ? (
+              <ChartCanvas
+                id="sales-revenue-trend"
+                type="line"
+                data={{
+                  labels: revenueRows.map((r) => r.day),
+                  datasets: [
+                    {
+                      label: "Revenue",
+                      data: revenueRows.map((r) => Number(r.revenue)),
+                      borderColor: "#1c69d4",
+                      backgroundColor: "rgba(28,105,212,0.12)",
+                      tension: 0.25,
+                      fill: true,
+                    },
+                  ],
+                }}
+              />
+            ) : (
+              <EmptyState title="No revenue in this range" />
+            )
+          }
+        </div>
+      </div>
+
+      <div>
+        <h3 class="font-bold text-ink">Orders by status</h3>
+        <div class="mt-sm">
+          {
+            statusRows.length > 0 ? (
+              <ChartCanvas
+                id="sales-orders-status"
+                type="bar"
+                data={{
+                  labels: statusRows.map((r) => r.status),
+                  datasets: [
+                    {
+                      label: "Orders",
+                      data: statusRows.map((r) => Number(r.order_count)),
+                      backgroundColor: statusRows.map((r) => statusColors[r.status] ?? "#6b6b6b"),
+                    },
+                  ],
+                }}
+                options={{ plugins: { legend: { display: false } } }}
+              />
+            ) : (
+              <EmptyState title="No orders in this range" />
+            )
+          }
+        </div>
+      </div>
+
+      <div class="lg:col-span-2">
+        <h3 class="font-bold text-ink">Top products by revenue</h3>
+        <div class="mt-sm">
+          {
+            productRows.length > 0 ? (
+              <ChartCanvas
+                id="sales-top-products"
+                type="bar"
+                data={{
+                  labels: productRows.map((r) => r.name),
+                  datasets: [
+                    {
+                      label: "Revenue",
+                      data: productRows.map((r) => Number(r.revenue)),
+                      backgroundColor: "#1c69d4",
+                    },
+                  ],
+                }}
+                options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
+              />
+            ) : (
+              <EmptyState title="No product sales in this range" />
+            )
+          }
+        </div>
+      </div>
     </div>
   </main>
 </BaseLayout>

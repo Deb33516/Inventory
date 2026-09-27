@@ -1,0 +1,39 @@
+---
+import Card from "../ui/Card.astro";
+
+interface Props {
+  label: string;
+  value: string;
+  href?: string;
+  tone?: "default" | "warning" | "error" | "success";
+  sublabel?: string;
+  class?: string;
+}
+
+const { label, value, href, tone = "default", sublabel, class: className = "" } = Astro.props;
+
+const toneClass = {
+  default: "text-ink",
+  warning: "text-warning",
+  error: "text-error",
+  success: "text-success",
+}[tone];
+---
+
+{
+  href ? (
+    <a href={href} class="block">
+      <Card class={`hover:border-ink transition-colors ${className}`}>
+        <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+        <p class={`mt-xs text-3xl font-bold ${toneClass}`}>{value}</p>
+        {sublabel && <p class="mt-xs text-xs text-muted">{sublabel}</p>}
+      </Card>
+    </a>
+  ) : (
+    <Card class={className}>
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+      <p class={`mt-xs text-3xl font-bold ${toneClass}`}>{value}</p>
+      {sublabel && <p class="mt-xs text-xs text-muted">{sublabel}</p>}
+    </Card>
+  )
+}

@@ -1,0 +1,23 @@
+---
+import FilterChip from "../catalog/FilterChip.astro";
+import { DASHBOARD_RANGE_PRESETS, buildDashboardRangeUrl, type DashboardRangePreset } from "../../lib/dashboardRange";
+
+interface Props {
+  current: DashboardRangePreset;
+  url: URL;
+  pathname: string;
+  class?: string;
+}
+
+const { current, url, pathname, class: className = "" } = Astro.props;
+---
+
+<div class={`flex gap-xs overflow-x-auto pb-xs ${className}`}>
+  {
+    DASHBOARD_RANGE_PRESETS.map((preset) => (
+      <FilterChip href={buildDashboardRangeUrl(url, pathname, preset.value)} active={current === preset.value}>
+        {preset.label}
+      </FilterChip>
+    ))
+  }
+</div>

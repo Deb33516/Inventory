@@ -1,0 +1,61 @@
+---
+// A thin Chart.js wrapper — vanilla canvas + a scoped module script, no
+// framework involved (Chart.js is a DOM/canvas library, not a UI
+// framework, so this doesn't violate the no-React/Vue/Svelte rule).
+//
+// Deliberately NOT using `<script define:vars>` here: define:vars forces
+// Astro to inline the script as a plain (non-module) tag wrapped in an
+// IIFE, and a static `import` statement is a SyntaxError outside a
+// module context — verified directly against this project's own
+// production build output, where every other `define:vars` script that
+// also does `import { actions } from "astro:actions"` (login.astro,
+// ProductForm.astro, SupplierForm.astro, checkout/index.astro) compiles
+// to exactly that broken shape. Instead, chart config is serialized onto
+// the canvas element's `data-chart-config` attribute, and a normal
+// `<script>` (no define:vars) — which Astro/Vite DOES extract, bundle,
+// and resolve "chart.js/auto" for correctly — reads it back. Astro dedupes
+// this script to run once per page even though the component can appear
+// many times, so it queries every matching canvas rather than assuming
+// a single instance.
+//
+// The wrapper's bg-surface-soft is the "loading" treatment: it shows as a
+// soft grey block until the script paints the chart a few ms after the
+// page renders — no spinner/skeleton state machine needed since Astro SSR
+// already resolves all the data before the page ships.
+interface Props {
+  id: string;
+  type: "line" | "bar" | "doughnut";
+  data: object;
+  options?: object;
+  height?: number;
+  class?: string;
+}
+
+const { id, type, data, options = {}, height = 280, class: className = "" } = Astro.props;
+const config = JSON.stringify({ type, data, options });
+---
+
+<div class={`relative w-full bg-surface-soft ${className}`} style={`height:${height}px`}>
+  <canvas id={id} data-chart-config={config}></canvas>
+</div>
+
+<script>
+  import { Chart } from "chart.js/auto";
+
+  document.querySelectorAll<HTMLCanvasElement>("canvas[data-chart-config]").forEach((canvas) => {
+    if (canvas.dataset.chartInitialized) return;
+    canvas.dataset.chartInitialized = "true";
+
+    const config = JSON.parse(canvas.dataset.chartConfig!);
+
+    new Chart(canvas, {
+      type: config.type,
+      data: config.data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        ...config.options,
+      },
+    });
+  });
+</script>

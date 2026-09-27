@@ -16,6 +16,7 @@
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
     "@tailwindcss/vite": "^4.3.3",
+    "chart.js": "^4.4.7",
     "astro": "^7.3.5",
     "tailwindcss": "^4.3.3"
   },

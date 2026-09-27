@@ -4,6 +4,13 @@ import Card from "../../components/ui/Card.astro";
 import Button from "../../components/ui/Button.astro";
 import CustomerProfileForm from "../../components/crm/CustomerProfileForm.astro";
 import CustomerTimeline from "../../components/crm/CustomerTimeline.astro";
+import EmptyState from "../../components/catalog/EmptyState.astro";
+import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
+import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
+import { resolveDashboardRange } from "../../lib/dashboardRange";
+
+const url = Astro.url;
+const range = resolveDashboardRange(url.searchParams.get("range"));
 
 // Middleware guarantees a user is present for every /account/* route —
 // this page only renders the authenticated state.
@@ -37,6 +44,30 @@ const { data: orders } = await Astro.locals.supabase
   .eq("customer_id", userId)
   .order("created_at", { ascending: false })
   .limit(10);
+
+// RLS (orders_select_own / order_items_select_own) auto-scopes these
+// calls to this customer's own orders — the same RPCs staff use for a
+// store-wide view naturally return only "my" data here, no separate
+// customer-specific function needed.
+const [{ data: spendTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
+  Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
+  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
+]);
+
+const spendRows = spendTrend ?? [];
+const statusRows = ordersByStatus ?? [];
+const productRows = topProducts ?? [];
+
+const statusColors: Record<string, string> = {
+  pending: "#f59e0b",
+  confirmed: "#6b6b6b",
+  processing: "#6b6b6b",
+  shipped: "#22c55e",
+  delivered: "#22c55e",
+  cancelled: "#dc2626",
+  refunded: "#dc2626",
+};
 ---
 
 <BaseLayout title="Your account — Inventory">
@@ -70,6 +101,102 @@ const { data: orders } = await Astro.locals.supabase
         </div>
         <div class="mt-md">
           <CustomerTimeline orders={orders ?? []} accountCreatedAt={profile?.created_at ?? new Date().toISOString()} />
+        </div>
+      </Card>
+
+      <Card>
+        <div class="flex items-center justify-between flex-wrap gap-md">
+          <h2 class="text-lg font-bold text-ink">My analytics</h2>
+          <DateRangeFilter current={range.preset} url={url} pathname="/account" />
+        </div>
+        <p class="mt-xs text-xs text-muted">{range.label}</p>
+
+        <div class="mt-md grid grid-cols-1 gap-lg">
+          <div>
+            <h3 class="text-sm font-bold text-ink">Spend over time</h3>
+            <div class="mt-sm">
+              {
+                spendRows.length > 0 ? (
+                  <ChartCanvas
+                    id="account-spend-trend"
+                    type="line"
+                    height={220}
+                    data={{
+                      labels: spendRows.map((r) => r.day),
+                      datasets: [
+                        {
+                          label: "Spend",
+                          data: spendRows.map((r) => Number(r.revenue)),
+                          borderColor: "#1c69d4",
+                          backgroundColor: "rgba(28,105,212,0.12)",
+                          tension: 0.25,
+                          fill: true,
+                        },
+                      ],
+                    }}
+                  />
+                ) : (
+                  <EmptyState title="No orders in this range" />
+                )
+              }
+            </div>
+          </div>
+
+          <div>
+            <h3 class="text-sm font-bold text-ink">My orders by status</h3>
+            <div class="mt-sm">
+              {
+                statusRows.length > 0 ? (
+                  <ChartCanvas
+                    id="account-orders-status"
+                    type="bar"
+                    height={220}
+                    data={{
+                      labels: statusRows.map((r) => r.status),
+                      datasets: [
+                        {
+                          label: "Orders",
+                          data: statusRows.map((r) => Number(r.order_count)),
+                          backgroundColor: statusRows.map((r) => statusColors[r.status] ?? "#6b6b6b"),
+                        },
+                      ],
+                    }}
+                    options={{ plugins: { legend: { display: false } } }}
+                  />
+                ) : (
+                  <EmptyState title="No orders in this range" />
+                )
+              }
+            </div>
+          </div>
+
+          <div>
+            <h3 class="text-sm font-bold text-ink">My top purchased products</h3>
+            <div class="mt-sm">
+              {
+                productRows.length > 0 ? (
+                  <ChartCanvas
+                    id="account-top-products"
+                    type="bar"
+                    height={220}
+                    data={{
+                      labels: productRows.map((r) => r.name),
+                      datasets: [
+                        {
+                          label: "Units",
+                          data: productRows.map((r) => Number(r.units_sold)),
+                          backgroundColor: "#1c69d4",
+                        },
+                      ],
+                    }}
+                    options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
+                  />
+                ) : (
+                  <EmptyState title="No purchases in this range" />
+                )
+              }
+            </div>
+          </div>
         </div>
       </Card>
     </div>

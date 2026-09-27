@@ -1,6 +1,13 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
+import EmptyState from "../../components/catalog/EmptyState.astro";
+import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
+import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
+import { resolveDashboardRange } from "../../lib/dashboardRange";
+
+const url = Astro.url;
+const range = resolveDashboardRange(url.searchParams.get("range"));
 
 const { data: metricsRows } = await Astro.locals.supabase.from("customer_metrics").select("order_count");
 
@@ -8,6 +15,30 @@ const rows = metricsRows ?? [];
 const totalCustomers = rows.length;
 const newCount = rows.filter((r) => r.order_count <= 1).length;
 const returningCount = totalCustomers - newCount;
+
+const [{ data: customerGrowth }, { data: topSpenders }] = await Promise.all([
+  Astro.locals.supabase.rpc("dashboard_customer_growth", { p_from: range.from, p_to: range.to }),
+  Astro.locals.supabase
+    .from("customer_metrics")
+    .select("profile_id, lifetime_spend")
+    .gt("lifetime_spend", 0)
+    .order("lifetime_spend", { ascending: false })
+    .limit(5),
+]);
+
+const growthRows = customerGrowth ?? [];
+const spenderRows = topSpenders ?? [];
+
+const spenderIds = spenderRows.map((r) => r.profile_id);
+const { data: spenderProfiles } =
+  spenderIds.length > 0
+    ? await Astro.locals.supabase.from("profiles").select("id, full_name").in("id", spenderIds)
+    : { data: [] };
+
+const spenderNameById = new Map((spenderProfiles ?? []).map((p) => [p.id, p.full_name ?? "Unnamed customer"]));
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
 ---
 
 <BaseLayout title="CRM dashboard">
@@ -39,6 +70,68 @@ const returningCount = totalCustomers - newCount;
           <p class="mt-xs text-3xl font-bold text-ink">{returningCount}</p>
         </Card>
       </a>
+    </div>
+
+    <div class="mt-xl flex items-center justify-between flex-wrap gap-md">
+      <h2 class="text-lg font-bold text-ink">Customer analytics</h2>
+      <DateRangeFilter current={range.preset} url={url} pathname="/crm" />
+    </div>
+    <p class="mt-xs text-xs text-muted">{range.label} — applies to new-customer growth only; lifetime spend is always all-time.</p>
+
+    <div class="mt-md grid grid-cols-1 lg:grid-cols-2 gap-lg">
+      <div>
+        <h3 class="font-bold text-ink">New customers</h3>
+        <div class="mt-sm">
+          {
+            growthRows.length > 0 ? (
+              <ChartCanvas
+                id="crm-customer-growth"
+                type="bar"
+                data={{
+                  labels: growthRows.map((r) => r.day),
+                  datasets: [
+                    {
+                      label: "New customers",
+                      data: growthRows.map((r) => Number(r.new_customers)),
+                      backgroundColor: "#22c55e",
+                    },
+                  ],
+                }}
+                options={{ plugins: { legend: { display: false } } }}
+              />
+            ) : (
+              <EmptyState title="No new customers in this range" />
+            )
+          }
+        </div>
+      </div>
+
+      <div>
+        <h3 class="font-bold text-ink">Top customers by lifetime spend</h3>
+        <div class="mt-sm">
+          {
+            spenderRows.length > 0 ? (
+              <ChartCanvas
+                id="crm-top-spenders"
+                type="bar"
+                data={{
+                  labels: spenderRows.map((r) => spenderNameById.get(r.profile_id) ?? "Unnamed customer"),
+                  datasets: [
+                    {
+                      label: "Lifetime spend",
+                      data: spenderRows.map((r) => Number(r.lifetime_spend)),
+                      backgroundColor: "#1c69d4",
+                    },
+                  ],
+                }}
+                options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
+              />
+            ) : (
+              <EmptyState title="No customer spend yet" />
+            )
+          }
+        </div>
+      </div>
     </div>
   </main>
 </BaseLayout>
