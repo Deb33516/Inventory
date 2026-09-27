@@ -1,0 +1,89 @@
+---
+// Shared by the restock/adjust/damage pages — same underlying action
+// (recordInventoryMovement), different labels and constraints per type.
+import Input from "../ui/Input.astro";
+import Textarea from "../ui/Textarea.astro";
+import Select from "../ui/Select.astro";
+import Button from "../ui/Button.astro";
+
+interface SupplierOption {
+  value: string;
+  label: string;
+}
+
+interface Props {
+  movementType: "restock" | "adjustment" | "damaged";
+  productId: string;
+  suppliers?: SupplierOption[];
+}
+
+const { movementType, productId, suppliers = [] } = Astro.props;
+
+const copy = {
+  restock: {
+    quantityLabel: "Quantity received",
+    quantityHelp: undefined,
+    reasonLabel: "Note (optional)",
+    reasonRequired: false,
+    submitLabel: "Record restock",
+  },
+  adjustment: {
+    quantityLabel: "Quantity change",
+    quantityHelp: "Use a negative number to decrease stock (e.g. -5).",
+    reasonLabel: "Reason",
+    reasonRequired: true,
+    submitLabel: "Record adjustment",
+  },
+  damaged: {
+    quantityLabel: "Quantity damaged",
+    quantityHelp: undefined,
+    reasonLabel: "Reason",
+    reasonRequired: true,
+    submitLabel: "Record damaged stock",
+  },
+}[movementType];
+---
+
+<form id="movement-form" class="space-y-md">
+  <input type="hidden" name="productId" value={productId} />
+  <input type="hidden" name="movementType" value={movementType} />
+  <div>
+    <Input label={copy.quantityLabel} name="quantity" type="number" required />
+    {copy.quantityHelp && <p class="mt-xs text-xs text-muted">{copy.quantityHelp}</p>}
+  </div>
+  {
+    movementType === "restock" && suppliers.length > 0 && (
+      <Select label="Supplier (optional)" name="supplierId" options={suppliers} placeholder="No supplier" />
+    )
+  }
+  <Textarea label={copy.reasonLabel} name="reason" required={copy.reasonRequired} />
+  <p id="form-message" class="text-sm" role="status" />
+  <Button type="submit" variant="primary">{copy.submitLabel}</Button>
+</form>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#movement-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions.recordInventoryMovement(new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    const productId = (form.elements.namedItem("productId") as HTMLInputElement).value;
+    window.location.href = `/inventory/stock/${productId}?updated=1`;
+  });
+</script>

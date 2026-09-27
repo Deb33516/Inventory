@@ -22,6 +22,9 @@ join public.categories c on c.slug = v.category_slug;
 
 -- OFFICE-001 is deliberately below its reorder level, to exercise the
 -- low-stock partial index / dashboard widget logic later.
+-- The provision_product_inventory trigger (added in 0007) already created
+-- a zero-quantity row for each product inserted above; this sets the real
+-- seed quantities on top of it.
 insert into public.inventory (product_id, quantity_on_hand, reorder_level)
 select p.id, v.qty, v.reorder
 from (values
@@ -30,4 +33,7 @@ from (values
   ('HOME-001', 60, 15),
   ('OFFICE-001', 5, 20)
 ) as v(sku, qty, reorder)
-join public.products p on p.sku = v.sku;
+join public.products p on p.sku = v.sku
+on conflict (product_id) do update
+set quantity_on_hand = excluded.quantity_on_hand,
+    reorder_level = excluded.reorder_level;

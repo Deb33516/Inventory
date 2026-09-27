@@ -1,0 +1,56 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import Card from "../../components/ui/Card.astro";
+
+const { count: totalActive } = await Astro.locals.supabase
+  .from("products")
+  .select("id", { count: "exact", head: true })
+  .eq("is_active", true);
+
+const { data: inventoryRows } = await Astro.locals.supabase
+  .from("inventory")
+  .select("quantity_on_hand, reorder_level, products!inner(is_active)")
+  .eq("products.is_active", true);
+
+const rows = inventoryRows ?? [];
+const lowStockCount = rows.filter(
+  (r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level
+).length;
+const outOfStockCount = rows.filter((r) => r.quantity_on_hand <= 0).length;
+---
+
+<BaseLayout title="Inventory dashboard">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <span class="font-bold text-ink">Inventory</span>
+    <nav class="flex items-center gap-lg text-sm text-ink">
+      <a href="/inventory/stock" class="hover:text-primary">Stock</a>
+      <a href="/inventory/movements" class="hover:text-primary">Movements</a>
+      <a href="/inventory/suppliers" class="hover:text-primary">Suppliers</a>
+      <a href="/inventory/products" class="hover:text-primary">Products</a>
+      <a href="/inventory/categories" class="hover:text-primary">Categories</a>
+    </nav>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+
+    <div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
+      <Card>
+        <p class="text-xs uppercase tracking-[0.5px] text-muted">Active products</p>
+        <p class="mt-xs text-3xl font-bold text-ink">{totalActive ?? 0}</p>
+      </Card>
+      <a href="/inventory/stock?status=low" class="block">
+        <Card class="hover:border-ink transition-colors">
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">Low stock</p>
+          <p class="mt-xs text-3xl font-bold text-warning">{lowStockCount}</p>
+        </Card>
+      </a>
+      <a href="/inventory/stock?status=out" class="block">
+        <Card class="hover:border-ink transition-colors">
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">Out of stock</p>
+          <p class="mt-xs text-3xl font-bold text-error">{outOfStockCount}</p>
+        </Card>
+      </a>
+    </div>
+  </main>
+</BaseLayout>

@@ -395,4 +395,147 @@ export const server = {
       return { message: "Category updated." };
     },
   }),
+
+  recordInventoryMovement: defineAction({
+    accept: "form",
+    input: z
+      .object({
+        productId: z.string().uuid(),
+        movementType: z.enum(["restock", "adjustment", "damaged"]),
+        quantity: z.coerce
+          .number()
+          .int("Quantity must be a whole number")
+          .refine((v) => v !== 0, "Quantity cannot be zero"),
+        reason: z.preprocess(emptyToUndefined, z.string().optional()),
+        supplierId: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
+      })
+      .refine(
+        (data) => data.movementType !== "restock" || data.quantity > 0,
+        { message: "Restock quantity must be positive", path: ["quantity"] }
+      )
+      .refine(
+        (data) =>
+          data.movementType === "restock" ||
+          (data.reason !== undefined && data.reason.trim().length > 0),
+        { message: "A reason is required for adjustments and damaged stock", path: ["reason"] }
+      ),
+    // Business rules (positive restock, non-zero adjustment, forced-negative
+    // damaged, reason required, no order references) are enforced again,
+    // authoritatively, inside record_inventory_movement() — this validation
+    // exists only to give a fast, friendly error before the round trip.
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase.rpc("record_inventory_movement", {
+        p_product_id: input.productId,
+        p_movement_type: input.movementType,
+        p_quantity_delta: input.quantity,
+        p_reason: input.reason ?? null,
+        p_supplier_id: input.movementType === "restock" ? input.supplierId ?? null : null,
+        p_reference_order_id: null,
+      });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Stock updated.", inventory: data };
+    },
+  }),
+
+  updateReorderLevel: defineAction({
+    accept: "form",
+    input: z.object({
+      productId: z.string().uuid(),
+      reorderLevel: z.coerce.number().int().min(0, "Reorder level must be 0 or more"),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { error } = await supabase
+        .from("inventory")
+        .update({ reorder_level: input.reorderLevel })
+        .eq("product_id", input.productId);
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Reorder level updated." };
+    },
+  }),
+
+  createSupplier: defineAction({
+    accept: "form",
+    input: z.object({
+      name: z.string().min(1, "Name is required"),
+      contactName: z.preprocess(emptyToUndefined, z.string().optional()),
+      email: z.preprocess(emptyToUndefined, z.string().email("Enter a valid email address").optional()),
+      phone: z.preprocess(emptyToUndefined, z.string().optional()),
+      address: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { error } = await supabase.from("suppliers").insert({
+        name: input.name,
+        contact_name: input.contactName ?? null,
+        email: input.email ?? null,
+        phone: input.phone ?? null,
+        address: input.address ?? null,
+      });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Supplier created." };
+    },
+  }),
+
+  updateSupplier: defineAction({
+    accept: "form",
+    input: z.object({
+      id: z.string().uuid(),
+      name: z.string().min(1, "Name is required"),
+      contactName: z.preprocess(emptyToUndefined, z.string().optional()),
+      email: z.preprocess(emptyToUndefined, z.string().email("Enter a valid email address").optional()),
+      phone: z.preprocess(emptyToUndefined, z.string().optional()),
+      address: z.preprocess(emptyToUndefined, z.string().optional()),
+      isActive: z.preprocess(emptyToUndefined, z.coerce.boolean().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { error } = await supabase
+        .from("suppliers")
+        .update({
+          name: input.name,
+          contact_name: input.contactName ?? null,
+          email: input.email ?? null,
+          phone: input.phone ?? null,
+          address: input.address ?? null,
+          is_active: Boolean(input.isActive),
+        })
+        .eq("id", input.id);
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Supplier updated." };
+    },
+  }),
 };

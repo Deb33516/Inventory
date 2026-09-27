@@ -1,0 +1,122 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+
+const PAGE_SIZE = 50;
+const url = Astro.url;
+const productId = url.searchParams.get("product") ?? "";
+const movementType = url.searchParams.get("type") ?? "";
+const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+
+const from = (page - 1) * PAGE_SIZE;
+const to = from + PAGE_SIZE - 1;
+
+let query = Astro.locals.supabase
+  .from("inventory_movements")
+  .select("id, movement_type, quantity_delta, reason, created_at, products(sku, name)", { count: "exact" });
+
+if (productId) query = query.eq("product_id", productId);
+if (movementType) query = query.eq("movement_type", movementType);
+
+query = query.order("created_at", { ascending: false }).range(from, to);
+
+const { data: movements, count } = await query;
+const totalPages = count ? Math.ceil(count / PAGE_SIZE) : 1;
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/inventory/movements?${qs}` : "/inventory/movements";
+}
+---
+
+<BaseLayout title="Movements — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/inventory" class="font-bold text-ink">← Inventory</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Movement history</h1>
+
+    <form method="get" class="mt-lg flex flex-wrap items-center gap-md">
+      <select name="type" class="h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none">
+        <option value="" selected={!movementType}>All types</option>
+        <option value="restock" selected={movementType === "restock"}>Restock</option>
+        <option value="adjustment" selected={movementType === "adjustment"}>Adjustment</option>
+        <option value="damaged" selected={movementType === "damaged"}>Damaged</option>
+      </select>
+      {productId && <input type="hidden" name="product" value={productId} />}
+      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
+        Apply
+      </button>
+      {productId && (
+        <a href={buildUrl({ product: undefined })} class="text-sm text-muted hover:text-ink">
+          Clear product filter
+        </a>
+      )}
+    </form>
+
+    {
+      movements && movements.length > 0 ? (
+        <>
+          <div class="mt-lg overflow-x-auto">
+            <table class="w-full text-sm border-collapse">
+              <thead>
+                <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                  <th class="py-xs pr-md">Date</th>
+                  <th class="py-xs pr-md">Product</th>
+                  <th class="py-xs pr-md">Type</th>
+                  <th class="py-xs pr-md">Change</th>
+                  <th class="py-xs pr-md">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movements.map((m) => (
+                  <tr class="border-b border-hairline">
+                    <td class="py-sm pr-md text-body">{new Date(m.created_at).toLocaleString()}</td>
+                    <td class="py-sm pr-md text-body">
+                      {m.products?.name ?? "—"} <span class="text-muted">({m.products?.sku})</span>
+                    </td>
+                    <td class="py-sm pr-md text-body capitalize">{m.movement_type}</td>
+                    <td class={`py-sm pr-md font-bold ${m.quantity_delta > 0 ? "text-success" : "text-error"}`}>
+                      {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta}
+                    </td>
+                    <td class="py-sm pr-md text-body">{m.reason ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div class="mt-xl flex items-center justify-center gap-md text-sm">
+              <a
+                href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
+                aria-disabled={page <= 1}
+                class={`px-md py-xs border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
+              >
+                Previous
+              </a>
+              <span class="text-muted">
+                Page {page} of {totalPages}
+              </span>
+              <a
+                href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
+                aria-disabled={page >= totalPages}
+                class={`px-md py-xs border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : ""}`}
+              >
+                Next
+              </a>
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyState class="mt-lg" title="No movements found" />
+      )
+    }
+  </main>
+</BaseLayout>

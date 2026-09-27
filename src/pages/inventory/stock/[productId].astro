@@ -1,0 +1,160 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Button from "../../../components/ui/Button.astro";
+import Input from "../../../components/ui/Input.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import StockBadge from "../../../components/ui/StockBadge.astro";
+
+const { productId } = Astro.params;
+const updated = Astro.url.searchParams.get("updated");
+
+const { data: inventory } = await Astro.locals.supabase
+  .from("inventory")
+  .select("product_id, quantity_on_hand, reorder_level, products(id, sku, name)")
+  .eq("product_id", productId)
+  .maybeSingle();
+
+if (!inventory) {
+  Astro.response.status = 404;
+}
+
+const { data: movements } = inventory
+  ? await Astro.locals.supabase
+      .from("inventory_movements")
+      .select("id, movement_type, quantity_delta, reason, created_at")
+      .eq("product_id", productId)
+      .order("created_at", { ascending: false })
+      .limit(20)
+  : { data: null };
+---
+
+<BaseLayout title={inventory ? `${inventory.products.name} stock — Inventory` : "Not found — Inventory"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/inventory/stock" class="font-bold text-ink">← Stock</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      inventory ? (
+        <>
+          <div class="flex items-center justify-between flex-wrap gap-md">
+            <div>
+              <h1 class="text-2xl font-bold text-ink">{inventory.products.name}</h1>
+              <p class="text-sm text-muted">{inventory.products.sku}</p>
+            </div>
+            <StockBadge quantityOnHand={inventory.quantity_on_hand} reorderLevel={inventory.reorder_level} />
+          </div>
+
+          {updated && (
+            <p class="mt-md text-sm text-success" role="status">
+              Stock updated.
+            </p>
+          )}
+
+          <div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
+            <Card>
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">On hand</p>
+              <p class="mt-xs text-3xl font-bold text-ink">{inventory.quantity_on_hand}</p>
+            </Card>
+            <Card>
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Reorder level</p>
+              <p class="mt-xs text-3xl font-bold text-ink">{inventory.reorder_level}</p>
+              <form id="reorder-form" class="mt-sm flex items-end gap-sm">
+                <input type="hidden" name="productId" value={inventory.product_id} />
+                <Input
+                  label="New reorder level"
+                  name="reorderLevel"
+                  type="number"
+                  value={String(inventory.reorder_level)}
+                  class="flex-1"
+                />
+                <Button type="submit" variant="secondary">
+                  Save
+                </Button>
+              </form>
+              <p id="reorder-message" class="mt-xs text-sm" role="status" />
+            </Card>
+            <Card class="flex flex-col gap-sm justify-center">
+              <Button href={`/inventory/stock/${inventory.product_id}/restock`} variant="primary">
+                Restock
+              </Button>
+              <Button href={`/inventory/stock/${inventory.product_id}/adjust`} variant="secondary">
+                Adjust
+              </Button>
+              <Button href={`/inventory/stock/${inventory.product_id}/damage`} variant="secondary">
+                Mark damaged
+              </Button>
+            </Card>
+          </div>
+
+          <h2 class="mt-xl text-lg font-bold text-ink">Recent movements</h2>
+          {movements && movements.length > 0 ? (
+            <div class="mt-md overflow-x-auto">
+              <table class="w-full text-sm border-collapse">
+                <thead>
+                  <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                    <th class="py-xs pr-md">Date</th>
+                    <th class="py-xs pr-md">Type</th>
+                    <th class="py-xs pr-md">Change</th>
+                    <th class="py-xs pr-md">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {movements.map((m) => (
+                    <tr class="border-b border-hairline">
+                      <td class="py-sm pr-md text-body">{new Date(m.created_at).toLocaleString()}</td>
+                      <td class="py-sm pr-md text-body capitalize">{m.movement_type}</td>
+                      <td class={`py-sm pr-md font-bold ${m.quantity_delta > 0 ? "text-success" : "text-error"}`}>
+                        {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta}
+                      </td>
+                      <td class="py-sm pr-md text-body">{m.reason ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <a
+                href={`/inventory/movements?product=${inventory.product_id}`}
+                class="mt-sm inline-block text-primary font-bold text-sm"
+              >
+                View full history
+              </a>
+            </div>
+          ) : (
+            <EmptyState class="mt-md" title="No movements yet" />
+          )}
+        </>
+      ) : (
+        <EmptyState title="Product stock not found" />
+      )
+    }
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#reorder-form");
+  if (form) {
+    const messageEl = document.querySelector<HTMLParagraphElement>("#reorder-message")!;
+    const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      messageEl.textContent = "";
+      messageEl.classList.remove("text-error", "text-success");
+
+      const { error } = await actions.updateReorderLevel(new FormData(form));
+
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        messageEl.classList.add("text-error");
+        return;
+      }
+
+      window.location.reload();
+    });
+  }
+</script>

@@ -1,0 +1,42 @@
+---
+import BaseLayout from "../../../../layouts/BaseLayout.astro";
+import Card from "../../../../components/ui/Card.astro";
+import StockMovementForm from "../../../../components/inventory/StockMovementForm.astro";
+import EmptyState from "../../../../components/catalog/EmptyState.astro";
+
+const { productId } = Astro.params;
+
+const { data: inventory } = await Astro.locals.supabase
+  .from("inventory")
+  .select("product_id, products(name, sku)")
+  .eq("product_id", productId)
+  .maybeSingle();
+
+if (!inventory) {
+  Astro.response.status = 404;
+}
+---
+
+<BaseLayout title={inventory ? `Mark ${inventory.products.name} damaged — Inventory` : "Not found — Inventory"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href={`/inventory/stock/${productId}`} class="font-bold text-ink">
+      ← Back
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      inventory ? (
+        <Card class="max-w-lg">
+          <h1 class="text-2xl font-bold text-ink">Mark {inventory.products.name} as damaged</h1>
+          <p class="text-sm text-muted">{inventory.products.sku}</p>
+          <div class="mt-lg">
+            <StockMovementForm movementType="damaged" productId={inventory.product_id} />
+          </div>
+        </Card>
+      ) : (
+        <EmptyState title="Product stock not found" />
+      )
+    }
+  </main>
+</BaseLayout>

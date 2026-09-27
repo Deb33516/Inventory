@@ -1,0 +1,68 @@
+---
+import Input from "../ui/Input.astro";
+import Textarea from "../ui/Textarea.astro";
+import Button from "../ui/Button.astro";
+
+interface SupplierData {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  is_active: boolean;
+}
+
+interface Props {
+  action: "createSupplier" | "updateSupplier";
+  supplier?: SupplierData;
+}
+
+const { action, supplier } = Astro.props;
+const isEdit = Boolean(supplier);
+---
+
+<form id="supplier-form" class="space-y-md">
+  {isEdit && <input type="hidden" name="id" value={supplier!.id} />}
+  <Input label="Name" name="name" value={supplier?.name} required />
+  <Input label="Contact name (optional)" name="contactName" value={supplier?.contact_name ?? ""} />
+  <Input label="Email (optional)" name="email" type="email" value={supplier?.email ?? ""} />
+  <Input label="Phone (optional)" name="phone" value={supplier?.phone ?? ""} />
+  <Textarea label="Address (optional)" name="address" value={supplier?.address ?? ""} />
+  {
+    isEdit && (
+      <label class="flex items-center gap-xs text-sm text-ink">
+        <input type="checkbox" name="isActive" checked={supplier?.is_active} />
+        Active
+      </label>
+    )
+  }
+  <p id="form-message" class="text-sm" role="status" />
+  <Button type="submit" variant="primary">{isEdit ? "Save changes" : "Create supplier"}</Button>
+</form>
+
+<script define:vars={{ action, isEdit }}>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector("#supplier-form");
+  const messageEl = document.querySelector("#form-message");
+  const button = form.querySelector("button[type=submit]");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions[action](new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = isEdit ? "/inventory/suppliers?updated=1" : "/inventory/suppliers?created=1";
+  });
+</script>

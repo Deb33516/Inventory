@@ -1,0 +1,20 @@
+---
+// Derives a stock-status pill from quantity vs. reorder level — reuses
+// Badge's tone system rather than inventing a new one.
+import Badge from "./Badge.astro";
+
+interface Props {
+  quantityOnHand: number;
+  reorderLevel: number;
+  class?: string;
+}
+
+const { quantityOnHand, reorderLevel, class: className = "" } = Astro.props;
+
+const status = quantityOnHand <= 0 ? "out" : quantityOnHand <= reorderLevel ? "low" : "ok";
+
+const tones = { ok: "success", low: "warning", out: "error" } as const;
+const labels = { ok: "In stock", low: "Low stock", out: "Out of stock" } as const;
+---
+
+<Badge tone={tones[status]} class={className}>{labels[status]}</Badge>
