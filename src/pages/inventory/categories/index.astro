@@ -1,0 +1,126 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Input from "../../../components/ui/Input.astro";
+import Textarea from "../../../components/ui/Textarea.astro";
+import Select from "../../../components/ui/Select.astro";
+import Button from "../../../components/ui/Button.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+
+const created = Astro.url.searchParams.get("created");
+const updated = Astro.url.searchParams.get("updated");
+
+const { data: categories } = await Astro.locals.supabase
+  .from("categories")
+  .select("id, name, slug, parent_id")
+  .order("name");
+
+// Rule: only top-level categories may be selected as a parent.
+const topLevelOptions = (categories ?? [])
+  .filter((c) => c.parent_id === null)
+  .map((c) => ({ value: c.id, label: c.name }));
+
+function parentName(parentId: string | null) {
+  if (!parentId) return "—";
+  return categories?.find((c) => c.id === parentId)?.name ?? "—";
+}
+---
+
+<BaseLayout title="Manage categories — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/inventory/products" class="font-bold text-ink">
+      ← Products
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl grid grid-cols-1 md:grid-cols-2 gap-xl">
+    <div>
+      <h1 class="text-2xl font-bold text-ink">Categories</h1>
+
+      {created && (
+        <p class="mt-md text-sm text-success" role="status">
+          Category created.
+        </p>
+      )}
+      {updated && (
+        <p class="mt-md text-sm text-success" role="status">
+          Category updated.
+        </p>
+      )}
+
+      {
+        categories && categories.length > 0 ? (
+          <div class="mt-lg overflow-x-auto">
+            <table class="w-full text-sm border-collapse">
+              <thead>
+                <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                  <th class="py-xs pr-md">Name</th>
+                  <th class="py-xs pr-md">Parent</th>
+                  <th class="py-xs" />
+                </tr>
+              </thead>
+              <tbody>
+                {categories.map((c) => (
+                  <tr class="border-b border-hairline">
+                    <td class="py-sm pr-md text-ink font-bold">{c.name}</td>
+                    <td class="py-sm pr-md text-body">{parentName(c.parent_id)}</td>
+                    <td class="py-sm">
+                      <a href={`/inventory/categories/${c.id}`} class="text-primary font-bold">
+                        Edit
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState class="mt-lg" title="No categories yet" />
+        )
+      }
+    </div>
+
+    <Card class="h-fit">
+      <h2 class="text-lg font-bold text-ink">New category</h2>
+      <form id="category-form" class="mt-md space-y-md">
+        <Input label="Name" name="name" required />
+        <Input label="Slug" name="slug" required placeholder="e.g. electronics" />
+        <Textarea label="Description (optional)" name="description" />
+        <Select
+          label="Parent category (optional)"
+          name="parentId"
+          options={topLevelOptions}
+          placeholder="No parent (top-level)"
+        />
+        <p id="form-message" class="text-sm" role="status" />
+        <Button type="submit" variant="primary">Create category</Button>
+      </form>
+    </Card>
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#category-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions.createCategory(new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = "/inventory/categories?created=1";
+  });
+</script>

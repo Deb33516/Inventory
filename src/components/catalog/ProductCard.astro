@@ -1,0 +1,36 @@
+---
+import Card from "../ui/Card.astro";
+
+interface Props {
+  sku: string;
+  name: string;
+  price: number;
+  categoryName?: string | null;
+  imageUrl?: string | null;
+}
+
+const { sku, name, price, categoryName, imageUrl } = Astro.props;
+
+const formattedPrice = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 2,
+}).format(price);
+---
+
+<a href={`/products/${sku}`} class="block h-full">
+  <Card class="h-full">
+    <div class="aspect-[4/3] bg-surface-card flex items-center justify-center mb-md overflow-hidden">
+      {
+        imageUrl ? (
+          <img src={imageUrl} alt={name} class="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          <span class="text-xs uppercase tracking-[0.5px] text-muted-soft">No image</span>
+        )
+      }
+    </div>
+    {categoryName && <p class="text-xs uppercase tracking-[0.5px] text-muted mb-xxs">{categoryName}</p>}
+    <h3 class="font-bold text-ink">{name}</h3>
+    <p class="mt-xs text-sm font-light text-body">{formattedPrice}</p>
+  </Card>
+</a>

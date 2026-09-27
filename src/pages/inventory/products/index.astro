@@ -1,0 +1,80 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Badge from "../../../components/ui/Badge.astro";
+import Button from "../../../components/ui/Button.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+
+const created = Astro.url.searchParams.get("created");
+const updated = Astro.url.searchParams.get("updated");
+
+const { data: products } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, price, is_active, categories(name)")
+  .order("created_at", { ascending: false });
+---
+
+<BaseLayout title="Manage products — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/" class="font-bold text-ink">Inventory</a>
+    <nav class="flex items-center gap-lg text-sm">
+      <a href="/inventory/categories" class="text-ink hover:text-primary">Categories</a>
+      <Button href="/inventory/products/new" variant="primary">New product</Button>
+    </nav>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Products</h1>
+
+    {created && (
+      <p class="mt-md text-sm text-success" role="status">
+        Product created.
+      </p>
+    )}
+    {updated && (
+      <p class="mt-md text-sm text-success" role="status">
+        Product updated.
+      </p>
+    )}
+
+    {
+      products && products.length > 0 ? (
+        <div class="mt-lg overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                <th class="py-xs pr-md">SKU</th>
+                <th class="py-xs pr-md">Name</th>
+                <th class="py-xs pr-md">Category</th>
+                <th class="py-xs pr-md">Price</th>
+                <th class="py-xs pr-md">Status</th>
+                <th class="py-xs" />
+              </tr>
+            </thead>
+            <tbody>
+              {products.map((p) => (
+                <tr class="border-b border-hairline">
+                  <td class="py-sm pr-md text-body">{p.sku}</td>
+                  <td class="py-sm pr-md text-ink font-bold">{p.name}</td>
+                  <td class="py-sm pr-md text-body">{p.categories?.name ?? "—"}</td>
+                  <td class="py-sm pr-md text-body">{p.price}</td>
+                  <td class="py-sm pr-md">
+                    <Badge tone={p.is_active ? "success" : "neutral"}>
+                      {p.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                  </td>
+                  <td class="py-sm">
+                    <a href={`/inventory/products/${p.id}`} class="text-primary font-bold">
+                      Edit
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState class="mt-lg" title="No products yet" message="Create your first product to get started." />
+      )
+    }
+  </main>
+</BaseLayout>

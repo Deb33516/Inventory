@@ -1,0 +1,152 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import ProductCard from "../../components/catalog/ProductCard.astro";
+import FilterChip from "../../components/catalog/FilterChip.astro";
+import EmptyState from "../../components/catalog/EmptyState.astro";
+
+const PAGE_SIZE = 24;
+
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const categorySlug = url.searchParams.get("category") ?? "";
+const sort = url.searchParams.get("sort") ?? "name";
+const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+
+const { data: categories } = await Astro.locals.supabase
+  .from("categories")
+  .select("id, name, slug")
+  .order("name");
+
+let categoryId: string | null = null;
+if (categorySlug) {
+  categoryId = categories?.find((c) => c.slug === categorySlug)?.id ?? null;
+}
+
+const sortMap: Record<string, { column: string; ascending: boolean }> = {
+  name: { column: "name", ascending: true },
+  price_asc: { column: "price", ascending: true },
+  price_desc: { column: "price", ascending: false },
+};
+const sortConfig = sortMap[sort] ?? sortMap.name;
+
+const from = (page - 1) * PAGE_SIZE;
+const to = from + PAGE_SIZE - 1;
+
+let query = Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, price, image_url, categories(name)", { count: "exact" })
+  .eq("is_active", true);
+
+if (search) {
+  query = query.ilike("name", `%${search}%`);
+}
+if (categoryId) {
+  query = query.eq("category_id", categoryId);
+}
+
+query = query.order(sortConfig.column, { ascending: sortConfig.ascending }).range(from, to);
+
+const { data: products, count } = await query;
+
+const totalPages = count ? Math.ceil(count / PAGE_SIZE) : 1;
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/products?${qs}` : "/products";
+}
+---
+
+<BaseLayout title="Products — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/" class="font-bold text-ink">Inventory</a>
+    <nav class="flex items-center gap-lg text-sm text-ink">
+      <a href="/login" class="hover:text-primary">Log in</a>
+    </nav>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-3xl font-bold text-ink">Products</h1>
+
+    <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
+      <input
+        type="text"
+        name="search"
+        value={search}
+        placeholder="Search products..."
+        class="w-full md:max-w-sm h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
+      />
+      <select
+        name="sort"
+        class="h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none"
+      >
+        <option value="name" selected={sort === "name"}>Name</option>
+        <option value="price_asc" selected={sort === "price_asc"}>Price: low to high</option>
+        <option value="price_desc" selected={sort === "price_desc"}>Price: high to low</option>
+      </select>
+      {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
+      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
+        Apply
+      </button>
+    </form>
+
+    <div class="mt-md flex gap-xs overflow-x-auto pb-xs">
+      <FilterChip href={buildUrl({ category: undefined, page: undefined })} active={!categorySlug}>
+        All
+      </FilterChip>
+      {
+        categories?.map((c) => (
+          <FilterChip href={buildUrl({ category: c.slug, page: undefined })} active={categorySlug === c.slug}>
+            {c.name}
+          </FilterChip>
+        ))
+      }
+    </div>
+
+    {
+      products && products.length > 0 ? (
+        <>
+          <div class="mt-lg grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-lg">
+            {products.map((p) => (
+              <ProductCard
+                sku={p.sku}
+                name={p.name}
+                price={p.price}
+                imageUrl={p.image_url}
+                categoryName={p.categories?.name}
+              />
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <div class="mt-xl flex items-center justify-center gap-md text-sm">
+              <a
+                href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
+                aria-disabled={page <= 1}
+                class={`px-md py-xs border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
+              >
+                Previous
+              </a>
+              <span class="text-muted">
+                Page {page} of {totalPages}
+              </span>
+              <a
+                href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
+                aria-disabled={page >= totalPages}
+                class={`px-md py-xs border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : ""}`}
+              >
+                Next
+              </a>
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyState class="mt-lg" title="No products found" message="Try a different search term or category." />
+      )
+    }
+  </main>
+</BaseLayout>

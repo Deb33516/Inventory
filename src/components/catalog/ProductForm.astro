@@ -1,0 +1,96 @@
+---
+import Input from "../ui/Input.astro";
+import Textarea from "../ui/Textarea.astro";
+import Select from "../ui/Select.astro";
+import Button from "../ui/Button.astro";
+
+interface CategoryOption {
+  value: string;
+  label: string;
+}
+
+interface ProductData {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  category_id: string | null;
+  price: number;
+  cost: number | null;
+  image_url: string | null;
+  is_active: boolean;
+}
+
+interface Props {
+  action: "createProduct" | "updateProduct";
+  categories: CategoryOption[];
+  product?: ProductData;
+}
+
+const { action, categories, product } = Astro.props;
+const isEdit = Boolean(product);
+---
+
+<form id="product-form" class="space-y-md">
+  {isEdit && <input type="hidden" name="id" value={product!.id} />}
+  <Input label="SKU" name="sku" value={product?.sku} required />
+  <Input label="Name" name="name" value={product?.name} required />
+  <Textarea label="Description (optional)" name="description" value={product?.description ?? ""} />
+  <Select
+    label="Category (optional)"
+    name="categoryId"
+    options={categories}
+    value={product?.category_id ?? ""}
+    placeholder="No category"
+  />
+  <Input
+    label="Price"
+    name="price"
+    type="number"
+    value={product?.price != null ? String(product.price) : ""}
+    required
+  />
+  <Input
+    label="Cost (optional)"
+    name="cost"
+    type="number"
+    value={product?.cost != null ? String(product.cost) : ""}
+  />
+  <Input label="Image URL (optional)" name="imageUrl" type="url" value={product?.image_url ?? ""} />
+  {
+    isEdit && (
+      <label class="flex items-center gap-xs text-sm text-ink">
+        <input type="checkbox" name="isActive" checked={product?.is_active} />
+        Active (visible to customers)
+      </label>
+    )
+  }
+  <p id="form-message" class="text-sm" role="status" />
+  <Button type="submit" variant="primary">{isEdit ? "Save changes" : "Create product"}</Button>
+</form>
+
+<script define:vars={{ action, isEdit }}>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector("#product-form");
+  const messageEl = document.querySelector("#form-message");
+  const button = form.querySelector("button[type=submit]");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions[action](new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = isEdit ? "/inventory/products?updated=1" : "/inventory/products?created=1";
+  });
+</script>

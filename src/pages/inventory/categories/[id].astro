@@ -1,0 +1,98 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Input from "../../../components/ui/Input.astro";
+import Textarea from "../../../components/ui/Textarea.astro";
+import Select from "../../../components/ui/Select.astro";
+import Button from "../../../components/ui/Button.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+
+const { id } = Astro.params;
+
+const { data: category } = await Astro.locals.supabase
+  .from("categories")
+  .select("id, name, slug, description, parent_id")
+  .eq("id", id)
+  .maybeSingle();
+
+const { data: allCategories } = await Astro.locals.supabase
+  .from("categories")
+  .select("id, name, parent_id")
+  .order("name");
+
+// Parent-category rules: only a top-level category may be selected as a
+// parent, and a category is never offered as its own parent.
+const topLevelOptions = (allCategories ?? [])
+  .filter((c) => c.parent_id === null && c.id !== id)
+  .map((c) => ({ value: c.id, label: c.name }));
+
+if (!category) {
+  Astro.response.status = 404;
+}
+---
+
+<BaseLayout title={category ? `Edit ${category.name} — Inventory` : "Category not found — Inventory"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/inventory/categories" class="font-bold text-ink">
+      ← Categories
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      category ? (
+        <Card class="max-w-lg">
+          <h1 class="text-2xl font-bold text-ink">Edit category</h1>
+          <form id="category-form" class="mt-lg space-y-md">
+            <input type="hidden" name="id" value={category.id} />
+            <Input label="Name" name="name" value={category.name} required />
+            <Input label="Slug" name="slug" value={category.slug} required />
+            <Textarea label="Description (optional)" name="description" value={category.description ?? ""} />
+            <Select
+              label="Parent category (optional)"
+              name="parentId"
+              options={topLevelOptions}
+              value={category.parent_id ?? ""}
+              placeholder="No parent (top-level)"
+            />
+            <p id="form-message" class="text-sm" role="status" />
+            <Button type="submit" variant="primary">
+              Save changes
+            </Button>
+          </form>
+        </Card>
+      ) : (
+        <EmptyState title="Category not found" />
+      )
+    }
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#category-form");
+
+  if (form) {
+    const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+    const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      messageEl.textContent = "";
+      messageEl.classList.remove("text-error", "text-success");
+
+      const { error } = await actions.updateCategory(new FormData(form));
+
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        messageEl.classList.add("text-error");
+        return;
+      }
+
+      window.location.href = "/inventory/categories?updated=1";
+    });
+  }
+</script>

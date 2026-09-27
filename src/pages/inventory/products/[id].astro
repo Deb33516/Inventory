@@ -1,0 +1,48 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import ProductForm from "../../../components/catalog/ProductForm.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+
+const { id } = Astro.params;
+
+const { data: product } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, description, category_id, price, cost, image_url, is_active")
+  .eq("id", id)
+  .maybeSingle();
+
+const { data: categories } = await Astro.locals.supabase
+  .from("categories")
+  .select("id, name")
+  .order("name");
+
+const categoryOptions = (categories ?? []).map((c) => ({ value: c.id, label: c.name }));
+
+if (!product) {
+  Astro.response.status = 404;
+}
+---
+
+<BaseLayout title={product ? `Edit ${product.name} — Inventory` : "Product not found — Inventory"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/inventory/products" class="font-bold text-ink">
+      ← Products
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      product ? (
+        <Card class="max-w-lg">
+          <h1 class="text-2xl font-bold text-ink">Edit product</h1>
+          <div class="mt-lg">
+            <ProductForm action="updateProduct" categories={categoryOptions} product={product} />
+          </div>
+        </Card>
+      ) : (
+        <EmptyState title="Product not found" />
+      )
+    }
+  </main>
+</BaseLayout>

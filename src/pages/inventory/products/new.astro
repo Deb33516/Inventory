@@ -1,0 +1,29 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import ProductForm from "../../../components/catalog/ProductForm.astro";
+
+const { data: categories } = await Astro.locals.supabase
+  .from("categories")
+  .select("id, name")
+  .order("name");
+
+const categoryOptions = (categories ?? []).map((c) => ({ value: c.id, label: c.name }));
+---
+
+<BaseLayout title="New product — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/inventory/products" class="font-bold text-ink">
+      ← Products
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <Card class="max-w-lg">
+      <h1 class="text-2xl font-bold text-ink">New product</h1>
+      <div class="mt-lg">
+        <ProductForm action="createProduct" categories={categoryOptions} />
+      </div>
+    </Card>
+  </main>
+</BaseLayout>

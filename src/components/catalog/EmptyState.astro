@@ -1,0 +1,14 @@
+---
+interface Props {
+  title: string;
+  message?: string;
+  class?: string;
+}
+
+const { title, message, class: className = "" } = Astro.props;
+---
+
+<div class={`text-center py-xxl px-lg border border-hairline bg-surface-soft ${className}`}>
+  <p class="text-lg font-bold text-ink">{title}</p>
+  {message && <p class="mt-xs text-sm font-light text-muted">{message}</p>}
+</div>

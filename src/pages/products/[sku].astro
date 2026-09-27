@@ -1,0 +1,58 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import EmptyState from "../../components/catalog/EmptyState.astro";
+
+const { sku } = Astro.params;
+
+const { data: product } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, description, price, image_url, categories(name)")
+  .eq("sku", sku)
+  .eq("is_active", true)
+  .maybeSingle();
+
+if (!product) {
+  Astro.response.status = 404;
+}
+
+const formattedPrice = product
+  ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(product.price)
+  : "";
+---
+
+<BaseLayout title={product ? `${product.name} — Inventory` : "Product not found — Inventory"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/" class="font-bold text-ink">Inventory</a>
+    <a href="/products" class="text-sm text-ink hover:text-primary">Back to products</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      product ? (
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-xl">
+          <div class="aspect-square bg-surface-card flex items-center justify-center overflow-hidden">
+            {product.image_url ? (
+              <img src={product.image_url} alt={product.name} class="w-full h-full object-cover" />
+            ) : (
+              <span class="text-sm uppercase tracking-[0.5px] text-muted-soft">No image</span>
+            )}
+          </div>
+
+          <div>
+            {product.categories?.name && (
+              <p class="text-xs uppercase tracking-[0.5px] text-muted mb-xs">{product.categories.name}</p>
+            )}
+            <h1 class="text-3xl font-bold text-ink">{product.name}</h1>
+            <p class="mt-xs text-sm text-muted">SKU: {product.sku}</p>
+            <p class="mt-md text-2xl font-bold text-ink">{formattedPrice}</p>
+            {product.description && (
+              <p class="mt-lg text-sm font-light text-body leading-relaxed">{product.description}</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <EmptyState title="Product not found" message="This product may be unavailable or no longer exists." />
+      )
+    }
+  </main>
+</BaseLayout>

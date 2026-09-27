@@ -1,0 +1,50 @@
+---
+// Implements DESIGN.md's `text-input` visual language for a <select>.
+interface Option {
+  value: string;
+  label: string;
+}
+
+interface Props {
+  label: string;
+  name: string;
+  options: Option[];
+  value?: string;
+  placeholder?: string;
+  required?: boolean;
+  class?: string;
+}
+
+const {
+  label,
+  name,
+  options,
+  value = "",
+  placeholder,
+  required = false,
+  class: className = "",
+} = Astro.props;
+
+const id = `field-${name}`;
+---
+
+<div class={className}>
+  <label for={id} class="block text-sm font-bold text-ink mb-xs">{label}</label>
+  <select
+    id={id}
+    name={name}
+    required={required}
+    class="w-full h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
+  >
+    {placeholder && (
+      <option value="" selected={!value}>
+        {placeholder}
+      </option>
+    )}
+    {options.map((option) => (
+      <option value={option.value} selected={option.value === value}>
+        {option.label}
+      </option>
+    ))}
+  </select>
+</div>

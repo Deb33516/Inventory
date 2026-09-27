@@ -1,0 +1,20 @@
+---
+// Implements DESIGN.md's `filter-chip` / `filter-chip-active` components.
+interface Props {
+  href: string;
+  active?: boolean;
+  class?: string;
+}
+
+const { href, active = false, class: className = "" } = Astro.props;
+
+const base =
+  "inline-flex items-center whitespace-nowrap px-sm py-1 text-xs font-bold uppercase tracking-[0.5px] border transition-colors";
+const variant = active
+  ? "bg-ink text-on-dark border-ink"
+  : "bg-canvas text-ink border-hairline-strong hover:border-ink";
+---
+
+<a href={href} class={`${base} ${variant} ${className}`}>
+  <slot />
+</a>

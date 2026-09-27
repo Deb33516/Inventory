@@ -1,0 +1,37 @@
+---
+// Multi-line variant of Input — same visual language, DESIGN.md `text-input`.
+interface Props {
+  label: string;
+  name: string;
+  value?: string;
+  placeholder?: string;
+  rows?: number;
+  required?: boolean;
+  class?: string;
+}
+
+const {
+  label,
+  name,
+  value = "",
+  placeholder,
+  rows = 4,
+  required = false,
+  class: className = "",
+} = Astro.props;
+
+const id = `field-${name}`;
+---
+
+<div class={className}>
+  <label for={id} class="block text-sm font-bold text-ink mb-xs">{label}</label>
+  <textarea
+    id={id}
+    name={name}
+    rows={rows}
+    placeholder={placeholder}
+    required={required}
+    class="w-full px-md py-sm bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors resize-y"
+    set:text={value}
+  />
+</div>
