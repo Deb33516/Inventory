@@ -5,6 +5,17 @@ import ProductForm from "../../../components/catalog/ProductForm.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 
 const { id } = Astro.params;
+const userId = Astro.locals.user!.id;
+
+const { data: viewerProfile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("role")
+  .eq("id", userId)
+  .single();
+
+const viewerRole = viewerProfile?.role;
+const canDeleteDirect = viewerRole === "super_admin";
+const canRequestDelete = viewerRole === "inventory_staff" || viewerRole === "admin";
 
 const { data: product } = await Astro.locals.supabase
   .from("products")
@@ -44,5 +55,82 @@ if (!product) {
         <EmptyState title="Product not found" />
       )
     }
+
+    {
+      product && (canDeleteDirect || canRequestDelete) && (
+        <Card class="max-w-lg mt-lg border-error">
+          <p class="text-sm font-bold text-error">Danger zone</p>
+          <p class="mt-xs text-xs text-muted">
+            {canDeleteDirect
+              ? "Deleting is permanent and only possible if the product has no order or movement history."
+              : "Deletion requires super admin approval. It will only be possible if the product has no order or movement history."}
+          </p>
+          <div class="mt-md">
+            <button
+              type="button"
+              id="delete-product-btn"
+              data-product-id={product.id}
+              data-mode={canDeleteDirect ? "direct" : "request"}
+              class="h-12 px-lg bg-canvas text-error border border-error font-bold text-sm"
+            >
+              {canDeleteDirect ? "Delete product" : "Request deletion"}
+            </button>
+            <p id="delete-message" class="mt-xs text-sm" role="status" />
+          </div>
+        </Card>
+      )
+    }
   </main>
 </BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const button = document.querySelector<HTMLButtonElement>("#delete-product-btn");
+  const messageEl = document.querySelector<HTMLParagraphElement>("#delete-message");
+
+  if (button && messageEl) {
+    const productId = button.dataset.productId!;
+    const mode = button.dataset.mode;
+
+    button.addEventListener("click", async () => {
+      const reason = mode === "request" ? window.prompt("Reason for requesting deletion:") ?? "" : "";
+      if (mode === "request" && !reason.trim()) return;
+      if (mode === "direct" && !window.confirm("Permanently delete this product?")) return;
+
+      button.disabled = true;
+      messageEl.textContent = "";
+      messageEl.classList.remove("text-error", "text-success");
+
+      if (mode === "direct") {
+        const { error } = await actions.deleteProduct({ productId });
+        if (error) {
+          button.disabled = false;
+          messageEl.textContent = error.message;
+          messageEl.classList.add("text-error");
+          return;
+        }
+        window.location.href = "/inventory/products?deleted=1";
+        return;
+      }
+
+      const { error } = await actions.requestApproval({
+        actionType: "delete_product",
+        targetTable: "products",
+        targetId: productId,
+        reason,
+      });
+
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        messageEl.classList.add("text-error");
+        return;
+      }
+
+      messageEl.textContent = "Deletion request submitted.";
+      messageEl.classList.add("text-success");
+      button.remove();
+    });
+  }
+</script>

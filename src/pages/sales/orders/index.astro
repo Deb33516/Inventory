@@ -93,6 +93,9 @@ function buildUrl(overrides: Record<string, string | undefined>) {
       <FilterChip href={buildUrl({ status: "cancelled" })} active={status === "cancelled"}>
         Cancelled
       </FilterChip>
+      <FilterChip href={buildUrl({ status: "refunded" })} active={status === "refunded"}>
+        Refunded
+      </FilterChip>
     </div>
 
     {

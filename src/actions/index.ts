@@ -737,4 +737,128 @@ export const server = {
       return { message: "Order updated.", order: data };
     },
   }),
+
+  // Direct delete — super_admin only, relying entirely on the new
+  // products_delete_super_admin RLS policy. inventory_staff/admin no
+  // longer have this capability at all (RLS-enforced); they use
+  // requestApproval instead.
+  deleteProduct: defineAction({
+    input: z.object({
+      productId: z.string().uuid(),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { error } = await supabase.from("products").delete().eq("id", input.productId);
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Product deleted." };
+    },
+  }),
+
+  requestApproval: defineAction({
+    input: z.object({
+      actionType: z.enum([
+        "delete_product",
+        "deactivate_staff",
+        "change_role",
+        "cancel_paid_order",
+        "refund_payment",
+      ]),
+      targetTable: z.enum(["products", "profiles", "orders", "payments"]),
+      targetId: z.string().uuid(),
+      reason: z.string().min(1, "A reason is required"),
+      newRole: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    // All authorization, target/action_type mapping, and business-rule
+    // validation happens authoritatively inside create_approval_request()
+    // — this is just a thin, typed pass-through.
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase.rpc("create_approval_request", {
+        p_action_type: input.actionType,
+        p_target_table: input.targetTable,
+        p_target_id: input.targetId,
+        p_reason: input.reason,
+        p_payload: input.newRole ? { new_role: input.newRole } : {},
+      });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Approval request submitted.", request: data };
+    },
+  }),
+
+  reviewApprovalRequest: defineAction({
+    input: z.object({
+      requestId: z.string().uuid(),
+      decision: z.enum(["approved", "rejected"]),
+      reviewNote: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase.rpc("review_approval_request", {
+        p_request_id: input.requestId,
+        p_decision: input.decision,
+        p_review_note: input.reviewNote ?? null,
+      });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: input.decision === "approved" ? "Request approved." : "Request rejected.", request: data };
+    },
+  }),
+
+  // Direct staff edit — super_admin only, relying entirely on the existing,
+  // unrestricted profiles_update_super_admin RLS policy (unchanged since
+  // Phase 3). Deliberately not routed through the approval workflow: that
+  // gate is for admin/sales_staff/inventory_staff delegating a sensitive
+  // change upward, not for super_admin's own already-unilateral capability.
+  updateStaffProfile: defineAction({
+    input: z.object({
+      profileId: z.string().uuid(),
+      isActive: z.boolean().optional(),
+      newRole: z.enum(["sales_staff", "inventory_staff", "admin"]).optional(),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const update: Record<string, unknown> = {};
+      if (input.isActive !== undefined) update.is_active = input.isActive;
+      if (input.newRole !== undefined) update.role = input.newRole;
+
+      if (Object.keys(update).length === 0) {
+        throw new ActionError({ code: "BAD_REQUEST", message: "Nothing to update." });
+      }
+
+      const { error } = await supabase.from("profiles").update(update).eq("id", input.profileId);
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Profile updated." };
+    },
+  }),
 };

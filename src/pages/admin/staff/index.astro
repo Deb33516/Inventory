@@ -1,0 +1,220 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import Badge from "../../../components/ui/Badge.astro";
+
+const userId = Astro.locals.user!.id;
+
+const { data: viewerProfile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("role")
+  .eq("id", userId)
+  .single();
+
+const isSuperAdmin = viewerProfile?.role === "super_admin";
+
+const { data: staff } = await Astro.locals.supabase
+  .from("profiles")
+  .select("id, full_name, role, is_active")
+  .neq("role", "customer")
+  .order("role")
+  .order("full_name");
+
+const rows = staff ?? [];
+
+const roleOptions = ["sales_staff", "inventory_staff", "admin"];
+---
+
+<BaseLayout title="Staff — Admin">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/admin" class="font-bold text-ink">← Admin</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Staff</h1>
+    <p class="mt-xs text-sm text-muted">
+      {isSuperAdmin
+        ? "Direct edit — you have unrestricted staff management capability."
+        : "Sensitive changes go through an approval request, reviewed by a super admin."}
+    </p>
+
+    {
+      rows.length > 0 ? (
+        <div class="mt-lg overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                <th class="py-xs pr-md">Name</th>
+                <th class="py-xs pr-md">Role</th>
+                <th class="py-xs pr-md">Status</th>
+                <th class="py-xs pr-md">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p) => {
+                const isSelf = p.id === userId;
+                const isProtected = p.role === "super_admin";
+                return (
+                  <tr class="border-b border-hairline staff-row" data-profile-id={p.id} data-current-role={p.role}>
+                    <td class="py-sm pr-md text-ink font-bold">{p.full_name ?? "Unnamed"}</td>
+                    <td class="py-sm pr-md text-body capitalize">{p.role.replace(/_/g, " ")}</td>
+                    <td class="py-sm pr-md">
+                      <Badge tone={p.is_active ? "success" : "error"}>{p.is_active ? "Active" : "Inactive"}</Badge>
+                    </td>
+                    <td class="py-sm pr-md">
+                      {isProtected ? (
+                        <span class="text-xs text-muted">Protected account</span>
+                      ) : isSelf ? (
+                        <span class="text-xs text-muted">This is you</span>
+                      ) : isSuperAdmin ? (
+                        <div class="flex items-center gap-sm flex-wrap">
+                          <button
+                            type="button"
+                            class="staff-toggle-active text-xs font-bold text-primary"
+                            data-next-active={(!p.is_active).toString()}
+                          >
+                            {p.is_active ? "Deactivate" : "Reactivate"}
+                          </button>
+                          <select class="staff-role-select h-8 px-xs text-xs border border-hairline">
+                            {roleOptions.map((r) => (
+                              <option value={r} selected={r === p.role}>
+                                {r.replace(/_/g, " ")}
+                              </option>
+                            ))}
+                          </select>
+                          <button type="button" class="staff-save-role text-xs font-bold text-primary">
+                            Save role
+                          </button>
+                        </div>
+                      ) : (
+                        <div class="flex items-center gap-sm flex-wrap">
+                          {p.is_active && (
+                            <button type="button" class="staff-request-deactivate text-xs font-bold text-error">
+                              Request deactivation
+                            </button>
+                          )}
+                          <select class="staff-role-select h-8 px-xs text-xs border border-hairline">
+                            {roleOptions.map((r) => (
+                              <option value={r} selected={r === p.role}>
+                                {r.replace(/_/g, " ")}
+                              </option>
+                            ))}
+                          </select>
+                          <button type="button" class="staff-request-role-change text-xs font-bold text-primary">
+                            Request role change
+                          </button>
+                        </div>
+                      )}
+                      <p class="staff-message text-xs mt-xs" role="status" />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState class="mt-lg" title="No staff accounts found" />
+      )
+    }
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  document.querySelectorAll<HTMLTableRowElement>(".staff-row").forEach((row) => {
+    const profileId = row.dataset.profileId!;
+    const messageEl = row.querySelector<HTMLParagraphElement>(".staff-message")!;
+    const roleSelect = row.querySelector<HTMLSelectElement>(".staff-role-select");
+
+    const setMessage = (text: string, isError: boolean) => {
+      messageEl.textContent = text;
+      messageEl.classList.toggle("text-error", isError);
+      messageEl.classList.toggle("text-success", !isError);
+    };
+
+    row.querySelector<HTMLButtonElement>(".staff-toggle-active")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const nextActive = button.dataset.nextActive === "true";
+      button.disabled = true;
+
+      const { error } = await actions.updateStaffProfile({ profileId, isActive: nextActive });
+
+      if (error) {
+        button.disabled = false;
+        setMessage(error.message, true);
+        return;
+      }
+      window.location.reload();
+    });
+
+    row.querySelector<HTMLButtonElement>(".staff-save-role")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const newRole = roleSelect!.value as "sales_staff" | "inventory_staff" | "admin";
+      button.disabled = true;
+
+      const { error } = await actions.updateStaffProfile({ profileId, newRole });
+
+      if (error) {
+        button.disabled = false;
+        setMessage(error.message, true);
+        return;
+      }
+      window.location.reload();
+    });
+
+    row.querySelector<HTMLButtonElement>(".staff-request-deactivate")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const reason = window.prompt("Reason for requesting deactivation:") ?? "";
+      if (!reason.trim()) return;
+      button.disabled = true;
+
+      const { error } = await actions.requestApproval({
+        actionType: "deactivate_staff",
+        targetTable: "profiles",
+        targetId: profileId,
+        reason,
+      });
+
+      if (error) {
+        button.disabled = false;
+        setMessage(error.message, true);
+        return;
+      }
+      setMessage("Request submitted.", false);
+      button.remove();
+    });
+
+    row.querySelector<HTMLButtonElement>(".staff-request-role-change")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const newRole = roleSelect!.value;
+      const currentRole = row.dataset.currentRole;
+
+      if (newRole === currentRole) {
+        setMessage("Select a different role first.", true);
+        return;
+      }
+
+      const reason = window.prompt("Reason for requesting this role change:") ?? "";
+      if (!reason.trim()) return;
+      button.disabled = true;
+
+      const { error } = await actions.requestApproval({
+        actionType: "change_role",
+        targetTable: "profiles",
+        targetId: profileId,
+        reason,
+        newRole,
+      });
+
+      if (error) {
+        button.disabled = false;
+        setMessage(error.message, true);
+        return;
+      }
+      setMessage("Request submitted.", false);
+      button.disabled = true;
+    });
+  });
+</script>

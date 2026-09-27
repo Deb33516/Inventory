@@ -25,3 +25,12 @@ export interface CartItem {
   price: number;
   quantity: number;
 }
+
+export type ApprovalActionType =
+  | "delete_product"
+  | "deactivate_staff"
+  | "change_role"
+  | "cancel_paid_order"
+  | "refund_payment";
+
+export type ApprovalStatus = "pending" | "approved" | "rejected";

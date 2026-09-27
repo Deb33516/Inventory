@@ -8,6 +8,17 @@ import OrderStatusActions from "../../../components/orders/OrderStatusActions.as
 
 const { id } = Astro.params;
 const created = Astro.url.searchParams.get("created");
+const userId = Astro.locals.user!.id;
+
+const { data: viewerProfile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("role")
+  .eq("id", userId)
+  .single();
+
+const viewerRole = viewerProfile?.role;
+const canDirectCancel = viewerRole === "super_admin";
+const canRequestRefund = viewerRole === "sales_staff" || viewerRole === "admin";
 
 const { data: order } = await Astro.locals.supabase
   .from("orders")
@@ -33,10 +44,12 @@ const { data: items } = order
 const { data: payment } = order
   ? await Astro.locals.supabase
       .from("payments")
-      .select("status, method, paid_at")
+      .select("id, status, method, paid_at")
       .eq("order_id", id)
       .maybeSingle()
   : { data: null };
+
+const canShowRefundControl = canRequestRefund && order?.status === "cancelled" && payment?.status === "paid";
 ---
 
 <BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Sales` : "Order not found — Sales"}>
@@ -83,10 +96,29 @@ const { data: payment } = order
             <p class="mt-xs text-sm text-body capitalize">
               {payment?.method ?? "—"} — {payment?.status ?? "—"}
             </p>
+            {
+              canShowRefundControl && (
+                <div class="mt-md" id="refund-control" data-payment-id={payment!.id}>
+                  <button
+                    type="button"
+                    id="request-refund-btn"
+                    class="h-12 px-lg bg-canvas text-error border border-error font-bold text-sm"
+                  >
+                    Request refund
+                  </button>
+                  <p id="refund-message" class="mt-xs text-sm" role="status" />
+                </div>
+              )
+            }
           </Card>
 
           <div class="mt-lg">
-            <OrderStatusActions orderId={order.id} status={order.status} viewerRole="staff" />
+            <OrderStatusActions
+              orderId={order.id}
+              status={order.status}
+              viewerRole="staff"
+              canDirectCancel={canDirectCancel}
+            />
           </div>
         </>
       ) : (
@@ -95,3 +127,42 @@ const { data: payment } = order
     }
   </main>
 </BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const control = document.querySelector<HTMLDivElement>("#refund-control");
+  const button = document.querySelector<HTMLButtonElement>("#request-refund-btn");
+  const messageEl = document.querySelector<HTMLParagraphElement>("#refund-message");
+
+  if (control && button && messageEl) {
+    const paymentId = control.dataset.paymentId!;
+
+    button.addEventListener("click", async () => {
+      const reason = window.prompt("Reason for requesting a refund:") ?? "";
+      if (!reason.trim()) return;
+
+      button.disabled = true;
+      messageEl.textContent = "";
+      messageEl.classList.remove("text-error", "text-success");
+
+      const { error } = await actions.requestApproval({
+        actionType: "refund_payment",
+        targetTable: "payments",
+        targetId: paymentId,
+        reason,
+      });
+
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        messageEl.classList.add("text-error");
+        return;
+      }
+
+      messageEl.textContent = "Refund request submitted.";
+      messageEl.classList.add("text-success");
+      button.remove();
+    });
+  }
+</script>

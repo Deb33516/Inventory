@@ -3,9 +3,14 @@ interface Props {
   orderId: string;
   status: string;
   viewerRole: "staff" | "customer";
+  // Only relevant when viewerRole === "staff". super_admin retains direct
+  // cancellation (update_order_status() still allows it); sales_staff/admin
+  // no longer can — cancelling someone else's paid order now requires an
+  // approval request instead, per Phase 9.
+  canDirectCancel?: boolean;
 }
 
-const { orderId, status, viewerRole } = Astro.props;
+const { orderId, status, viewerRole, canDirectCancel = false } = Astro.props;
 
 const nextStatus: Record<string, string> = {
   pending: "confirmed",
@@ -18,11 +23,17 @@ const canAdvance = viewerRole === "staff" && status in nextStatus;
 const canCancel =
   (viewerRole === "staff" && ["pending", "confirmed", "processing"].includes(status)) ||
   (viewerRole === "customer" && status === "pending");
+const staffCancelIsDirect = viewerRole === "customer" || canDirectCancel;
 ---
 
 {
   (canAdvance || canCancel) && (
-    <div id="order-status-actions" data-order-id={orderId} class="flex flex-wrap items-center gap-sm">
+    <div
+      id="order-status-actions"
+      data-order-id={orderId}
+      data-cancel-mode={staffCancelIsDirect ? "direct" : "request"}
+      class="flex flex-wrap items-center gap-sm"
+    >
       {canAdvance && (
         <button
           type="button"
@@ -39,7 +50,7 @@ const canCancel =
           data-action="cancel"
           class="h-12 px-lg bg-canvas text-error border border-error font-bold text-sm"
         >
-          Cancel order
+          {staffCancelIsDirect ? "Cancel order" : "Request cancellation"}
         </button>
       )}
       <p id="status-message" class="text-sm w-full" role="status" />
@@ -54,21 +65,52 @@ const canCancel =
 
   if (container) {
     const orderId = container.dataset.orderId!;
+    const cancelMode = container.dataset.cancelMode;
     const messageEl = document.querySelector<HTMLParagraphElement>("#status-message")!;
 
     container.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((button) => {
       button.addEventListener("click", async () => {
         const action = button.dataset.action;
-        let reason: string | undefined;
-
-        if (action === "cancel") {
-          reason = window.prompt("Reason for cancellation:") ?? undefined;
-          if (!reason || !reason.trim()) return;
-        }
 
         button.disabled = true;
         messageEl.textContent = "";
         messageEl.classList.remove("text-error", "text-success");
+
+        if (action === "cancel" && cancelMode === "request") {
+          const reason = window.prompt("Reason for requesting cancellation:") ?? "";
+          if (!reason.trim()) {
+            button.disabled = false;
+            return;
+          }
+
+          const { error } = await actions.requestApproval({
+            actionType: "cancel_paid_order",
+            targetTable: "orders",
+            targetId: orderId,
+            reason,
+          });
+
+          if (error) {
+            button.disabled = false;
+            messageEl.textContent = error.message;
+            messageEl.classList.add("text-error");
+            return;
+          }
+
+          messageEl.textContent = "Cancellation request submitted.";
+          messageEl.classList.add("text-success");
+          button.remove();
+          return;
+        }
+
+        let reason: string | undefined;
+        if (action === "cancel") {
+          reason = window.prompt("Reason for cancellation:") ?? undefined;
+          if (!reason || !reason.trim()) {
+            button.disabled = false;
+            return;
+          }
+        }
 
         const newStatus = action === "cancel" ? "cancelled" : button.dataset.nextStatus!;
 

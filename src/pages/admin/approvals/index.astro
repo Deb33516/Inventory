@@ -1,0 +1,263 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Button from "../../../components/ui/Button.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import ApprovalStatusBadge from "../../../components/approvals/ApprovalStatusBadge.astro";
+
+const userId = Astro.locals.user!.id;
+
+const { data: viewerProfile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("role")
+  .eq("id", userId)
+  .single();
+
+const isSuperAdmin = viewerProfile?.role === "super_admin";
+
+// Admin sees their own request history (approval_requests_select_own).
+// Super admin sees the pending review queue + recently reviewed requests
+// (approval_requests_select_super_admin — store-wide, not self-scoped).
+const { data: myRequests } = !isSuperAdmin
+  ? await Astro.locals.supabase
+      .from("approval_requests")
+      .select("id, action_type, target_table, target_id, reason, status, reviewed_at, review_note, created_at")
+      .order("created_at", { ascending: false })
+  : { data: null };
+
+const { data: pendingRequests } = isSuperAdmin
+  ? await Astro.locals.supabase
+      .from("approval_requests")
+      .select("id, action_type, target_table, target_id, reason, payload, status, requested_by, created_at")
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+  : { data: null };
+
+const { data: reviewedRequests } = isSuperAdmin
+  ? await Astro.locals.supabase
+      .from("approval_requests")
+      .select("id, action_type, target_table, target_id, status, requested_by, reviewed_by, reviewed_at, review_note")
+      .neq("status", "pending")
+      .order("reviewed_at", { ascending: false })
+      .limit(20)
+  : { data: null };
+
+const allRequests = [...(myRequests ?? []), ...(pendingRequests ?? []), ...(reviewedRequests ?? [])];
+
+// Requests target different tables (products/profiles/orders/payments) —
+// no single FK to embed, so target labels are resolved with one lookup
+// per table actually referenced, then merged in JS (same pattern already
+// used for orders/customers on /sales/orders and /crm/customers).
+const productIds = [...new Set(allRequests.filter((r) => r.target_table === "products").map((r) => r.target_id))];
+const profileTargetIds = [...new Set(allRequests.filter((r) => r.target_table === "profiles").map((r) => r.target_id))];
+const orderIds = [...new Set(allRequests.filter((r) => r.target_table === "orders").map((r) => r.target_id))];
+const paymentIds = [...new Set(allRequests.filter((r) => r.target_table === "payments").map((r) => r.target_id))];
+
+const actorIds = [
+  ...new Set(
+    allRequests.flatMap((r) => [
+      "requested_by" in r ? r.requested_by : undefined,
+      "reviewed_by" in r ? r.reviewed_by : undefined,
+    ].filter((v): v is string => Boolean(v)))
+  ),
+];
+
+const [{ data: products }, { data: profileTargets }, { data: orders }, { data: payments }, { data: actors }] =
+  await Promise.all([
+    productIds.length > 0
+      ? Astro.locals.supabase.from("products").select("id, sku, name").in("id", productIds)
+      : Promise.resolve({ data: [] }),
+    profileTargetIds.length > 0
+      ? Astro.locals.supabase.from("profiles").select("id, full_name, role").in("id", profileTargetIds)
+      : Promise.resolve({ data: [] }),
+    orderIds.length > 0
+      ? Astro.locals.supabase.from("orders").select("id, total").in("id", orderIds)
+      : Promise.resolve({ data: [] }),
+    paymentIds.length > 0
+      ? Astro.locals.supabase.from("payments").select("id, amount").in("id", paymentIds)
+      : Promise.resolve({ data: [] }),
+    actorIds.length > 0
+      ? Astro.locals.supabase.from("profiles").select("id, full_name").in("id", actorIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+const productById = new Map((products ?? []).map((p) => [p.id, p]));
+const profileById = new Map((profileTargets ?? []).map((p) => [p.id, p]));
+const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
+const paymentById = new Map((payments ?? []).map((p) => [p.id, p]));
+const actorNameById = new Map((actors ?? []).map((a) => [a.id, a.full_name ?? "Unknown"]));
+
+function targetLabel(targetTable: string, targetId: string) {
+  if (targetTable === "products") {
+    const p = productById.get(targetId);
+    return p ? `${p.name} (${p.sku})` : targetId.slice(0, 8);
+  }
+  if (targetTable === "profiles") {
+    const p = profileById.get(targetId);
+    return p ? `${p.full_name ?? "Unnamed"} (${p.role})` : targetId.slice(0, 8);
+  }
+  if (targetTable === "orders") {
+    const o = orderById.get(targetId);
+    return o ? `Order ${targetId.slice(0, 8)}` : targetId.slice(0, 8);
+  }
+  if (targetTable === "payments") {
+    const p = paymentById.get(targetId);
+    return p ? `Payment ${targetId.slice(0, 8)}` : targetId.slice(0, 8);
+  }
+  return targetId.slice(0, 8);
+}
+---
+
+<BaseLayout title="Approvals — Admin">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/admin" class="font-bold text-ink">← Admin</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Approvals</h1>
+
+    {
+      isSuperAdmin ? (
+        <>
+          <h2 class="mt-lg text-lg font-bold text-ink">Pending review</h2>
+          {
+            (pendingRequests ?? []).length > 0 ? (
+              <div class="mt-md space-y-md">
+                {(pendingRequests ?? []).map((r) => (
+                  <Card class="approval-review-card" data-request-id={r.id}>
+                    <div class="flex items-center justify-between flex-wrap gap-sm">
+                      <div>
+                        <p class="text-sm font-bold text-ink capitalize">{r.action_type.replace(/_/g, " ")}</p>
+                        <p class="text-xs text-muted">
+                          Target: {targetLabel(r.target_table, r.target_id)} · Requested by{" "}
+                          {actorNameById.get(r.requested_by) ?? "Unknown"} on{" "}
+                          {new Date(r.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <ApprovalStatusBadge status={r.status} />
+                    </div>
+                    <p class="mt-sm text-sm text-body">{r.reason}</p>
+                    <div class="mt-md flex items-center gap-sm flex-wrap">
+                      <Button class="review-btn" data-decision="approved">
+                        Approve
+                      </Button>
+                      <Button variant="secondary" class="review-btn" data-decision="rejected">
+                        Reject
+                      </Button>
+                      <p class="review-message text-sm w-full" role="status" />
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <EmptyState class="mt-md" title="No pending approvals" />
+            )
+          }
+
+          <h2 class="mt-xl text-lg font-bold text-ink">Recently reviewed</h2>
+          {
+            (reviewedRequests ?? []).length > 0 ? (
+              <div class="mt-md overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead>
+                    <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                      <th class="py-xs pr-md">Action</th>
+                      <th class="py-xs pr-md">Target</th>
+                      <th class="py-xs pr-md">Requested by</th>
+                      <th class="py-xs pr-md">Reviewed by</th>
+                      <th class="py-xs pr-md">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(reviewedRequests ?? []).map((r) => (
+                      <tr class="border-b border-hairline">
+                        <td class="py-sm pr-md text-ink capitalize">{r.action_type.replace(/_/g, " ")}</td>
+                        <td class="py-sm pr-md text-body">{targetLabel(r.target_table, r.target_id)}</td>
+                        <td class="py-sm pr-md text-body">{actorNameById.get(r.requested_by) ?? "Unknown"}</td>
+                        <td class="py-sm pr-md text-body">
+                          {r.reviewed_by ? actorNameById.get(r.reviewed_by) ?? "Unknown" : "—"}
+                        </td>
+                        <td class="py-sm pr-md">
+                          <ApprovalStatusBadge status={r.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState class="mt-md" title="No reviewed requests yet" />
+            )
+          }
+        </>
+      ) : (
+        <>
+          <h2 class="mt-lg text-lg font-bold text-ink">My requests</h2>
+          {
+            (myRequests ?? []).length > 0 ? (
+              <div class="mt-md overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                  <thead>
+                    <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                      <th class="py-xs pr-md">Action</th>
+                      <th class="py-xs pr-md">Target</th>
+                      <th class="py-xs pr-md">Reason</th>
+                      <th class="py-xs pr-md">Status</th>
+                      <th class="py-xs pr-md">Review note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(myRequests ?? []).map((r) => (
+                      <tr class="border-b border-hairline">
+                        <td class="py-sm pr-md text-ink capitalize">{r.action_type.replace(/_/g, " ")}</td>
+                        <td class="py-sm pr-md text-body">{targetLabel(r.target_table, r.target_id)}</td>
+                        <td class="py-sm pr-md text-body">{r.reason}</td>
+                        <td class="py-sm pr-md">
+                          <ApprovalStatusBadge status={r.status} />
+                        </td>
+                        <td class="py-sm pr-md text-body">{r.review_note ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState class="mt-md" title="No requests yet" />
+            )
+          }
+        </>
+      )
+    }
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  document.querySelectorAll<HTMLElement>(".approval-review-card").forEach((card) => {
+    const requestId = card.dataset.requestId!;
+    const messageEl = card.querySelector<HTMLParagraphElement>(".review-message")!;
+
+    card.querySelectorAll<HTMLButtonElement>(".review-btn").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const decision = button.dataset.decision as "approved" | "rejected";
+        const reviewNote = window.prompt(decision === "rejected" ? "Reason for rejection (optional):" : "Review note (optional):") ?? undefined;
+
+        card.querySelectorAll<HTMLButtonElement>(".review-btn").forEach((b) => (b.disabled = true));
+        messageEl.textContent = "";
+        messageEl.classList.remove("text-error", "text-success");
+
+        const { error } = await actions.reviewApprovalRequest({ requestId, decision, reviewNote });
+
+        if (error) {
+          card.querySelectorAll<HTMLButtonElement>(".review-btn").forEach((b) => (b.disabled = false));
+          messageEl.textContent = error.message;
+          messageEl.classList.add("text-error");
+          return;
+        }
+
+        window.location.reload();
+      });
+    });
+  });
+</script>

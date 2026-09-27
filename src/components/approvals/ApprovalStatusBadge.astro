@@ -1,0 +1,18 @@
+---
+import Badge from "../ui/Badge.astro";
+
+interface Props {
+  status: string;
+  class?: string;
+}
+
+const { status, class: className = "" } = Astro.props;
+
+const tones: Record<string, "success" | "warning" | "error" | "neutral"> = {
+  pending: "warning",
+  approved: "success",
+  rejected: "error",
+};
+---
+
+<Badge tone={tones[status] ?? "neutral"} class={`capitalize ${className}`}>{status}</Badge>
