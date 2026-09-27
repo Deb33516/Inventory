@@ -1,0 +1,21 @@
+---
+// Small status pill using DESIGN.md's semantic colors. Used for order/stock
+// status indicators (e.g. "Low stock", "Delivered", "Failed").
+interface Props {
+  tone?: "success" | "warning" | "error" | "neutral";
+  class?: string;
+}
+
+const { tone = "neutral", class: className = "" } = Astro.props;
+
+const tones: Record<string, string> = {
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/10 text-warning",
+  error: "bg-error/10 text-error",
+  neutral: "bg-surface-strong text-muted",
+};
+---
+
+<span class={`inline-flex items-center px-xs py-1 text-xs font-bold uppercase tracking-[0.5px] ${tones[tone]} ${className}`}>
+  <slot />
+</span>

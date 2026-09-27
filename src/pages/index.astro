@@ -1,11 +1,61 @@
 ---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Button from "../components/ui/Button.astro";
+import Card from "../components/ui/Card.astro";
+import Badge from "../components/ui/Badge.astro";
 ---
 
-<Layout>
-	<Welcome />
-</Layout>
+<BaseLayout title="Inventory — CRM & Inventory Management">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <span class="font-bold text-ink">Inventory</span>
+    <nav class="flex items-center gap-lg text-sm text-ink">
+      <a href="/login" class="hover:text-primary">Log in</a>
+      <Button href="/register" variant="primary">Get started</Button>
+    </nav>
+  </header>
+
+  <section class="bg-surface-dark text-on-dark py-section px-lg">
+    <div class="max-w-[1440px] mx-auto">
+      <p class="uppercase text-xs tracking-[1.5px] text-on-dark-soft mb-md">CRM + Inventory</p>
+      <h1 class="text-5xl font-bold leading-tight max-w-2xl">
+        Run your customers, stock, and sales from one place.
+      </h1>
+      <p class="mt-md max-w-xl font-light text-on-dark-soft">
+        A single platform for customer relationships, product inventory, and order
+        fulfillment — built for teams that need clarity, not complexity.
+      </p>
+      <div class="mt-lg flex gap-md">
+        <Button href="/register" variant="primary">Create an account</Button>
+        <Button href="/login" variant="secondary" class="!text-on-dark !border-on-dark bg-transparent">
+          Sign in
+        </Button>
+      </div>
+    </div>
+  </section>
+
+  <section class="py-section px-lg">
+    <div class="max-w-[1440px] mx-auto grid grid-cols-1 md:grid-cols-3 gap-lg">
+      <Card>
+        <h2 class="font-bold text-lg text-ink">Customers</h2>
+        <p class="mt-xs font-light text-body text-sm">
+          Profiles, purchase history, and activity timelines in one view.
+        </p>
+        <Badge tone="success" class="mt-md">Live</Badge>
+      </Card>
+      <Card>
+        <h2 class="font-bold text-lg text-ink">Inventory</h2>
+        <p class="mt-xs font-light text-body text-sm">
+          Track stock levels, movements, and low-stock alerts as they happen.
+        </p>
+        <Badge tone="warning" class="mt-md">2 low stock</Badge>
+      </Card>
+      <Card>
+        <h2 class="font-bold text-lg text-ink">Orders</h2>
+        <p class="mt-xs font-light text-body text-sm">
+          From order placed to payment recorded — the full sales picture.
+        </p>
+        <Badge tone="neutral" class="mt-md">Coming soon</Badge>
+      </Card>
+    </div>
+  </section>
+</BaseLayout>

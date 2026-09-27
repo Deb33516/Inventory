@@ -1,0 +1,26 @@
+---
+// Implements DESIGN.md `button-primary` / `button-secondary` — rectangular
+// (0px radius), 48px tall, no drop shadow. See DESIGN.md § Buttons.
+interface Props {
+  variant?: "primary" | "secondary" | "text-link";
+  href?: string;
+  type?: "button" | "submit" | "reset";
+  class?: string;
+}
+
+const { variant = "primary", href, type = "button", class: className = "" } = Astro.props;
+
+const base = "inline-flex items-center justify-center font-bold text-sm tracking-[0.5px] transition-colors";
+const variants: Record<string, string> = {
+  primary: "bg-primary text-on-primary h-12 px-8 hover:bg-primary-active",
+  secondary: "bg-canvas text-ink h-12 px-8 border border-hairline-strong hover:border-ink",
+  "text-link": "bg-transparent text-ink uppercase tracking-[1.5px] text-[13px] hover:text-primary",
+};
+const classes = `${base} ${variants[variant]} ${className}`;
+
+const Tag = href ? "a" : "button";
+---
+
+<Tag class={classes} href={href} type={!href ? type : undefined}>
+  <slot />
+</Tag>

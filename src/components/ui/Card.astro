@@ -1,0 +1,14 @@
+---
+// Implements DESIGN.md's flat card pattern (model-card / feature-photo-card):
+// canvas background, 0px radius, no shadow — depth comes from hairline
+// borders and color-block contrast only. See DESIGN.md § Cards & Containers.
+interface Props {
+  class?: string;
+}
+
+const { class: className = "" } = Astro.props;
+---
+
+<div class={`bg-canvas border border-hairline p-lg ${className}`}>
+  <slot />
+</div>
