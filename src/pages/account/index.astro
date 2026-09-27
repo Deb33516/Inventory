@@ -1,0 +1,39 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import Card from "../../components/ui/Card.astro";
+import Button from "../../components/ui/Button.astro";
+
+// Middleware guarantees a user is present for every /account/* route —
+// this page only renders the authenticated state.
+const { user } = Astro.locals;
+---
+
+<BaseLayout title="Your account — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/" class="font-bold text-ink">Inventory</a>
+    <Button id="signout-btn" variant="secondary">Sign out</Button>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xxl">
+    <Card class="max-w-md">
+      <h1 class="text-2xl font-bold text-ink">Signed in</h1>
+      <p class="mt-xs text-sm font-light text-body">{user?.email}</p>
+      <p class="mt-md text-sm font-light text-muted">
+        Order history, profile details, and account settings will appear here in a
+        later phase.
+      </p>
+    </Card>
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const button = document.querySelector<HTMLButtonElement>("#signout-btn")!;
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    await actions.signOut();
+    window.location.href = "/login";
+  });
+</script>

@@ -1,14 +1,20 @@
 ---
 // Implements DESIGN.md `button-primary` / `button-secondary` — rectangular
 // (0px radius), 48px tall, no drop shadow. See DESIGN.md § Buttons.
-interface Props {
+interface Props extends astroHTML.JSX.HTMLAttributes {
   variant?: "primary" | "secondary" | "text-link";
   href?: string;
   type?: "button" | "submit" | "reset";
   class?: string;
 }
 
-const { variant = "primary", href, type = "button", class: className = "" } = Astro.props;
+const {
+  variant = "primary",
+  href,
+  type = "button",
+  class: className = "",
+  ...rest
+} = Astro.props;
 
 const base = "inline-flex items-center justify-center font-bold text-sm tracking-[0.5px] transition-colors";
 const variants: Record<string, string> = {
@@ -21,6 +27,6 @@ const classes = `${base} ${variants[variant]} ${className}`;
 const Tag = href ? "a" : "button";
 ---
 
-<Tag class={classes} href={href} type={!href ? type : undefined}>
+<Tag class={classes} href={href} type={!href ? type : undefined} {...rest}>
   <slot />
 </Tag>

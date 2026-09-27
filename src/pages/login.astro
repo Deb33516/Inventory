@@ -1,0 +1,92 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Card from "../components/ui/Card.astro";
+import Input from "../components/ui/Input.astro";
+import Button from "../components/ui/Button.astro";
+
+if (Astro.locals.user) {
+  return Astro.redirect("/account");
+}
+
+const redirectParam = Astro.url.searchParams.get("redirect");
+// Only ever redirect back to a same-app path — never an absolute/external URL.
+const redirectTo = redirectParam && redirectParam.startsWith("/") ? redirectParam : "/account";
+
+const errorParam = Astro.url.searchParams.get("error");
+const resetParam = Astro.url.searchParams.get("reset");
+
+let notice = "";
+let noticeTone: "error" | "success" | "" = "";
+
+if (errorParam === "invalid_link") {
+  notice = "That link is invalid or has expired. Please request a new one.";
+  noticeTone = "error";
+} else if (resetParam === "1") {
+  notice = "Your password has been updated. Sign in with your new password.";
+  noticeTone = "success";
+}
+---
+
+<BaseLayout title="Sign in — Inventory">
+  <main class="min-h-screen flex items-center justify-center bg-surface-soft px-md py-xxl">
+    <Card class="w-full max-w-md">
+      <h1 class="text-2xl font-bold text-ink">Sign in</h1>
+      <p class="mt-xs text-sm font-light text-body">Welcome back.</p>
+
+      {
+        notice && (
+          <p
+            class={`mt-md text-sm ${noticeTone === "error" ? "text-error" : "text-success"}`}
+            role="status"
+          >
+            {notice}
+          </p>
+        )
+      }
+
+      <form id="login-form" class="mt-lg space-y-md">
+        <Input label="Email" name="email" type="email" autocomplete="email" required />
+        <Input
+          label="Password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+        />
+        <p id="form-message" class="text-sm" role="status"></p>
+        <Button type="submit" variant="primary" class="w-full">Sign in</Button>
+      </form>
+
+      <div class="mt-lg flex items-center justify-between text-sm">
+        <a href="/forgot-password" class="text-primary font-bold">Forgot password?</a>
+        <a href="/register" class="text-body">Create an account</a>
+      </div>
+    </Card>
+  </main>
+</BaseLayout>
+
+<script define:vars={{ redirectTo }}>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector("#login-form");
+  const messageEl = document.querySelector("#form-message");
+  const button = form.querySelector("button[type=submit]");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions.signIn(new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = redirectTo;
+  });
+</script>

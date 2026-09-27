@@ -1,0 +1,37 @@
+---
+import type { EmailOtpType } from "@supabase/supabase-js";
+import { createClient } from "../../lib/supabase/server";
+
+// @supabase/ssr defaults every client to the PKCE flow, so the links
+// Supabase emails for signup confirmation and password recovery redirect
+// here with a `?code=...` param (exchanged via exchangeCodeForSession) —
+// not a `token_hash`. `token_hash` is kept as a fallback for OTP-style
+// flows (e.g. if the email templates are ever customized to use it).
+const supabase = createClient({
+  request: Astro.request,
+  cookies: Astro.cookies,
+});
+
+const next = Astro.url.searchParams.get("next") ?? "/account";
+const safeNext = next.startsWith("/") ? next : "/account";
+
+const code = Astro.url.searchParams.get("code");
+const tokenHash = Astro.url.searchParams.get("token_hash");
+const type = Astro.url.searchParams.get("type") as EmailOtpType | null;
+
+if (code) {
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+  if (!error) {
+    return Astro.redirect(safeNext);
+  }
+} else if (tokenHash && type) {
+  const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+
+  if (!error) {
+    return Astro.redirect(safeNext);
+  }
+}
+
+return Astro.redirect("/login?error=invalid_link");
+---

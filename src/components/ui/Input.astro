@@ -1,0 +1,41 @@
+---
+// Implements DESIGN.md's `text-input` component: canvas background, 0px
+// radius, 48px height, hairline border that thickens to ink on focus.
+interface Props {
+  label: string;
+  name: string;
+  type?: string;
+  placeholder?: string;
+  required?: boolean;
+  autocomplete?: HTMLInputElement["autocomplete"];
+  minlength?: number;
+  class?: string;
+}
+
+const {
+  label,
+  name,
+  type = "text",
+  placeholder,
+  required = false,
+  autocomplete,
+  minlength,
+  class: className = "",
+} = Astro.props;
+
+const id = `field-${name}`;
+---
+
+<div class={className}>
+  <label for={id} class="block text-sm font-bold text-ink mb-xs">{label}</label>
+  <input
+    id={id}
+    name={name}
+    type={type}
+    placeholder={placeholder}
+    required={required}
+    autocomplete={autocomplete}
+    minlength={minlength}
+    class="w-full h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
+  />
+</div>
