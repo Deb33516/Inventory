@@ -1,0 +1,61 @@
+---
+// Customer self-service profile editor — used on /account only.
+import Input from "../ui/Input.astro";
+import Textarea from "../ui/Textarea.astro";
+import Button from "../ui/Button.astro";
+
+interface Address {
+  formatted?: string;
+}
+
+interface Props {
+  fullName: string | null;
+  phone: string | null;
+  billingAddress: Address | null;
+  shippingAddress: Address | null;
+  marketingOptIn: boolean;
+}
+
+const { fullName, phone, billingAddress, shippingAddress, marketingOptIn } = Astro.props;
+---
+
+<form id="profile-form" class="space-y-md">
+  <Input label="Full name" name="fullName" value={fullName ?? ""} required />
+  <Input label="Phone (optional)" name="phone" value={phone ?? ""} />
+  <Textarea label="Billing address (optional)" name="billingAddress" value={billingAddress?.formatted ?? ""} />
+  <Textarea label="Shipping address (optional)" name="shippingAddress" value={shippingAddress?.formatted ?? ""} />
+  <label class="flex items-center gap-xs text-sm text-ink">
+    <input type="checkbox" name="marketingOptIn" checked={marketingOptIn} />
+    Send me marketing emails
+  </label>
+  <p id="form-message" class="text-sm" role="status" />
+  <Button type="submit" variant="primary">Save changes</Button>
+</form>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#profile-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions.updateCustomerProfile(new FormData(form));
+
+    button.disabled = false;
+
+    if (error) {
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    messageEl.textContent = "Saved.";
+    messageEl.classList.add("text-success");
+  });
+</script>

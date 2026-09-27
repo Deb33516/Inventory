@@ -1,0 +1,100 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import CustomerProfileCard from "../../../components/crm/CustomerProfileCard.astro";
+import CustomerMetrics from "../../../components/crm/CustomerMetrics.astro";
+import CustomerNotesForm from "../../../components/crm/CustomerNotesForm.astro";
+import CustomerTimeline from "../../../components/crm/CustomerTimeline.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+
+const { id } = Astro.params;
+
+const { data: profile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("id, full_name, phone, created_at, role")
+  .eq("id", id)
+  .eq("role", "customer")
+  .maybeSingle();
+
+if (!profile) {
+  Astro.response.status = 404;
+}
+
+const { data: customer } = profile
+  ? await Astro.locals.supabase
+      .from("customers")
+      .select("billing_address, shipping_address, marketing_opt_in")
+      .eq("profile_id", id)
+      .maybeSingle()
+  : { data: null };
+
+const { data: customerNote } = profile
+  ? await Astro.locals.supabase
+      .from("customer_notes")
+      .select("note")
+      .eq("customer_id", id)
+      .maybeSingle()
+  : { data: null };
+
+const { data: metrics } = profile
+  ? await Astro.locals.supabase
+      .from("customer_metrics")
+      .select("order_count, lifetime_spend, first_order_at, last_order_at")
+      .eq("profile_id", id)
+      .maybeSingle()
+  : { data: null };
+
+const { data: contactEmail } = profile
+  ? await Astro.locals.supabase.rpc("customer_contact_email", { p_profile_id: id })
+  : { data: null };
+
+const { data: orders } = profile
+  ? await Astro.locals.supabase
+      .from("orders")
+      .select("id, status, total, created_at")
+      .eq("customer_id", id)
+      .order("created_at", { ascending: false })
+      .limit(20)
+  : { data: null };
+---
+
+<BaseLayout title={profile ? `${profile.full_name ?? "Customer"} — CRM` : "Not found — CRM"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/crm/customers" class="font-bold text-ink">
+      ← Customers
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      profile ? (
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-lg">
+          <div class="lg:col-span-2 space-y-lg">
+            <CustomerProfileCard
+              fullName={profile.full_name}
+              email={contactEmail ?? null}
+              phone={profile.phone}
+              billingAddress={customer?.billing_address ?? null}
+              shippingAddress={customer?.shipping_address ?? null}
+              createdAt={profile.created_at}
+            />
+            <CustomerMetrics
+              orderCount={metrics?.order_count ?? 0}
+              lifetimeSpend={metrics?.lifetime_spend ?? 0}
+              firstOrderAt={metrics?.first_order_at ?? null}
+              lastOrderAt={metrics?.last_order_at ?? null}
+            />
+            <div>
+              <h2 class="text-lg font-bold text-ink mb-md">Order timeline</h2>
+              <CustomerTimeline orders={orders ?? []} accountCreatedAt={profile.created_at} />
+            </div>
+          </div>
+          <div>
+            <CustomerNotesForm profileId={profile.id} notes={customerNote?.note ?? null} />
+          </div>
+        </div>
+      ) : (
+        <EmptyState title="Customer not found" />
+      )
+    }
+  </main>
+</BaseLayout>

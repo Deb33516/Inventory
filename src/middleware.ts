@@ -2,13 +2,14 @@ import { defineMiddleware } from "astro:middleware";
 import { createClient } from "./lib/supabase/server";
 import type { UserRole } from "./lib/types";
 
-const PROTECTED_PREFIXES = ["/account", "/inventory"];
+const PROTECTED_PREFIXES = ["/account", "/inventory", "/crm"];
 
 // Prefixes that require not just a session, but a specific role. Checked
 // only when the path actually matches, so routes that don't need it (e.g.
 // /account) avoid the extra profiles lookup.
 const ROLE_GATED_PREFIXES: Record<string, UserRole[]> = {
   "/inventory": ["inventory_staff", "admin", "super_admin"],
+  "/crm": ["sales_staff", "admin", "super_admin"],
 };
 
 function matchesPrefix(pathname: string, prefix: string) {

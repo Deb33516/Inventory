@@ -1,0 +1,66 @@
+---
+// Full staff-facing metrics tile set. AOV uses the view's total
+// order_count as its denominator (customer_metrics doesn't expose a
+// separate "completed order count" column) — shown as "—" with zero
+// orders rather than dividing by zero.
+import Card from "../ui/Card.astro";
+import Badge from "../ui/Badge.astro";
+
+interface Props {
+  orderCount: number;
+  lifetimeSpend: number;
+  firstOrderAt: string | null;
+  lastOrderAt: string | null;
+}
+
+const { orderCount, lifetimeSpend, firstOrderAt, lastOrderAt } = Astro.props;
+
+const averageOrderValue = orderCount > 0 ? lifetimeSpend / orderCount : null;
+
+let purchaseFrequency: number | null = null;
+if (orderCount >= 2 && firstOrderAt) {
+  const daysSinceFirst = (Date.now() - new Date(firstOrderAt).getTime()) / 86_400_000;
+  const monthsSinceFirst = Math.max(1, daysSinceFirst / 30);
+  purchaseFrequency = orderCount / monthsSinceFirst;
+}
+
+const classification = orderCount <= 1 ? "New" : "Returning";
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+const formatDate = (value: string | null) => (value ? new Date(value).toLocaleDateString() : "—");
+---
+
+<div class="grid grid-cols-2 md:grid-cols-3 gap-md">
+  <Card>
+    <p class="text-xs uppercase tracking-[0.5px] text-muted">Lifetime spend</p>
+    <p class="mt-xs text-2xl font-bold text-ink">{formatCurrency(lifetimeSpend)}</p>
+  </Card>
+  <Card>
+    <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders</p>
+    <p class="mt-xs text-2xl font-bold text-ink">{orderCount}</p>
+  </Card>
+  <Card>
+    <p class="text-xs uppercase tracking-[0.5px] text-muted">Average order value</p>
+    <p class="mt-xs text-2xl font-bold text-ink">
+      {averageOrderValue !== null ? formatCurrency(averageOrderValue) : "—"}
+    </p>
+  </Card>
+  <Card>
+    <p class="text-xs uppercase tracking-[0.5px] text-muted">Last order</p>
+    <p class="mt-xs text-2xl font-bold text-ink">{formatDate(lastOrderAt)}</p>
+  </Card>
+  <Card>
+    <p class="text-xs uppercase tracking-[0.5px] text-muted">Purchase frequency</p>
+    <p class="mt-xs text-2xl font-bold text-ink">
+      {purchaseFrequency !== null ? `${purchaseFrequency.toFixed(1)}/mo` : "—"}
+    </p>
+  </Card>
+  <Card>
+    <p class="text-xs uppercase tracking-[0.5px] text-muted">Classification</p>
+    <Badge tone={classification === "New" ? "neutral" : "success"} class="mt-xs">
+      {classification}
+    </Badge>
+  </Card>
+</div>

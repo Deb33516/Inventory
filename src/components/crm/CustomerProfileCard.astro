@@ -1,0 +1,39 @@
+---
+// Read-only staff view of a customer's identity — editing lives in the
+// customer's own /account page (profiles_update_own has no staff-write
+// counterpart, deliberately: name/phone stay self-service).
+import Card from "../ui/Card.astro";
+
+interface Address {
+  formatted?: string;
+}
+
+interface Props {
+  fullName: string | null;
+  email: string | null;
+  phone: string | null;
+  billingAddress: Address | null;
+  shippingAddress: Address | null;
+  createdAt: string;
+}
+
+const { fullName, email, phone, billingAddress, shippingAddress, createdAt } = Astro.props;
+---
+
+<Card>
+  <h2 class="text-lg font-bold text-ink">{fullName ?? "Unnamed customer"}</h2>
+  <p class="mt-xs text-sm text-body">{email ?? "—"}</p>
+  <p class="text-sm text-body">{phone ?? "—"}</p>
+  <p class="mt-xs text-xs text-muted">Customer since {new Date(createdAt).toLocaleDateString()}</p>
+
+  <div class="mt-md grid grid-cols-1 md:grid-cols-2 gap-md">
+    <div>
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Billing address</p>
+      <p class="mt-xs text-sm text-body whitespace-pre-line">{billingAddress?.formatted || "—"}</p>
+    </div>
+    <div>
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Shipping address</p>
+      <p class="mt-xs text-sm text-body whitespace-pre-line">{shippingAddress?.formatted || "—"}</p>
+    </div>
+  </div>
+</Card>

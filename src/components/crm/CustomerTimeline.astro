@@ -1,0 +1,59 @@
+---
+// Order timeline: real orders now (empty until Phase 7 ships place_order()),
+// plus one fixed, always-true marker (account created). No synthetic
+// events are invented. The same query/component keeps working unchanged
+// once real orders start flowing.
+import EmptyState from "../catalog/EmptyState.astro";
+import Badge from "../ui/Badge.astro";
+
+interface OrderEntry {
+  id: string;
+  status: string;
+  total: number;
+  created_at: string;
+}
+
+interface Props {
+  orders: OrderEntry[];
+  accountCreatedAt: string;
+}
+
+const { orders, accountCreatedAt } = Astro.props;
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+const statusTone: Record<string, "success" | "warning" | "error" | "neutral"> = {
+  delivered: "success",
+  shipped: "success",
+  confirmed: "neutral",
+  processing: "neutral",
+  pending: "warning",
+  cancelled: "error",
+  refunded: "error",
+};
+---
+
+<div>
+  {
+    orders.length > 0 ? (
+      <ul class="space-y-sm">
+        {orders.map((o) => (
+          <li class="flex items-center justify-between border-b border-hairline pb-sm">
+            <div>
+              <p class="text-sm font-bold text-ink">Order {o.id.slice(0, 8)}</p>
+              <p class="text-xs text-muted">{new Date(o.created_at).toLocaleString()}</p>
+            </div>
+            <div class="flex items-center gap-sm">
+              <span class="text-sm text-body">{formatCurrency(o.total)}</span>
+              <Badge tone={statusTone[o.status] ?? "neutral"}>{o.status}</Badge>
+            </div>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <EmptyState title="No orders yet" message="Orders placed will appear here." />
+    )
+  }
+  <p class="mt-md text-xs text-muted">Account created {new Date(accountCreatedAt).toLocaleDateString()}</p>
+</div>

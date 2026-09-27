@@ -2,10 +2,41 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
 import Button from "../../components/ui/Button.astro";
+import CustomerProfileForm from "../../components/crm/CustomerProfileForm.astro";
+import CustomerTimeline from "../../components/crm/CustomerTimeline.astro";
 
 // Middleware guarantees a user is present for every /account/* route —
 // this page only renders the authenticated state.
 const { user } = Astro.locals;
+const userId = user!.id;
+
+const { data: profile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("full_name, phone, created_at")
+  .eq("id", userId)
+  .single();
+
+// Deliberately not selecting `notes` — that's staff-only CRM data and
+// must never appear on the customer's own account page, even though RLS
+// (row-level, not column-level) would technically allow the read.
+const { data: customer } = await Astro.locals.supabase
+  .from("customers")
+  .select("billing_address, shipping_address, marketing_opt_in")
+  .eq("profile_id", userId)
+  .single();
+
+const { data: metrics } = await Astro.locals.supabase
+  .from("customer_metrics")
+  .select("order_count, last_order_at")
+  .eq("profile_id", userId)
+  .maybeSingle();
+
+const { data: orders } = await Astro.locals.supabase
+  .from("orders")
+  .select("id, status, total, created_at")
+  .eq("customer_id", userId)
+  .order("created_at", { ascending: false })
+  .limit(10);
 ---
 
 <BaseLayout title="Your account — Inventory">
@@ -14,13 +45,36 @@ const { user } = Astro.locals;
     <Button id="signout-btn" variant="secondary">Sign out</Button>
   </header>
 
-  <main class="max-w-[1440px] mx-auto px-lg py-xxl">
-    <Card class="max-w-md">
-      <h1 class="text-2xl font-bold text-ink">Signed in</h1>
-      <p class="mt-xs text-sm font-light text-body">{user?.email}</p>
-      <p class="mt-md text-sm font-light text-muted">
-        Order history, profile details, and account settings will appear here in a
-        later phase.
+  <main class="max-w-[1440px] mx-auto px-lg py-xxl grid grid-cols-1 lg:grid-cols-3 gap-lg">
+    <div class="lg:col-span-2 space-y-lg">
+      <Card>
+        <h1 class="text-2xl font-bold text-ink">Your profile</h1>
+        <p class="mt-xs text-sm font-light text-body">{user?.email}</p>
+        <div class="mt-lg">
+          <CustomerProfileForm
+            fullName={profile?.full_name ?? null}
+            phone={profile?.phone ?? null}
+            billingAddress={customer?.billing_address ?? null}
+            shippingAddress={customer?.shipping_address ?? null}
+            marketingOptIn={customer?.marketing_opt_in ?? false}
+          />
+        </div>
+      </Card>
+
+      <Card>
+        <h2 class="text-lg font-bold text-ink">Order history</h2>
+        <div class="mt-md">
+          <CustomerTimeline orders={orders ?? []} accountCreatedAt={profile?.created_at ?? new Date().toISOString()} />
+        </div>
+      </Card>
+    </div>
+
+    <Card class="h-fit">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders placed</p>
+      <p class="mt-xs text-3xl font-bold text-ink">{metrics?.order_count ?? 0}</p>
+      <p class="mt-md text-xs uppercase tracking-[0.5px] text-muted">Last order</p>
+      <p class="mt-xs text-lg font-bold text-ink">
+        {metrics?.last_order_at ? new Date(metrics.last_order_at).toLocaleDateString() : "—"}
       </p>
     </Card>
   </main>

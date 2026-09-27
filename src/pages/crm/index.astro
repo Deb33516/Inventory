@@ -1,0 +1,44 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import Card from "../../components/ui/Card.astro";
+
+const { data: metricsRows } = await Astro.locals.supabase.from("customer_metrics").select("order_count");
+
+const rows = metricsRows ?? [];
+const totalCustomers = rows.length;
+const newCount = rows.filter((r) => r.order_count <= 1).length;
+const returningCount = totalCustomers - newCount;
+---
+
+<BaseLayout title="CRM dashboard">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <span class="font-bold text-ink">CRM</span>
+    <nav class="flex items-center gap-lg text-sm text-ink">
+      <a href="/crm/customers" class="hover:text-primary">Customers</a>
+      <a href="/inventory" class="hover:text-primary">Inventory</a>
+    </nav>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+
+    <div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
+      <Card>
+        <p class="text-xs uppercase tracking-[0.5px] text-muted">Total customers</p>
+        <p class="mt-xs text-3xl font-bold text-ink">{totalCustomers}</p>
+      </Card>
+      <a href="/crm/customers?type=new" class="block">
+        <Card class="hover:border-ink transition-colors">
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">New</p>
+          <p class="mt-xs text-3xl font-bold text-ink">{newCount}</p>
+        </Card>
+      </a>
+      <a href="/crm/customers?type=returning" class="block">
+        <Card class="hover:border-ink transition-colors">
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">Returning</p>
+          <p class="mt-xs text-3xl font-bold text-ink">{returningCount}</p>
+        </Card>
+      </a>
+    </div>
+  </main>
+</BaseLayout>

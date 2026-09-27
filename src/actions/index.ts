@@ -1,6 +1,7 @@
 import { defineAction, ActionError } from "astro:actions";
 import { z } from "astro/zod";
 import { createClient } from "../lib/supabase/server";
+import type { UserRole } from "../lib/types";
 
 // Astro's form-to-object conversion fills any declared field missing from
 // FormData with null (rather than omitting the key), and a present-but-empty
@@ -536,6 +537,133 @@ export const server = {
       }
 
       return { message: "Supplier updated." };
+    },
+  }),
+
+  updateCustomerProfile: defineAction({
+    accept: "form",
+    input: z.object({
+      fullName: z.string().min(1, "Full name is required"),
+      phone: z.preprocess(emptyToUndefined, z.string().optional()),
+      billingAddress: z.preprocess(emptyToUndefined, z.string().optional()),
+      shippingAddress: z.preprocess(emptyToUndefined, z.string().optional()),
+      marketingOptIn: z.preprocess(emptyToUndefined, z.coerce.boolean().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        throw new ActionError({ code: "UNAUTHORIZED", message: "You must be signed in." });
+      }
+
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({ full_name: input.fullName, phone: input.phone ?? null })
+        .eq("id", user.id);
+
+      if (profileError) {
+        throw new ActionError({ code: "BAD_REQUEST", message: profileError.message });
+      }
+
+      const { error: customerError } = await supabase
+        .from("customers")
+        .update({
+          billing_address: input.billingAddress ? { formatted: input.billingAddress } : null,
+          shipping_address: input.shippingAddress ? { formatted: input.shippingAddress } : null,
+          marketing_opt_in: Boolean(input.marketingOptIn),
+        })
+        .eq("profile_id", user.id);
+
+      if (customerError) {
+        throw new ActionError({ code: "BAD_REQUEST", message: customerError.message });
+      }
+
+      return { message: "Profile updated." };
+    },
+  }),
+
+  updateCustomerNotes: defineAction({
+    accept: "form",
+    input: z.object({
+      profileId: z.string().uuid(),
+      notes: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        throw new ActionError({ code: "UNAUTHORIZED", message: "You must be signed in." });
+      }
+
+      // customer_notes RLS enforces this independently now (staff-only,
+      // target must be role='customer'), but this explicit check still
+      // gives a fast, friendly error instead of a generic RLS failure.
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      const staffRoles: UserRole[] = ["sales_staff", "admin", "super_admin"];
+
+      if (!profile || !staffRoles.includes(profile.role as UserRole)) {
+        throw new ActionError({ code: "FORBIDDEN", message: "Only staff can edit customer notes." });
+      }
+
+      const trimmedNote = input.notes?.trim();
+
+      const { data: existing } = await supabase
+        .from("customer_notes")
+        .select("id")
+        .eq("customer_id", input.profileId)
+        .maybeSingle();
+
+      // A blank note clears it — delete the row rather than storing an
+      // empty string, since customer_notes.note is check-constrained to
+      // be non-blank ("no notes yet" is "no row").
+      if (!trimmedNote) {
+        if (existing) {
+          const { error: deleteError } = await supabase
+            .from("customer_notes")
+            .delete()
+            .eq("customer_id", input.profileId);
+
+          if (deleteError) {
+            throw new ActionError({ code: "BAD_REQUEST", message: deleteError.message });
+          }
+        }
+
+        return { message: "Notes updated." };
+      }
+
+      const { error } = existing
+        ? await supabase
+            .from("customer_notes")
+            .update({ note: trimmedNote })
+            .eq("customer_id", input.profileId)
+        : await supabase
+            .from("customer_notes")
+            .insert({ customer_id: input.profileId, note: trimmedNote, created_by: user.id });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Notes updated." };
     },
   }),
 };

@@ -1,0 +1,189 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import FilterChip from "../../../components/catalog/FilterChip.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import Badge from "../../../components/ui/Badge.astro";
+
+// customer_metrics is a view over profiles LEFT JOIN orders, not a table
+// with a declared FK to profiles, so PostgREST can't embed it via a
+// single select — two queries, merged in JS, keeps this simple and
+// correct at the dataset sizes this project targets.
+const PAGE_SIZE = 20;
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const type = url.searchParams.get("type") ?? "";
+const sort = url.searchParams.get("sort") ?? "name";
+const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+
+let profileQuery = Astro.locals.supabase
+  .from("profiles")
+  .select("id, full_name, created_at")
+  .eq("role", "customer");
+
+if (search) {
+  profileQuery = profileQuery.ilike("full_name", `%${search}%`);
+}
+
+const { data: profiles } = await profileQuery;
+
+const { data: metricsRows } = await Astro.locals.supabase
+  .from("customer_metrics")
+  .select("profile_id, order_count, lifetime_spend, last_order_at");
+
+const metricsByProfile = new Map((metricsRows ?? []).map((m) => [m.profile_id, m]));
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+let customers = (profiles ?? []).map((p) => {
+  const m = metricsByProfile.get(p.id);
+  const orderCount = m?.order_count ?? 0;
+  return {
+    id: p.id,
+    fullName: p.full_name ?? "Unnamed customer",
+    orderCount,
+    lifetimeSpend: m?.lifetime_spend ?? 0,
+    lastOrderAt: m?.last_order_at ?? null,
+    classification: orderCount <= 1 ? "new" : "returning",
+  };
+});
+
+if (type) {
+  customers = customers.filter((c) => c.classification === type);
+}
+
+type CustomerRow = (typeof customers)[number];
+const sortFns: Record<string, (a: CustomerRow, b: CustomerRow) => number> = {
+  name: (a, b) => a.fullName.localeCompare(b.fullName),
+  spend: (a, b) => b.lifetimeSpend - a.lifetimeSpend,
+  recent: (a, b) => (b.lastOrderAt ?? "").localeCompare(a.lastOrderAt ?? ""),
+};
+customers.sort(sortFns[sort] ?? sortFns.name);
+
+const totalPages = Math.max(1, Math.ceil(customers.length / PAGE_SIZE));
+const pageItems = customers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/crm/customers?${qs}` : "/crm/customers";
+}
+---
+
+<BaseLayout title="Customers — CRM">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/crm" class="font-bold text-ink">← CRM</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Customers</h1>
+
+    <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
+      <input
+        type="text"
+        name="search"
+        value={search}
+        placeholder="Search by name..."
+        class="w-full md:max-w-sm h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
+      />
+      <select name="sort" class="h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none">
+        <option value="name" selected={sort === "name"}>
+          Name
+        </option>
+        <option value="spend" selected={sort === "spend"}>
+          Lifetime spend
+        </option>
+        <option value="recent" selected={sort === "recent"}>
+          Most recent order
+        </option>
+      </select>
+      {type && <input type="hidden" name="type" value={type} />}
+      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
+        Apply
+      </button>
+    </form>
+
+    <div class="mt-md flex gap-xs overflow-x-auto pb-xs">
+      <FilterChip href={buildUrl({ type: undefined, page: undefined })} active={!type}>
+        All
+      </FilterChip>
+      <FilterChip href={buildUrl({ type: "new", page: undefined })} active={type === "new"}>
+        New
+      </FilterChip>
+      <FilterChip href={buildUrl({ type: "returning", page: undefined })} active={type === "returning"}>
+        Returning
+      </FilterChip>
+    </div>
+
+    {
+      pageItems.length > 0 ? (
+        <>
+          <div class="mt-lg overflow-x-auto">
+            <table class="w-full text-sm border-collapse">
+              <thead>
+                <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                  <th class="py-xs pr-md">Name</th>
+                  <th class="py-xs pr-md">Orders</th>
+                  <th class="py-xs pr-md">Lifetime spend</th>
+                  <th class="py-xs pr-md">Last order</th>
+                  <th class="py-xs pr-md">Type</th>
+                  <th class="py-xs" />
+                </tr>
+              </thead>
+              <tbody>
+                {pageItems.map((c) => (
+                  <tr class="border-b border-hairline">
+                    <td class="py-sm pr-md text-ink font-bold">{c.fullName}</td>
+                    <td class="py-sm pr-md text-body">{c.orderCount}</td>
+                    <td class="py-sm pr-md text-body">{formatCurrency(c.lifetimeSpend)}</td>
+                    <td class="py-sm pr-md text-body">
+                      {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString() : "—"}
+                    </td>
+                    <td class="py-sm pr-md">
+                      <Badge tone={c.classification === "new" ? "neutral" : "success"}>
+                        {c.classification === "new" ? "New" : "Returning"}
+                      </Badge>
+                    </td>
+                    <td class="py-sm">
+                      <a href={`/crm/customers/${c.id}`} class="text-primary font-bold">
+                        View
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div class="mt-xl flex items-center justify-center gap-md text-sm">
+              <a
+                href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
+                aria-disabled={page <= 1}
+                class={`px-md py-xs border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
+              >
+                Previous
+              </a>
+              <span class="text-muted">
+                Page {page} of {totalPages}
+              </span>
+              <a
+                href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
+                aria-disabled={page >= totalPages}
+                class={`px-md py-xs border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : ""}`}
+              >
+                Next
+              </a>
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyState class="mt-lg" title="No customers found" />
+      )
+    }
+  </main>
+</BaseLayout>

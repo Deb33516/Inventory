@@ -1,0 +1,48 @@
+---
+// Staff-only internal CRM notes — never rendered on the customer's own
+// account page.
+import Textarea from "../ui/Textarea.astro";
+import Button from "../ui/Button.astro";
+
+interface Props {
+  profileId: string;
+  notes: string | null;
+}
+
+const { profileId, notes } = Astro.props;
+---
+
+<form id="notes-form" class="space-y-md">
+  <input type="hidden" name="profileId" value={profileId} />
+  <Textarea label="Staff notes (internal — not visible to the customer)" name="notes" value={notes ?? ""} rows={6} />
+  <p id="notes-message" class="text-sm" role="status" />
+  <Button type="submit" variant="secondary">Save notes</Button>
+</form>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#notes-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#notes-message")!;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions.updateCustomerNotes(new FormData(form));
+
+    button.disabled = false;
+
+    if (error) {
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    messageEl.textContent = "Saved.";
+    messageEl.classList.add("text-success");
+  });
+</script>
