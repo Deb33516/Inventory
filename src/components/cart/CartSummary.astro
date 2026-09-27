@@ -1,0 +1,81 @@
+---
+---
+
+<div id="cart-summary">
+  <ul id="cart-items" class="space-y-sm"></ul>
+  <p id="cart-empty" class="hidden text-sm text-muted py-lg text-center">Your cart is empty.</p>
+  <div class="mt-md flex justify-end">
+    <p class="text-lg font-bold text-ink">Total: <span id="cart-total">—</span></p>
+  </div>
+</div>
+
+<script>
+  import { getCart, updateCartQuantity, removeFromCart } from "../../lib/cart";
+
+  const itemsEl = document.querySelector<HTMLUListElement>("#cart-items")!;
+  const emptyEl = document.querySelector<HTMLParagraphElement>("#cart-empty")!;
+  const totalEl = document.querySelector<HTMLSpanElement>("#cart-total")!;
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+  function render() {
+    const items = getCart();
+    itemsEl.innerHTML = "";
+    emptyEl.classList.toggle("hidden", items.length > 0);
+
+    let total = 0;
+
+    for (const item of items) {
+      total += item.price * item.quantity;
+
+      const li = document.createElement("li");
+      li.className = "flex items-center justify-between gap-md border-b border-hairline pb-sm";
+
+      const info = document.createElement("div");
+      const title = document.createElement("p");
+      title.className = "font-bold text-ink text-sm";
+      title.textContent = item.name;
+      const meta = document.createElement("p");
+      meta.className = "text-xs text-muted";
+      meta.textContent = `${item.sku} · ${formatCurrency(item.price)} each`;
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const controls = document.createElement("div");
+      controls.className = "flex items-center gap-sm";
+
+      const qtyInput = document.createElement("input");
+      qtyInput.type = "number";
+      qtyInput.min = "1";
+      qtyInput.value = String(item.quantity);
+      qtyInput.className = "h-10 w-16 px-sm bg-canvas text-ink border border-hairline outline-none";
+      qtyInput.addEventListener("change", () => {
+        updateCartQuantity(item.productId, parseInt(qtyInput.value, 10) || 0);
+        render();
+        window.dispatchEvent(new CustomEvent("cart-updated"));
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.textContent = "Remove";
+      removeBtn.className = "text-error text-xs font-bold";
+      removeBtn.addEventListener("click", () => {
+        removeFromCart(item.productId);
+        render();
+        window.dispatchEvent(new CustomEvent("cart-updated"));
+      });
+
+      controls.appendChild(qtyInput);
+      controls.appendChild(removeBtn);
+      li.appendChild(info);
+      li.appendChild(controls);
+      itemsEl.appendChild(li);
+    }
+
+    totalEl.textContent = formatCurrency(total);
+  }
+
+  render();
+  window.addEventListener("cart-updated", render);
+</script>

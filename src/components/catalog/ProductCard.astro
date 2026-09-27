@@ -1,7 +1,9 @@
 ---
 import Card from "../ui/Card.astro";
+import AddToCartButton from "../cart/AddToCartButton.astro";
 
 interface Props {
+  productId: string;
   sku: string;
   name: string;
   price: number;
@@ -9,7 +11,7 @@ interface Props {
   imageUrl?: string | null;
 }
 
-const { sku, name, price, categoryName, imageUrl } = Astro.props;
+const { productId, sku, name, price, categoryName, imageUrl } = Astro.props;
 
 const formattedPrice = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -32,5 +34,6 @@ const formattedPrice = new Intl.NumberFormat("en-IN", {
     {categoryName && <p class="text-xs uppercase tracking-[0.5px] text-muted mb-xxs">{categoryName}</p>}
     <h3 class="font-bold text-ink">{name}</h3>
     <p class="mt-xs text-sm font-light text-body">{formattedPrice}</p>
+    <AddToCartButton productId={productId} sku={sku} name={name} price={price} class="mt-sm" />
   </Card>
 </a>

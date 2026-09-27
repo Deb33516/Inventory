@@ -666,4 +666,75 @@ export const server = {
       return { message: "Notes updated." };
     },
   }),
+
+  placeOrder: defineAction({
+    input: z.object({
+      customerId: z.string().uuid(),
+      items: z
+        .array(
+          z.object({
+            productId: z.string().uuid(),
+            quantity: z.number().int().positive(),
+          })
+        )
+        .min(1, "Add at least one item"),
+      shippingAddress: z.string().min(1, "Shipping address is required"),
+      paymentMethod: z.enum(["card", "upi", "cash", "bank_transfer"]),
+      notes: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase.rpc("place_order", {
+        p_customer_id: input.customerId,
+        p_items: input.items.map((i) => ({ product_id: i.productId, quantity: i.quantity })),
+        p_shipping_address: { formatted: input.shippingAddress },
+        p_payment_method: input.paymentMethod,
+        p_notes: input.notes ?? null,
+      });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Order placed.", order: data };
+    },
+  }),
+
+  updateOrderStatus: defineAction({
+    input: z.object({
+      orderId: z.string().uuid(),
+      newStatus: z.enum([
+        "pending",
+        "confirmed",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "refunded",
+      ]),
+      reason: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase.rpc("update_order_status", {
+        p_order_id: input.orderId,
+        p_new_status: input.newStatus,
+        p_reason: input.reason ?? null,
+      });
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Order updated.", order: data };
+    },
+  }),
 };

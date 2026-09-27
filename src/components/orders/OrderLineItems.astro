@@ -1,0 +1,56 @@
+---
+interface LineItem {
+  id: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+  products: { sku: string; name: string } | null;
+}
+
+interface Props {
+  items: LineItem[];
+  subtotal: number;
+  tax: number;
+  shippingFee: number;
+  total: number;
+}
+
+const { items, subtotal, tax, shippingFee, total } = Astro.props;
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+---
+
+<div class="overflow-x-auto">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+        <th class="py-xs pr-md">Product</th>
+        <th class="py-xs pr-md">Qty</th>
+        <th class="py-xs pr-md">Unit price</th>
+        <th class="py-xs pr-md">Subtotal</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        items.map((item) => (
+          <tr class="border-b border-hairline">
+            <td class="py-sm pr-md text-ink font-bold">
+              {item.products?.name ?? "—"} <span class="text-muted font-normal">({item.products?.sku})</span>
+            </td>
+            <td class="py-sm pr-md text-body">{item.quantity}</td>
+            <td class="py-sm pr-md text-body">{formatCurrency(item.unit_price)}</td>
+            <td class="py-sm pr-md text-body">{formatCurrency(item.subtotal)}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+
+  <div class="mt-md flex flex-col items-end gap-xxs text-sm">
+    <p class="text-body">Subtotal: {formatCurrency(subtotal)}</p>
+    <p class="text-body">Tax: {formatCurrency(tax)}</p>
+    <p class="text-body">Shipping: {formatCurrency(shippingFee)}</p>
+    <p class="text-ink font-bold text-base">Total: {formatCurrency(total)}</p>
+  </div>
+</div>

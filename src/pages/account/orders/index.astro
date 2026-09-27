@@ -1,0 +1,64 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
+
+const { user } = Astro.locals;
+const userId = user!.id;
+
+const { data: orders } = await Astro.locals.supabase
+  .from("orders")
+  .select("id, status, total, created_at")
+  .eq("customer_id", userId)
+  .order("created_at", { ascending: false });
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+---
+
+<BaseLayout title="Your orders — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/account" class="font-bold text-ink">← Account</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Your orders</h1>
+
+    {
+      orders && orders.length > 0 ? (
+        <div class="mt-lg overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                <th class="py-xs pr-md">Order</th>
+                <th class="py-xs pr-md">Date</th>
+                <th class="py-xs pr-md">Total</th>
+                <th class="py-xs pr-md">Status</th>
+                <th class="py-xs" />
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr class="border-b border-hairline">
+                  <td class="py-sm pr-md text-ink font-bold">{o.id.slice(0, 8)}</td>
+                  <td class="py-sm pr-md text-body">{new Date(o.created_at).toLocaleDateString()}</td>
+                  <td class="py-sm pr-md text-body">{formatCurrency(o.total)}</td>
+                  <td class="py-sm pr-md">
+                    <OrderStatusBadge status={o.status} />
+                  </td>
+                  <td class="py-sm">
+                    <a href={`/account/orders/${o.id}`} class="text-primary font-bold">
+                      View
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState class="mt-lg" title="No orders yet" message="Your orders will appear here once you check out." />
+      )
+    }
+  </main>
+</BaseLayout>

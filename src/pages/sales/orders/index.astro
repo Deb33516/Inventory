@@ -1,0 +1,137 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import FilterChip from "../../../components/catalog/FilterChip.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
+
+// orders has two FKs to profiles (customer_id, placed_by), so a plain
+// select embed would be ambiguous without knowing the exact generated
+// constraint name — two queries merged in JS avoids relying on that,
+// same pattern already used for the Phase 6 CRM customer list.
+const url = Astro.url;
+const status = url.searchParams.get("status") ?? "";
+const search = url.searchParams.get("search")?.trim() ?? "";
+
+let query = Astro.locals.supabase
+  .from("orders")
+  .select("id, customer_id, status, total, created_at")
+  .order("created_at", { ascending: false });
+
+if (status) query = query.eq("status", status);
+
+const { data: orders } = await query;
+
+const customerIds = [...new Set((orders ?? []).map((o) => o.customer_id))];
+
+const { data: customers } =
+  customerIds.length > 0
+    ? await Astro.locals.supabase.from("profiles").select("id, full_name").in("id", customerIds)
+    : { data: [] };
+
+const nameById = new Map((customers ?? []).map((c) => [c.id, c.full_name ?? "Unnamed customer"]));
+
+const filtered = (orders ?? []).filter((o) => {
+  if (!search) return true;
+  return (nameById.get(o.customer_id) ?? "").toLowerCase().includes(search.toLowerCase());
+});
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/sales/orders?${qs}` : "/sales/orders";
+}
+---
+
+<BaseLayout title="Orders — Sales">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/sales" class="font-bold text-ink">← Sales</a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Orders</h1>
+
+    <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
+      <input
+        type="text"
+        name="search"
+        value={search}
+        placeholder="Search by customer name..."
+        class="w-full md:max-w-sm h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
+      />
+      {status && <input type="hidden" name="status" value={status} />}
+      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
+        Apply
+      </button>
+    </form>
+
+    <div class="mt-md flex gap-xs overflow-x-auto pb-xs">
+      <FilterChip href={buildUrl({ status: undefined })} active={!status}>
+        All
+      </FilterChip>
+      <FilterChip href={buildUrl({ status: "pending" })} active={status === "pending"}>
+        Pending
+      </FilterChip>
+      <FilterChip href={buildUrl({ status: "confirmed" })} active={status === "confirmed"}>
+        Confirmed
+      </FilterChip>
+      <FilterChip href={buildUrl({ status: "processing" })} active={status === "processing"}>
+        Processing
+      </FilterChip>
+      <FilterChip href={buildUrl({ status: "shipped" })} active={status === "shipped"}>
+        Shipped
+      </FilterChip>
+      <FilterChip href={buildUrl({ status: "delivered" })} active={status === "delivered"}>
+        Delivered
+      </FilterChip>
+      <FilterChip href={buildUrl({ status: "cancelled" })} active={status === "cancelled"}>
+        Cancelled
+      </FilterChip>
+    </div>
+
+    {
+      filtered.length > 0 ? (
+        <div class="mt-lg overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                <th class="py-xs pr-md">Order</th>
+                <th class="py-xs pr-md">Customer</th>
+                <th class="py-xs pr-md">Date</th>
+                <th class="py-xs pr-md">Total</th>
+                <th class="py-xs pr-md">Status</th>
+                <th class="py-xs" />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((o) => (
+                <tr class="border-b border-hairline">
+                  <td class="py-sm pr-md text-ink font-bold">{o.id.slice(0, 8)}</td>
+                  <td class="py-sm pr-md text-body">{nameById.get(o.customer_id) ?? "—"}</td>
+                  <td class="py-sm pr-md text-body">{new Date(o.created_at).toLocaleDateString()}</td>
+                  <td class="py-sm pr-md text-body">{formatCurrency(o.total)}</td>
+                  <td class="py-sm pr-md">
+                    <OrderStatusBadge status={o.status} />
+                  </td>
+                  <td class="py-sm">
+                    <a href={`/sales/orders/${o.id}`} class="text-primary font-bold">
+                      View
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState class="mt-lg" title="No orders found" />
+      )
+    }
+  </main>
+</BaseLayout>

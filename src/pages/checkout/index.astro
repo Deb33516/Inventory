@@ -1,0 +1,90 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import Card from "../../components/ui/Card.astro";
+import Input from "../../components/ui/Input.astro";
+import Select from "../../components/ui/Select.astro";
+import Textarea from "../../components/ui/Textarea.astro";
+import Button from "../../components/ui/Button.astro";
+import CartSummary from "../../components/cart/CartSummary.astro";
+
+// Middleware guarantees a user is present for every /checkout/* route.
+const { user } = Astro.locals;
+const userId = user!.id;
+---
+
+<BaseLayout title="Checkout — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/cart" class="font-bold text-ink">← Cart</a>
+  </header>
+
+  <main class="max-w-[720px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Checkout</h1>
+
+    <Card class="mt-lg">
+      <CartSummary />
+    </Card>
+
+    <Card class="mt-lg">
+      <form id="checkout-form" class="space-y-md">
+        <Input label="Shipping address" name="shippingAddress" required />
+        <Select
+          label="Payment method"
+          name="paymentMethod"
+          options={[
+            { value: "card", label: "Card" },
+            { value: "upi", label: "UPI" },
+            { value: "cash", label: "Cash" },
+            { value: "bank_transfer", label: "Bank transfer" },
+          ]}
+          required
+        />
+        <Textarea label="Notes (optional)" name="notes" />
+        <p id="form-message" class="text-sm" role="status" />
+        <Button type="submit" variant="primary">Place order</Button>
+      </form>
+    </Card>
+  </main>
+</BaseLayout>
+
+<script define:vars={{ userId }}>
+  import { actions } from "astro:actions";
+  import { getCart, clearCart } from "../../lib/cart";
+
+  const form = document.querySelector("#checkout-form");
+  const messageEl = document.querySelector("#form-message");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const cart = getCart();
+    if (cart.length === 0) {
+      messageEl.textContent = "Your cart is empty.";
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    const formData = new FormData(form);
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+
+    const { data, error } = await actions.placeOrder({
+      customerId: userId,
+      items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+      shippingAddress: formData.get("shippingAddress"),
+      paymentMethod: formData.get("paymentMethod"),
+      notes: formData.get("notes") || undefined,
+    });
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    clearCart();
+    window.location.href = `/account/orders/${data.order.id}?created=1`;
+  });
+</script>

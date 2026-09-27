@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
+import AddToCartButton from "../../components/cart/AddToCartButton.astro";
 
 const { sku } = Astro.params;
 
@@ -48,6 +49,13 @@ const formattedPrice = product
             {product.description && (
               <p class="mt-lg text-sm font-light text-body leading-relaxed">{product.description}</p>
             )}
+            <AddToCartButton
+              productId={product.id}
+              sku={product.sku}
+              name={product.name}
+              price={product.price}
+              class="mt-lg max-w-xs"
+            />
           </div>
         </div>
       ) : (

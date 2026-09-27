@@ -1,0 +1,24 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import Card from "../../components/ui/Card.astro";
+import Button from "../../components/ui/Button.astro";
+import CartSummary from "../../components/cart/CartSummary.astro";
+---
+
+<BaseLayout title="Cart — Inventory">
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/products" class="font-bold text-ink">← Continue shopping</a>
+  </header>
+
+  <main class="max-w-[720px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Your cart</h1>
+
+    <Card class="mt-lg">
+      <CartSummary />
+    </Card>
+
+    <div class="mt-lg flex justify-end">
+      <Button href="/checkout" variant="primary">Checkout</Button>
+    </div>
+  </main>
+</BaseLayout>

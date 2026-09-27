@@ -1,0 +1,52 @@
+---
+interface Props {
+  productId: string;
+  sku: string;
+  name: string;
+  price: number;
+  class?: string;
+}
+
+const { productId, sku, name, price, class: className = "" } = Astro.props;
+---
+
+<div class={className}>
+  <button
+    type="button"
+    class="add-to-cart-btn w-full h-10 px-md bg-primary text-on-primary font-bold text-xs uppercase tracking-[0.5px]"
+    data-product-id={productId}
+    data-sku={sku}
+    data-name={name}
+    data-price={price}
+  >
+    Add to cart
+  </button>
+  <p class="add-to-cart-message mt-xs text-xs text-success hidden" role="status">Added to cart.</p>
+</div>
+
+<script>
+  import { addToCart } from "../../lib/cart";
+
+  document.querySelectorAll<HTMLButtonElement>(".add-to-cart-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      // ProductCard wraps the whole tile in an <a> (catalog → detail
+      // page navigation) — this button lives inside it, so its click
+      // must never bubble into that navigation.
+      event.preventDefault();
+      event.stopPropagation();
+
+      addToCart({
+        productId: button.dataset.productId!,
+        sku: button.dataset.sku!,
+        name: button.dataset.name!,
+        price: Number(button.dataset.price),
+      });
+
+      const message = button.parentElement?.querySelector<HTMLParagraphElement>(".add-to-cart-message");
+      message?.classList.remove("hidden");
+      setTimeout(() => message?.classList.add("hidden"), 1500);
+
+      window.dispatchEvent(new CustomEvent("cart-updated"));
+    });
+  });
+</script>

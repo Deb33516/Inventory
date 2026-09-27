@@ -1,0 +1,193 @@
+---
+import Select from "../ui/Select.astro";
+import Input from "../ui/Input.astro";
+import Textarea from "../ui/Textarea.astro";
+import Button from "../ui/Button.astro";
+
+interface CustomerOption {
+  value: string;
+  label: string;
+}
+
+interface ProductOption {
+  id: string;
+  sku: string;
+  name: string;
+  price: number;
+}
+
+interface Props {
+  customers: CustomerOption[];
+  products: ProductOption[];
+}
+
+const { customers, products } = Astro.props;
+---
+
+<form id="new-order-form" class="space-y-lg">
+  <Select label="Customer" name="customerId" options={customers} placeholder="Select a customer" required />
+
+  <div>
+    <label class="block text-sm font-bold text-ink mb-xs">Items</label>
+    <div class="flex flex-wrap gap-sm items-end">
+      <select
+        id="product-picker"
+        class="h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none flex-1 min-w-[200px]"
+      >
+        {
+          products.map((p) => (
+            <option value={p.id} data-sku={p.sku} data-name={p.name} data-price={p.price}>
+              {p.name} ({p.sku})
+            </option>
+          ))
+        }
+      </select>
+      <input
+        id="quantity-picker"
+        type="number"
+        min="1"
+        value="1"
+        class="h-12 w-24 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none"
+      />
+      <button
+        type="button"
+        id="add-item-btn"
+        class="h-12 px-lg bg-canvas text-ink border border-hairline-strong font-bold text-sm"
+      >
+        Add item
+      </button>
+    </div>
+    <ul id="item-list" class="mt-md space-y-xs text-sm" />
+  </div>
+
+  <Input label="Shipping address" name="shippingAddress" required />
+  <Select
+    label="Payment method"
+    name="paymentMethod"
+    options={[
+      { value: "card", label: "Card" },
+      { value: "upi", label: "UPI" },
+      { value: "cash", label: "Cash" },
+      { value: "bank_transfer", label: "Bank transfer" },
+    ]}
+    required
+  />
+  <Textarea label="Notes (optional)" name="notes" />
+
+  <p id="form-message" class="text-sm" role="status" />
+  <Button type="submit" variant="primary">Place order</Button>
+</form>
+
+<script>
+  import { actions } from "astro:actions";
+
+  interface Item {
+    productId: string;
+    sku: string;
+    name: string;
+    price: number;
+    quantity: number;
+  }
+
+  const items: Item[] = [];
+
+  const productPicker = document.querySelector<HTMLSelectElement>("#product-picker")!;
+  const quantityPicker = document.querySelector<HTMLInputElement>("#quantity-picker")!;
+  const addItemBtn = document.querySelector<HTMLButtonElement>("#add-item-btn")!;
+  const itemList = document.querySelector<HTMLUListElement>("#item-list")!;
+  const form = document.querySelector<HTMLFormElement>("#new-order-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+
+  function renderItems() {
+    itemList.innerHTML = "";
+    items.forEach((item, index) => {
+      const li = document.createElement("li");
+      li.className = "flex items-center justify-between border-b border-hairline pb-xs";
+
+      const label = document.createElement("span");
+      label.textContent = `${item.name} × ${item.quantity}`;
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.textContent = "Remove";
+      removeBtn.className = "text-error text-xs font-bold ml-md";
+      removeBtn.addEventListener("click", () => {
+        items.splice(index, 1);
+        renderItems();
+      });
+
+      li.appendChild(label);
+      li.appendChild(removeBtn);
+      itemList.appendChild(li);
+    });
+  }
+
+  addItemBtn.addEventListener("click", () => {
+    const option = productPicker.selectedOptions[0];
+    if (!option) return;
+
+    const quantity = parseInt(quantityPicker.value, 10);
+    if (!quantity || quantity <= 0) return;
+
+    const productId = option.value;
+    const existing = items.find((i) => i.productId === productId);
+
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      items.push({
+        productId,
+        sku: option.dataset.sku!,
+        name: option.dataset.name!,
+        price: Number(option.dataset.price),
+        quantity,
+      });
+    }
+
+    renderItems();
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    if (items.length === 0) {
+      messageEl.textContent = "Add at least one item.";
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    const formData = new FormData(form);
+    const customerId = formData.get("customerId") as string;
+    const shippingAddress = formData.get("shippingAddress") as string;
+    const paymentMethod = formData.get("paymentMethod") as "card" | "upi" | "cash" | "bank_transfer";
+    const notes = formData.get("notes") as string;
+
+    if (!customerId) {
+      messageEl.textContent = "Select a customer.";
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    const submitBtn = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    submitBtn.disabled = true;
+
+    const { data, error } = await actions.placeOrder({
+      customerId,
+      items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+      shippingAddress,
+      paymentMethod,
+      notes: notes || undefined,
+    });
+
+    if (error) {
+      submitBtn.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = `/sales/orders/${data!.order.id}?created=1`;
+  });
+</script>

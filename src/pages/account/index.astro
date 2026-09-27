@@ -62,7 +62,12 @@ const { data: orders } = await Astro.locals.supabase
       </Card>
 
       <Card>
-        <h2 class="text-lg font-bold text-ink">Order history</h2>
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-bold text-ink">Order history</h2>
+          <a href="/account/orders" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
+            View all
+          </a>
+        </div>
         <div class="mt-md">
           <CustomerTimeline orders={orders ?? []} accountCreatedAt={profile?.created_at ?? new Date().toISOString()} />
         </div>

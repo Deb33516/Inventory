@@ -113,6 +113,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
           <div class="mt-lg grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-lg">
             {products.map((p) => (
               <ProductCard
+                productId={p.id}
                 sku={p.sku}
                 name={p.name}
                 price={p.price}

@@ -1,0 +1,97 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
+import OrderLineItems from "../../../components/orders/OrderLineItems.astro";
+import OrderStatusActions from "../../../components/orders/OrderStatusActions.astro";
+
+const { id } = Astro.params;
+const created = Astro.url.searchParams.get("created");
+
+const { data: order } = await Astro.locals.supabase
+  .from("orders")
+  .select("id, status, subtotal, tax, shipping_fee, total, shipping_address, notes, created_at, customer_id")
+  .eq("id", id)
+  .maybeSingle();
+
+if (!order) {
+  Astro.response.status = 404;
+}
+
+const { data: customer } = order
+  ? await Astro.locals.supabase.from("profiles").select("full_name").eq("id", order.customer_id).maybeSingle()
+  : { data: null };
+
+const { data: items } = order
+  ? await Astro.locals.supabase
+      .from("order_items")
+      .select("id, quantity, unit_price, subtotal, products(sku, name)")
+      .eq("order_id", id)
+  : { data: null };
+
+const { data: payment } = order
+  ? await Astro.locals.supabase
+      .from("payments")
+      .select("status, method, paid_at")
+      .eq("order_id", id)
+      .maybeSingle()
+  : { data: null };
+---
+
+<BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Sales` : "Order not found — Sales"}>
+  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
+    <a href="/sales/orders" class="font-bold text-ink">
+      ← Orders
+    </a>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      order ? (
+        <>
+          {created && (
+            <p class="mb-md text-sm text-success" role="status">
+              Order created.
+            </p>
+          )}
+          <div class="flex items-center justify-between flex-wrap gap-md">
+            <div>
+              <h1 class="text-2xl font-bold text-ink">Order {order.id.slice(0, 8)}</h1>
+              <p class="text-sm text-muted">
+                {customer?.full_name ?? "Unknown customer"} · {new Date(order.created_at).toLocaleString()}
+              </p>
+              <a href={`/crm/customers/${order.customer_id}`} class="text-xs text-primary font-bold">
+                View customer in CRM
+              </a>
+            </div>
+            <OrderStatusBadge status={order.status} />
+          </div>
+
+          <Card class="mt-lg">
+            <OrderLineItems
+              items={items ?? []}
+              subtotal={order.subtotal}
+              tax={order.tax}
+              shippingFee={order.shipping_fee}
+              total={order.total}
+            />
+          </Card>
+
+          <Card class="mt-lg">
+            <p class="text-xs uppercase tracking-[0.5px] text-muted">Payment</p>
+            <p class="mt-xs text-sm text-body capitalize">
+              {payment?.method ?? "—"} — {payment?.status ?? "—"}
+            </p>
+          </Card>
+
+          <div class="mt-lg">
+            <OrderStatusActions orderId={order.id} status={order.status} viewerRole="staff" />
+          </div>
+        </>
+      ) : (
+        <EmptyState title="Order not found" />
+      )
+    }
+  </main>
+</BaseLayout>
