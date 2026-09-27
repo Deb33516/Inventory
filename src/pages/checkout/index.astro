@@ -25,7 +25,7 @@ const userId = user!.id;
     </Card>
 
     <Card class="mt-lg">
-      <form id="checkout-form" class="space-y-md">
+      <form id="checkout-form" class="space-y-md" data-user-id={userId}>
         <Input label="Shipping address" name="shippingAddress" required />
         <Select
           label="Payment method"
@@ -46,12 +46,20 @@ const userId = user!.id;
   </main>
 </BaseLayout>
 
-<script define:vars={{ userId }}>
+<script>
+  // Not using `define:vars` here: it forces this script to be inlined as
+  // a plain non-module tag, and a static `import` is a SyntaxError outside
+  // a module context — confirmed against this project's own compiled
+  // production output. Server-rendered values that used to be injected via
+  // define:vars are instead read off the form's dataset, so this stays a
+  // normal, properly bundled module script with both "astro:actions" and
+  // the local cart module resolved correctly by Vite.
   import { actions } from "astro:actions";
   import { getCart, clearCart } from "../../lib/cart";
 
   const form = document.querySelector("#checkout-form");
   const messageEl = document.querySelector("#form-message");
+  const userId = form.dataset.userId;
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

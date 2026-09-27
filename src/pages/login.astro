@@ -44,7 +44,7 @@ if (errorParam === "invalid_link") {
         )
       }
 
-      <form id="login-form" class="mt-lg space-y-md">
+      <form id="login-form" class="mt-lg space-y-md" data-redirect-to={redirectTo}>
         <Input label="Email" name="email" type="email" autocomplete="email" required />
         <Input
           label="Password"
@@ -65,12 +65,20 @@ if (errorParam === "invalid_link") {
   </main>
 </BaseLayout>
 
-<script define:vars={{ redirectTo }}>
+<script>
+  // Not using `define:vars` here: it forces this script to be inlined as
+  // a plain non-module tag, and a static `import` is a SyntaxError outside
+  // a module context — confirmed against this project's own compiled
+  // production output. Server-rendered values that used to be injected via
+  // define:vars are instead read off the form's dataset, so this stays a
+  // normal, properly bundled module script with "astro:actions" resolved
+  // correctly by Vite.
   import { actions } from "astro:actions";
 
   const form = document.querySelector("#login-form");
   const messageEl = document.querySelector("#form-message");
   const button = form.querySelector("button[type=submit]");
+  const redirectTo = form.dataset.redirectTo;
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

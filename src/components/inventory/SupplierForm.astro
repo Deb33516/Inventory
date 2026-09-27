@@ -22,7 +22,7 @@ const { action, supplier } = Astro.props;
 const isEdit = Boolean(supplier);
 ---
 
-<form id="supplier-form" class="space-y-md">
+<form id="supplier-form" class="space-y-md" data-action={action} data-is-edit={isEdit ? "1" : ""}>
   {isEdit && <input type="hidden" name="id" value={supplier!.id} />}
   <Input label="Name" name="name" value={supplier?.name} required />
   <Input label="Contact name (optional)" name="contactName" value={supplier?.contact_name ?? ""} />
@@ -41,12 +41,21 @@ const isEdit = Boolean(supplier);
   <Button type="submit" variant="primary">{isEdit ? "Save changes" : "Create supplier"}</Button>
 </form>
 
-<script define:vars={{ action, isEdit }}>
+<script>
+  // Not using `define:vars` here: it forces this script to be inlined as
+  // a plain non-module tag, and a static `import` is a SyntaxError outside
+  // a module context — confirmed against this project's own compiled
+  // production output. Server-rendered values that used to be injected via
+  // define:vars are instead read off the form's dataset, so this stays a
+  // normal, properly bundled module script with "astro:actions" resolved
+  // correctly by Vite.
   import { actions } from "astro:actions";
 
   const form = document.querySelector("#supplier-form");
   const messageEl = document.querySelector("#form-message");
   const button = form.querySelector("button[type=submit]");
+  const action = form.dataset.action;
+  const isEdit = form.dataset.isEdit === "1";
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
