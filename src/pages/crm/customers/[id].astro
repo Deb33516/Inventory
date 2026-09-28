@@ -5,6 +5,7 @@ import CustomerMetrics from "../../../components/crm/CustomerMetrics.astro";
 import CustomerNotesForm from "../../../components/crm/CustomerNotesForm.astro";
 import CustomerTimeline from "../../../components/crm/CustomerTimeline.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { id } = Astro.params;
 
@@ -58,13 +59,7 @@ const { data: orders } = profile
 ---
 
 <BaseLayout title={profile ? `${profile.full_name ?? "Customer"} — CRM` : "Not found — CRM"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/crm/customers" class="font-bold text-ink">
-      ← Customers
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="crm" backHref="/crm/customers" backLabel="Customers">
     {
       profile ? (
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-lg">
@@ -96,5 +91,5 @@ const { data: orders } = profile
         <EmptyState title="Customer not found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>

@@ -3,6 +3,7 @@ import BaseLayout from "../../../layouts/BaseLayout.astro";
 import FilterChip from "../../../components/catalog/FilterChip.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 import Badge from "../../../components/ui/Badge.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 // customer_metrics is a view over profiles LEFT JOIN orders, not a table
 // with a declared FK to profiles, so PostgREST can't embed it via a
@@ -75,11 +76,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
 ---
 
 <BaseLayout title="Customers — CRM">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/crm" class="font-bold text-ink">← CRM</a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="crm">
     <h1 class="text-2xl font-bold text-ink">Customers</h1>
 
     <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
@@ -185,5 +182,5 @@ function buildUrl(overrides: Record<string, string | undefined>) {
         <EmptyState class="mt-lg" title="No customers found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>

@@ -3,6 +3,7 @@ import BaseLayout from "../../../../layouts/BaseLayout.astro";
 import Card from "../../../../components/ui/Card.astro";
 import StockMovementForm from "../../../../components/inventory/StockMovementForm.astro";
 import EmptyState from "../../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../../components/layout/AppShell.astro";
 
 const { productId } = Astro.params;
 
@@ -18,13 +19,7 @@ if (!inventory) {
 ---
 
 <BaseLayout title={inventory ? `Mark ${inventory.products.name} damaged — Inventory` : "Not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href={`/inventory/stock/${productId}`} class="font-bold text-ink">
-      ← Back
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="inventory" backHref={`/inventory/stock/${productId}`} backLabel="Back">
     {
       inventory ? (
         <Card class="max-w-lg">
@@ -38,5 +33,5 @@ if (!inventory) {
         <EmptyState title="Product stock not found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>

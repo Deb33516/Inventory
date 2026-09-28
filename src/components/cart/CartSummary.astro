@@ -3,9 +3,9 @@
 
 <div id="cart-summary">
   <ul id="cart-items" class="space-y-sm"></ul>
-  <p id="cart-empty" class="hidden text-sm text-muted py-lg text-center">Your cart is empty.</p>
-  <div class="mt-md flex justify-end">
-    <p class="text-lg font-bold text-ink">Total: <span id="cart-total">—</span></p>
+  <p id="cart-empty" class="hidden text-sm text-muted py-xl text-center">Your cart is empty.</p>
+  <div class="mt-md pt-md border-t border-hairline flex justify-end">
+    <p class="text-2xl font-bold text-ink">Subtotal: <span id="cart-total">—</span></p>
   </div>
 </div>
 
@@ -45,28 +45,55 @@
       const controls = document.createElement("div");
       controls.className = "flex items-center gap-sm";
 
-      const qtyInput = document.createElement("input");
-      qtyInput.type = "number";
-      qtyInput.min = "1";
-      qtyInput.value = String(item.quantity);
-      qtyInput.className = "h-10 w-16 px-sm bg-canvas text-ink border border-hairline outline-none";
-      qtyInput.addEventListener("change", () => {
-        updateCartQuantity(item.productId, parseInt(qtyInput.value, 10) || 0);
+      const stepper = document.createElement("div");
+      stepper.className = "flex items-center rounded-full border border-hairline overflow-hidden";
+
+      const decrementBtn = document.createElement("button");
+      decrementBtn.type = "button";
+      decrementBtn.textContent = "−";
+      decrementBtn.setAttribute("aria-label", `Decrease quantity of ${item.name}`);
+      decrementBtn.className =
+        "h-10 w-8 text-ink font-bold hover:bg-surface-soft active:scale-95 transition-[background-color,transform] duration-150";
+      decrementBtn.addEventListener("click", () => {
+        updateCartQuantity(item.productId, item.quantity - 1);
         render();
         window.dispatchEvent(new CustomEvent("cart-updated"));
       });
 
+      const qtyLabel = document.createElement("span");
+      qtyLabel.textContent = String(item.quantity);
+      qtyLabel.setAttribute("aria-live", "polite");
+      qtyLabel.setAttribute("aria-label", `Quantity: ${item.quantity}`);
+      qtyLabel.className = "h-10 w-10 flex items-center justify-center text-sm text-ink border-x border-hairline";
+
+      const incrementBtn = document.createElement("button");
+      incrementBtn.type = "button";
+      incrementBtn.textContent = "+";
+      incrementBtn.setAttribute("aria-label", `Increase quantity of ${item.name}`);
+      incrementBtn.className =
+        "h-10 w-8 text-ink font-bold hover:bg-surface-soft active:scale-95 transition-[background-color,transform] duration-150";
+      incrementBtn.addEventListener("click", () => {
+        updateCartQuantity(item.productId, item.quantity + 1);
+        render();
+        window.dispatchEvent(new CustomEvent("cart-updated"));
+      });
+
+      stepper.appendChild(decrementBtn);
+      stepper.appendChild(qtyLabel);
+      stepper.appendChild(incrementBtn);
+
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.textContent = "Remove";
-      removeBtn.className = "text-error text-xs font-bold";
+      removeBtn.setAttribute("aria-label", `Remove ${item.name} from cart`);
+      removeBtn.className = "text-error text-xs font-bold hover:underline active:opacity-70";
       removeBtn.addEventListener("click", () => {
         removeFromCart(item.productId);
         render();
         window.dispatchEvent(new CustomEvent("cart-updated"));
       });
 
-      controls.appendChild(qtyInput);
+      controls.appendChild(stepper);
       controls.appendChild(removeBtn);
       li.appendChild(info);
       li.appendChild(controls);

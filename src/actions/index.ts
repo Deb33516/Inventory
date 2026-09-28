@@ -1,6 +1,8 @@
 import { defineAction, ActionError } from "astro:actions";
 import { z } from "astro/zod";
 import { createClient } from "../lib/supabase/server";
+import { createAdminClient } from "../lib/supabase/admin";
+import { ROLE_DASHBOARD } from "../lib/roles";
 import type { UserRole } from "../lib/types";
 
 // Astro's form-to-object conversion fills any declared field missing from
@@ -64,7 +66,24 @@ export const server = {
         throw new ActionError({ code: "UNAUTHORIZED", message: error.message });
       }
 
-      return { message: "Signed in." };
+      // Role-aware default landing destination — an explicit ?redirect= (if
+      // any) is applied client-side, in preference to this, by login.astro.
+      // customer intentionally falls back to /account even if the profile
+      // lookup fails, since that's already every existing user's default.
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user!.id)
+        .single();
+
+      const role = (profile?.role as UserRole) ?? "customer";
+      const redirectTo = role === "customer" ? "/account" : ROLE_DASHBOARD[role];
+
+      return { message: "Signed in.", redirectTo };
     },
   }),
 
@@ -200,6 +219,15 @@ export const server = {
             message: "That SKU is already in use.",
           });
         }
+        // category_id references categories ON DELETE — if the selected
+        // category was deleted between page load and submit, the FK check
+        // fails here instead of raising a raw Postgres constraint error.
+        if (error.code === "23503") {
+          throw new ActionError({
+            code: "CONFLICT",
+            message: "The selected category no longer exists. Refresh the page and choose another.",
+          });
+        }
         throw new ActionError({ code: "BAD_REQUEST", message: error.message });
       }
 
@@ -251,6 +279,15 @@ export const server = {
           throw new ActionError({
             code: "CONFLICT",
             message: "That SKU is already in use.",
+          });
+        }
+        // category_id references categories ON DELETE — if the selected
+        // category was deleted between page load and submit, the FK check
+        // fails here instead of raising a raw Postgres constraint error.
+        if (error.code === "23503") {
+          throw new ActionError({
+            code: "CONFLICT",
+            message: "The selected category no longer exists. Refresh the page and choose another.",
           });
         }
         throw new ActionError({ code: "BAD_REQUEST", message: error.message });
@@ -755,6 +792,15 @@ export const server = {
       const { error } = await supabase.from("products").delete().eq("id", input.productId);
 
       if (error) {
+        // order_items/inventory_movements reference products ON DELETE
+        // RESTRICT — without this, a product with history would surface a
+        // raw Postgres constraint-name error instead of this friendly one.
+        if (error.code === "23503") {
+          throw new ActionError({
+            code: "CONFLICT",
+            message: "This product has order or movement history and cannot be deleted.",
+          });
+        }
         throw new ActionError({ code: "BAD_REQUEST", message: error.message });
       }
 
@@ -859,6 +905,83 @@ export const server = {
       }
 
       return { message: "Profile updated." };
+    },
+  }),
+
+  // Provisions a brand-new staff/admin account. Direct (not approval-gated)
+  // for both admin and super_admin — Phase 9's approval gate is reserved for
+  // actions with an existing victim or irreversible loss (deleting a product
+  // with history, reassigning/deactivating an existing person's access,
+  // cancelling/refunding a real paid order); provisioning a brand-new
+  // account is additive and fully reversible via the existing direct
+  // deactivate/role-change controls on this same page. super_admin is not a
+  // selectable role here — not a runtime check, a closed zod enum, so it
+  // cannot reach the handler as a value at all.
+  inviteStaff: defineAction({
+    accept: "form",
+    input: z.object({
+      fullName: z.string().min(1, "Full name is required"),
+      email: z.string().email("Enter a valid email address"),
+      role: z.enum(["sales_staff", "inventory_staff", "admin"]),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      // The only authorization backstop for this action: the service-role
+      // client used below bypasses RLS entirely, so this explicit,
+      // server-derived (never client-supplied) role check is load-bearing,
+      // not a "friendly error" convenience like elsewhere in this file.
+      const callerRole = context.locals.role;
+      if (callerRole !== "admin" && callerRole !== "super_admin") {
+        throw new ActionError({ code: "FORBIDDEN", message: "Only admin or super admin can invite staff." });
+      }
+
+      const adminClient = createAdminClient();
+
+      const { data, error } = await adminClient.auth.admin.inviteUserByEmail(input.email, {
+        data: { full_name: input.fullName },
+        redirectTo: new URL(
+          `/auth/callback?next=${encodeURIComponent("/reset-password")}`,
+          context.url.origin
+        ).toString(),
+      });
+
+      if (error) {
+        if (error.status === 422 || /already been registered|already exists/i.test(error.message)) {
+          throw new ActionError({ code: "CONFLICT", message: "That email is already registered." });
+        }
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      // handle_new_user() has already run synchronously inside the insert
+      // above and created a profiles row defaulted to role='customer' — this
+      // is the one write in the whole action that deliberately bypasses RLS,
+      // scoped to exactly the row just created, never a client-supplied id.
+      const { error: roleError } = await adminClient
+        .from("profiles")
+        .update({ role: input.role })
+        .eq("id", data.user.id);
+
+      if (roleError) {
+        throw new ActionError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            "Invitation email was sent, but assigning the role failed. Use the role dropdown on this page to fix it once the account appears.",
+        });
+      }
+
+      await supabase.from("audit_logs").insert({
+        actor_id: context.locals.user!.id,
+        action: "staff_invited",
+        entity_table: "profiles",
+        entity_id: data.user.id,
+        new_value: { role: input.role, email: input.email },
+      });
+
+      return { message: "Invitation sent." };
     },
   }),
 };

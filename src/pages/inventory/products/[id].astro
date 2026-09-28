@@ -3,17 +3,11 @@ import BaseLayout from "../../../layouts/BaseLayout.astro";
 import Card from "../../../components/ui/Card.astro";
 import ProductForm from "../../../components/catalog/ProductForm.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { id } = Astro.params;
-const userId = Astro.locals.user!.id;
 
-const { data: viewerProfile } = await Astro.locals.supabase
-  .from("profiles")
-  .select("role")
-  .eq("id", userId)
-  .single();
-
-const viewerRole = viewerProfile?.role;
+const viewerRole = Astro.locals.role;
 const canDeleteDirect = viewerRole === "super_admin";
 const canRequestDelete = viewerRole === "inventory_staff" || viewerRole === "admin";
 
@@ -36,13 +30,7 @@ if (!product) {
 ---
 
 <BaseLayout title={product ? `Edit ${product.name} — Inventory` : "Product not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory/products" class="font-bold text-ink">
-      ← Products
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="inventory" backHref="/inventory/products" backLabel="Products">
     {
       product ? (
         <Card class="max-w-lg">
@@ -80,7 +68,7 @@ if (!product) {
         </Card>
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>
 
 <script>

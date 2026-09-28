@@ -1,5 +1,4 @@
 ---
-import Card from "../ui/Card.astro";
 import AddToCartButton from "../cart/AddToCartButton.astro";
 
 interface Props {
@@ -18,22 +17,35 @@ const formattedPrice = new Intl.NumberFormat("en-IN", {
   currency: "INR",
   maximumFractionDigits: 2,
 }).format(price);
+
+const href = `/products/${sku}`;
 ---
 
-<a href={`/products/${sku}`} class="block h-full">
-  <Card class="h-full">
-    <div class="aspect-[4/3] bg-surface-card flex items-center justify-center mb-md overflow-hidden">
-      {
-        imageUrl ? (
-          <img src={imageUrl} alt={name} class="w-full h-full object-cover" loading="lazy" />
-        ) : (
-          <span class="text-xs uppercase tracking-[0.5px] text-muted-soft">No image</span>
-        )
-      }
-    </div>
-    {categoryName && <p class="text-xs uppercase tracking-[0.5px] text-muted mb-xxs">{categoryName}</p>}
-    <h3 class="font-bold text-ink">{name}</h3>
-    <p class="mt-xs text-sm font-light text-body">{formattedPrice}</p>
-    <AddToCartButton productId={productId} sku={sku} name={name} price={price} class="mt-sm" />
-  </Card>
-</a>
+<div class="h-full flex flex-col bg-canvas border border-hairline hover:border-hairline-strong transition-colors">
+  <a href={href} class="relative block bg-surface-soft aspect-square overflow-hidden">
+    {
+      imageUrl ? (
+        <img src={imageUrl} alt={name} class="w-full h-full object-cover" loading="lazy" />
+      ) : (
+        <span class="absolute inset-0 flex items-center justify-center text-xs uppercase tracking-[0.5px] text-muted-soft">
+          No image
+        </span>
+      )
+    }
+  </a>
+
+  {/* Metadata sits directly below the full-bleed image, its own inset
+      padding — DESIGN.md's product-card spacing.sm rhythm between rows.
+      A separate <a> (not the AddToCartButton, which stays a sibling
+      outside any anchor — an interactive control can't validly nest
+      inside a link) so both the image and the text are independently
+      clickable through to the product page. */}
+  <div class="flex flex-col flex-1 p-md gap-xxs">
+    <a href={href} class="flex flex-col gap-xxs">
+      {categoryName && <p class="text-xs uppercase tracking-[0.5px] text-muted">{categoryName}</p>}
+      <h3 class="font-bold text-ink text-sm leading-snug">{name}</h3>
+      <p class="text-sm font-bold text-ink">{formattedPrice}</p>
+    </a>
+    <AddToCartButton productId={productId} sku={sku} name={name} price={price} class="mt-auto pt-sm" />
+  </div>
+</div>

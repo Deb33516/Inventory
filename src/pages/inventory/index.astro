@@ -6,6 +6,8 @@ import KpiCard from "../../components/dashboard/KpiCard.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
 import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
+import AppShell from "../../components/layout/AppShell.astro";
+import { CHART_COLORS } from "../../lib/chartTheme";
 
 const url = Astro.url;
 const range = resolveDashboardRange(url.searchParams.get("range"));
@@ -40,28 +42,26 @@ const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
 
 const movementColors: Record<string, string> = {
-  restock: "#22c55e",
-  sale: "#1c69d4",
-  adjustment: "#6b6b6b",
-  damaged: "#dc2626",
-  return: "#f59e0b",
+  restock: CHART_COLORS.success,
+  sale: CHART_COLORS.ink,
+  adjustment: CHART_COLORS.mute,
+  damaged: CHART_COLORS.error,
+  return: CHART_COLORS.warning,
 };
 ---
 
 <BaseLayout title="Inventory dashboard">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <span class="font-bold text-ink">Inventory</span>
-    <nav class="flex items-center gap-lg text-sm text-ink">
-      <a href="/inventory/stock" class="hover:text-primary">Stock</a>
-      <a href="/inventory/movements" class="hover:text-primary">Movements</a>
-      <a href="/inventory/suppliers" class="hover:text-primary">Suppliers</a>
-      <a href="/inventory/products" class="hover:text-primary">Products</a>
-      <a href="/inventory/categories" class="hover:text-primary">Categories</a>
-    </nav>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+  <AppShell active="dashboard">
+    <div class="flex items-center justify-between flex-wrap gap-md">
+      <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+      <nav aria-label="Inventory sections" class="flex items-center gap-lg text-sm overflow-x-auto">
+        <a href="/inventory/stock" class="text-primary font-bold hover:underline whitespace-nowrap">Stock</a>
+        <a href="/inventory/movements" class="text-primary font-bold hover:underline whitespace-nowrap">Movements</a>
+        <a href="/inventory/suppliers" class="text-primary font-bold hover:underline whitespace-nowrap">Suppliers</a>
+        <a href="/inventory/products" class="text-primary font-bold hover:underline whitespace-nowrap">Products</a>
+        <a href="/inventory/categories" class="text-primary font-bold hover:underline whitespace-nowrap">Categories</a>
+      </nav>
+    </div>
 
     <div class="mt-lg grid grid-cols-1 md:grid-cols-4 gap-lg">
       <Card>
@@ -94,8 +94,8 @@ const movementColors: Record<string, string> = {
     <p class="mt-xs text-xs text-muted">{range.label}</p>
 
     <div class="mt-md grid grid-cols-1 lg:grid-cols-2 gap-lg">
-      <div>
-        <h3 class="font-bold text-ink">Movements by type</h3>
+      <Card>
+        <h3 class="text-sm font-bold text-ink">Movements by type</h3>
         <div class="mt-sm">
           {
             movementRows.length > 0 ? (
@@ -108,21 +108,21 @@ const movementColors: Record<string, string> = {
                     {
                       label: "Units",
                       data: movementRows.map((r) => Number(r.total_quantity)),
-                      backgroundColor: movementRows.map((r) => movementColors[r.movement_type] ?? "#6b6b6b"),
+                      backgroundColor: movementRows.map((r) => movementColors[r.movement_type] ?? CHART_COLORS.mute),
                     },
                   ],
                 }}
                 options={{ plugins: { legend: { display: false } } }}
               />
             ) : (
-              <EmptyState title="No inventory movements in this range" />
+              <EmptyState title="No inventory movements in this range" message="Try another date range." />
             )
           }
         </div>
-      </div>
+      </Card>
 
-      <div>
-        <h3 class="font-bold text-ink">Top moving products (units)</h3>
+      <Card>
+        <h3 class="text-sm font-bold text-ink">Top moving products (units)</h3>
         <div class="mt-sm">
           {
             productRows.length > 0 ? (
@@ -135,18 +135,18 @@ const movementColors: Record<string, string> = {
                     {
                       label: "Units sold",
                       data: productRows.map((r) => Number(r.units_sold)),
-                      backgroundColor: "#1c69d4",
+                      backgroundColor: CHART_COLORS.ink,
                     },
                   ],
                 }}
                 options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
               />
             ) : (
-              <EmptyState title="No product sales in this range" />
+              <EmptyState title="No product sales in this range" message="Try another date range." />
             )
           }
         </div>
-      </div>
+      </Card>
     </div>
-  </main>
+  </AppShell>
 </BaseLayout>

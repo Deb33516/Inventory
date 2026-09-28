@@ -25,6 +25,12 @@ const { title, description = "A modern CRM and inventory management platform." }
     <title>{title}</title>
   </head>
   <body class="min-h-screen bg-canvas text-body">
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:bg-ink focus:text-on-dark focus:px-md focus:py-xs focus:text-sm focus:font-bold"
+    >
+      Skip to content
+    </a>
     <slot />
   </body>
 </html>

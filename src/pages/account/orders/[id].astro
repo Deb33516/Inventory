@@ -5,6 +5,7 @@ import EmptyState from "../../../components/catalog/EmptyState.astro";
 import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
 import OrderLineItems from "../../../components/orders/OrderLineItems.astro";
 import OrderStatusActions from "../../../components/orders/OrderStatusActions.astro";
+import PublicHeader from "../../../components/layout/PublicHeader.astro";
 
 const { id } = Astro.params;
 const { user } = Astro.locals;
@@ -38,13 +39,9 @@ const { data: payment } = order
 ---
 
 <BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Inventory` : "Order not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/account/orders" class="font-bold text-ink">
-      ← Your orders
-    </a>
-  </header>
+  <PublicHeader backHref="/account/orders" backLabel="Your orders" />
 
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
     {
       order ? (
         <>

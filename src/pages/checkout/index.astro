@@ -6,18 +6,18 @@ import Select from "../../components/ui/Select.astro";
 import Textarea from "../../components/ui/Textarea.astro";
 import Button from "../../components/ui/Button.astro";
 import CartSummary from "../../components/cart/CartSummary.astro";
+import PublicHeader from "../../components/layout/PublicHeader.astro";
 
-// Middleware guarantees a user is present for every /checkout/* route.
+// Middleware guarantees a customer is present for every /checkout/* route
+// (staff/admin are redirected to their own dashboard before reaching here).
 const { user } = Astro.locals;
 const userId = user!.id;
 ---
 
 <BaseLayout title="Checkout — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/cart" class="font-bold text-ink">← Cart</a>
-  </header>
+  <PublicHeader backHref="/cart" backLabel="Cart" />
 
-  <main class="max-w-[720px] mx-auto px-lg py-xl">
+  <main id="main-content" class="max-w-[720px] mx-auto px-lg py-xl">
     <h1 class="text-2xl font-bold text-ink">Checkout</h1>
 
     <Card class="mt-lg">

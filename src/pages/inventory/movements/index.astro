@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const PAGE_SIZE = 50;
 const url = Astro.url;
@@ -35,11 +36,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
 ---
 
 <BaseLayout title="Movements — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory" class="font-bold text-ink">← Inventory</a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="inventory">
     <h1 class="text-2xl font-bold text-ink">Movement history</h1>
 
     <form method="get" class="mt-lg flex flex-wrap items-center gap-md">
@@ -118,5 +115,5 @@ function buildUrl(overrides: Record<string, string | undefined>) {
         <EmptyState class="mt-lg" title="No movements found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>

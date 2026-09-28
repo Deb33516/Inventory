@@ -1,0 +1,122 @@
+---
+// The single customer-facing header — used on every page a customer
+// actually reaches (home, products, product detail, account, orders,
+// cart, checkout). Session- and role-aware so the same component covers
+// all three real states instead of three separate header implementations:
+//   - signed out: Products, Sign in, Create an account
+//   - signed in as customer: Products, Cart (live item-count badge),
+//     My account, Sign out
+//   - signed in as staff/admin (e.g. manually browsing the storefront):
+//     Products, a "Go to dashboard" link back to their own app section,
+//     Sign out — no Cart/My account, since staff aren't customers
+// AppHeader.astro remains the separate staff/admin app shell (sales,
+// inventory, CRM, admin) — this component never shows that nav, and
+// AppHeader never shows commerce chrome, so the two can't get confused.
+import Button from "../ui/Button.astro";
+import { ROLE_DASHBOARD } from "../../lib/roles";
+
+interface Props {
+  // Optional contextual back-link for a sub-page (e.g. "Cart" on
+  // checkout) — same slim secondary-row pattern as AppHeader.
+  backHref?: string;
+  backLabel?: string;
+}
+
+const { backHref, backLabel } = Astro.props;
+
+const user = Astro.locals.user;
+const role = Astro.locals.role;
+const isCustomer = Boolean(user) && role === "customer";
+// Narrowed here (rather than via a separate boolean) so TypeScript carries
+// `role`'s type through to the ROLE_DASHBOARD lookup below.
+const staffDashboardHref = user && role && role !== "customer" ? ROLE_DASHBOARD[role] : null;
+---
+
+<header class="border-b border-hairline bg-canvas">
+  <div class="h-16 flex items-center justify-between px-lg gap-md max-w-[1440px] mx-auto">
+    <a href="/" class="font-bold text-ink shrink-0">Inventory</a>
+    <nav
+      aria-label="Main"
+      class="flex items-center gap-sm sm:gap-lg text-sm text-ink overflow-x-auto whitespace-nowrap [scrollbar-width:none]"
+    >
+      <a href="/products" class="hover:text-primary">Products</a>
+      {
+        isCustomer ? (
+          <>
+            <a href="/cart" aria-label="Cart" class="relative inline-flex items-center gap-xs hover:text-primary">
+              Cart
+              <span
+                id="cart-count-badge"
+                class="hidden min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-primary text-on-primary text-[10px] font-bold leading-none"
+              >
+                0
+              </span>
+            </a>
+            <Button href="/account" variant="primary">
+              My account
+            </Button>
+            <Button id="public-header-signout-btn" variant="secondary">
+              Sign out
+            </Button>
+          </>
+        ) : staffDashboardHref ? (
+          <>
+            <a href={staffDashboardHref} class="hover:text-primary">
+              Go to dashboard
+            </a>
+            <Button id="public-header-signout-btn" variant="secondary">
+              Sign out
+            </Button>
+          </>
+        ) : (
+          <>
+            <a href="/login" class="hover:text-primary">
+              Sign in
+            </a>
+            <Button href="/register" variant="primary">
+              Create an account
+            </Button>
+          </>
+        )
+      }
+    </nav>
+  </div>
+  {
+    backHref && (
+      <div class="px-lg py-xs bg-canvas border-b border-hairline">
+        <a
+          href={backHref}
+          class="text-xs uppercase tracking-[0.5px] font-bold text-muted hover:text-ink max-w-[1440px] mx-auto block"
+        >
+          ← {backLabel}
+        </a>
+      </div>
+    )
+  }
+</header>
+
+<script>
+  import { actions } from "astro:actions";
+  import { getCartCount } from "../../lib/cart";
+
+  const signOutButton = document.querySelector<HTMLButtonElement>("#public-header-signout-btn");
+
+  signOutButton?.addEventListener("click", async () => {
+    signOutButton.disabled = true;
+    await actions.signOut();
+    window.location.href = "/login";
+  });
+
+  const badge = document.querySelector<HTMLSpanElement>("#cart-count-badge");
+
+  if (badge) {
+    const renderCount = () => {
+      const count = getCartCount();
+      badge.textContent = String(count);
+      badge.classList.toggle("hidden", count === 0);
+    };
+
+    renderCount();
+    window.addEventListener("cart-updated", renderCount);
+  }
+</script>

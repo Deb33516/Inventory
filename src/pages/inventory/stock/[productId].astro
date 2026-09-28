@@ -5,6 +5,7 @@ import Button from "../../../components/ui/Button.astro";
 import Input from "../../../components/ui/Input.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 import StockBadge from "../../../components/ui/StockBadge.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { productId } = Astro.params;
 const updated = Astro.url.searchParams.get("updated");
@@ -30,11 +31,7 @@ const { data: movements } = inventory
 ---
 
 <BaseLayout title={inventory ? `${inventory.products.name} stock — Inventory` : "Not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory/stock" class="font-bold text-ink">← Stock</a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="inventory" backHref="/inventory/stock" backLabel="Stock">
     {
       inventory ? (
         <>
@@ -128,7 +125,7 @@ const { data: movements } = inventory
         <EmptyState title="Product stock not found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>
 
 <script>

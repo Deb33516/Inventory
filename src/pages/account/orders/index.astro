@@ -2,6 +2,7 @@
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
+import PublicHeader from "../../../components/layout/PublicHeader.astro";
 
 const { user } = Astro.locals;
 const userId = user!.id;
@@ -17,11 +18,9 @@ const formatCurrency = (value: number) =>
 ---
 
 <BaseLayout title="Your orders — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/account" class="font-bold text-ink">← Account</a>
-  </header>
+  <PublicHeader backHref="/account" backLabel="Account" />
 
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
     <h1 class="text-2xl font-bold text-ink">Your orders</h1>
 
     {

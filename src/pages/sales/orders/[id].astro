@@ -5,18 +5,12 @@ import EmptyState from "../../../components/catalog/EmptyState.astro";
 import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
 import OrderLineItems from "../../../components/orders/OrderLineItems.astro";
 import OrderStatusActions from "../../../components/orders/OrderStatusActions.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { id } = Astro.params;
 const created = Astro.url.searchParams.get("created");
-const userId = Astro.locals.user!.id;
 
-const { data: viewerProfile } = await Astro.locals.supabase
-  .from("profiles")
-  .select("role")
-  .eq("id", userId)
-  .single();
-
-const viewerRole = viewerProfile?.role;
+const viewerRole = Astro.locals.role;
 const canDirectCancel = viewerRole === "super_admin";
 const canRequestRefund = viewerRole === "sales_staff" || viewerRole === "admin";
 
@@ -53,13 +47,7 @@ const canShowRefundControl = canRequestRefund && order?.status === "cancelled" &
 ---
 
 <BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Sales` : "Order not found — Sales"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/sales/orders" class="font-bold text-ink">
-      ← Orders
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="sales" backHref="/sales/orders" backLabel="Orders">
     {
       order ? (
         <>
@@ -125,7 +113,7 @@ const canShowRefundControl = canRequestRefund && order?.status === "cancelled" &
         <EmptyState title="Order not found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>
 
 <script>

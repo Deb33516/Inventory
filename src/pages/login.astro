@@ -9,8 +9,12 @@ if (Astro.locals.user) {
 }
 
 const redirectParam = Astro.url.searchParams.get("redirect");
-// Only ever redirect back to a same-app path — never an absolute/external URL.
-const redirectTo = redirectParam && redirectParam.startsWith("/") ? redirectParam : "/account";
+// Only ever redirect back to a same-app path — never an absolute/external
+// URL. Empty (not "/account") when absent: an explicit ?redirect= must win
+// over the role-aware destination the signIn action computes, and the only
+// way to express "no explicit redirect was requested" is to not default it
+// here at all.
+const explicitRedirect = redirectParam && redirectParam.startsWith("/") ? redirectParam : "";
 
 const errorParam = Astro.url.searchParams.get("error");
 const resetParam = Astro.url.searchParams.get("reset");
@@ -28,9 +32,10 @@ if (errorParam === "invalid_link") {
 ---
 
 <BaseLayout title="Sign in — Inventory">
-  <main class="min-h-screen flex items-center justify-center bg-surface-soft px-md py-xxl">
+  <main id="main-content" class="min-h-screen flex items-center justify-center bg-surface-soft px-md py-xxl">
     <Card class="w-full max-w-md">
-      <h1 class="text-2xl font-bold text-ink">Sign in</h1>
+      <a href="/" class="text-sm font-bold text-ink hover:text-primary">← Inventory</a>
+      <h1 class="mt-md text-2xl font-bold text-ink">Sign in</h1>
       <p class="mt-xs text-sm font-light text-body">Welcome back.</p>
 
       {
@@ -44,7 +49,7 @@ if (errorParam === "invalid_link") {
         )
       }
 
-      <form id="login-form" class="mt-lg space-y-md" data-redirect-to={redirectTo}>
+      <form id="login-form" class="mt-lg space-y-md" data-redirect-to={explicitRedirect}>
         <Input label="Email" name="email" type="email" autocomplete="email" required />
         <Input
           label="Password"
@@ -78,7 +83,7 @@ if (errorParam === "invalid_link") {
   const form = document.querySelector("#login-form");
   const messageEl = document.querySelector("#form-message");
   const button = form.querySelector("button[type=submit]");
-  const redirectTo = form.dataset.redirectTo;
+  const explicitRedirect = form.dataset.redirectTo;
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -86,7 +91,7 @@ if (errorParam === "invalid_link") {
     messageEl.textContent = "";
     messageEl.classList.remove("text-error", "text-success");
 
-    const { error } = await actions.signIn(new FormData(form));
+    const { data, error } = await actions.signIn(new FormData(form));
 
     if (error) {
       button.disabled = false;
@@ -95,6 +100,8 @@ if (errorParam === "invalid_link") {
       return;
     }
 
-    window.location.href = redirectTo;
+    // An explicit ?redirect= always wins; otherwise use the role-aware
+    // destination the signIn action just computed server-side.
+    window.location.href = explicitRedirect || data.redirectTo;
   });
 </script>

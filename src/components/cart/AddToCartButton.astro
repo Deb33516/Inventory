@@ -13,7 +13,7 @@ const { productId, sku, name, price, class: className = "" } = Astro.props;
 <div class={className}>
   <button
     type="button"
-    class="add-to-cart-btn w-full h-10 px-md bg-primary text-on-primary font-bold text-xs uppercase tracking-[0.5px]"
+    class="add-to-cart-btn w-full h-10 px-md rounded-full bg-primary text-on-primary font-bold text-xs uppercase tracking-[0.5px] transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80"
     data-product-id={productId}
     data-sku={sku}
     data-name={name}
@@ -21,17 +21,32 @@ const { productId, sku, name, price, class: className = "" } = Astro.props;
   >
     Add to cart
   </button>
-  <p class="add-to-cart-message mt-xs text-xs text-success hidden" role="status">Added to cart.</p>
+  {/* Height is reserved up front (min-h, empty by default) so the message
+      appearing never shifts surrounding layout — e.g. a product grid row
+      where a sibling card's height depends on this one. Content itself
+      is set via script rather than pre-rendered + visibility-toggled, so
+      screen readers reliably announce it (an aria-live region only fires
+      on a genuine content mutation, not a visibility change on already-
+      static text). */}
+  <p class="add-to-cart-message mt-xs text-xs min-h-[1.25rem]" role="status"></p>
 </div>
 
 <script>
   import { addToCart } from "../../lib/cart";
 
+  // Long enough to actually read and click "View cart" (not a fleeting
+  // toast) — the header's cart badge is the persistent affordance; this
+  // message is the immediate per-click confirmation.
+  const MESSAGE_VISIBLE_MS = 6000;
+
   document.querySelectorAll<HTMLButtonElement>(".add-to-cart-btn").forEach((button) => {
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
     button.addEventListener("click", (event) => {
-      // ProductCard wraps the whole tile in an <a> (catalog → detail
-      // page navigation) — this button lives inside it, so its click
-      // must never bubble into that navigation.
+      // ProductCard's image/text areas are separate <a> tags now (the
+      // button itself is never nested inside one), but preventDefault
+      // still guards against this button ever sitting inside a future
+      // clickable wrapper.
       event.preventDefault();
       event.stopPropagation();
 
@@ -43,8 +58,20 @@ const { productId, sku, name, price, class: className = "" } = Astro.props;
       });
 
       const message = button.parentElement?.querySelector<HTMLParagraphElement>(".add-to-cart-message");
-      message?.classList.remove("hidden");
-      setTimeout(() => message?.classList.add("hidden"), 1500);
+      if (message) {
+        message.replaceChildren();
+        const added = document.createElement("span");
+        added.className = "text-success font-bold";
+        added.textContent = "Added to cart";
+        const viewCart = document.createElement("a");
+        viewCart.href = "/cart";
+        viewCart.className = "ml-xs text-primary font-bold hover:underline";
+        viewCart.textContent = "View cart";
+        message.append(added, " ", viewCart);
+      }
+
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => message?.replaceChildren(), MESSAGE_VISIBLE_MS);
 
       window.dispatchEvent(new CustomEvent("cart-updated"));
     });

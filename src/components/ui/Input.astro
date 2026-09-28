@@ -4,7 +4,8 @@
 interface Props {
   label: string;
   name: string;
-  type?: string;
+  type?: astroHTML.JSX.HTMLInputTypeAttribute;
+  value?: string;
   placeholder?: string;
   required?: boolean;
   autocomplete?: HTMLInputElement["autocomplete"];
@@ -16,6 +17,7 @@ const {
   label,
   name,
   type = "text",
+  value = "",
   placeholder,
   required = false,
   autocomplete,
@@ -32,6 +34,7 @@ const id = `field-${name}`;
     id={id}
     name={name}
     type={type}
+    value={value}
     placeholder={placeholder}
     required={required}
     autocomplete={autocomplete}

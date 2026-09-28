@@ -5,6 +5,8 @@ import EmptyState from "../../components/catalog/EmptyState.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
 import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
+import AppShell from "../../components/layout/AppShell.astro";
+import { CHART_COLORS } from "../../lib/chartTheme";
 
 const url = Astro.url;
 const range = resolveDashboardRange(url.searchParams.get("range"));
@@ -42,16 +44,13 @@ const formatCurrency = (value: number) =>
 ---
 
 <BaseLayout title="CRM dashboard">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <span class="font-bold text-ink">CRM</span>
-    <nav class="flex items-center gap-lg text-sm text-ink">
-      <a href="/crm/customers" class="hover:text-primary">Customers</a>
-      <a href="/inventory" class="hover:text-primary">Inventory</a>
-    </nav>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+  <AppShell active="dashboard">
+    <div class="flex items-center justify-between flex-wrap gap-md">
+      <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+      <a href="/crm/customers" class="text-primary font-bold text-sm hover:underline">
+        Customers
+      </a>
+    </div>
 
     <div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
       <Card>
@@ -79,8 +78,8 @@ const formatCurrency = (value: number) =>
     <p class="mt-xs text-xs text-muted">{range.label} — applies to new-customer growth only; lifetime spend is always all-time.</p>
 
     <div class="mt-md grid grid-cols-1 lg:grid-cols-2 gap-lg">
-      <div>
-        <h3 class="font-bold text-ink">New customers</h3>
+      <Card>
+        <h3 class="text-sm font-bold text-ink">New customers</h3>
         <div class="mt-sm">
           {
             growthRows.length > 0 ? (
@@ -93,21 +92,21 @@ const formatCurrency = (value: number) =>
                     {
                       label: "New customers",
                       data: growthRows.map((r) => Number(r.new_customers)),
-                      backgroundColor: "#22c55e",
+                      backgroundColor: CHART_COLORS.ink,
                     },
                   ],
                 }}
                 options={{ plugins: { legend: { display: false } } }}
               />
             ) : (
-              <EmptyState title="No new customers in this range" />
+              <EmptyState title="No new customers in this range" message="Try another date range." />
             )
           }
         </div>
-      </div>
+      </Card>
 
-      <div>
-        <h3 class="font-bold text-ink">Top customers by lifetime spend</h3>
+      <Card>
+        <h3 class="text-sm font-bold text-ink">Top customers by lifetime spend</h3>
         <div class="mt-sm">
           {
             spenderRows.length > 0 ? (
@@ -120,7 +119,7 @@ const formatCurrency = (value: number) =>
                     {
                       label: "Lifetime spend",
                       data: spenderRows.map((r) => Number(r.lifetime_spend)),
-                      backgroundColor: "#1c69d4",
+                      backgroundColor: CHART_COLORS.ink,
                     },
                   ],
                 }}
@@ -131,7 +130,7 @@ const formatCurrency = (value: number) =>
             )
           }
         </div>
-      </div>
+      </Card>
     </div>
-  </main>
+  </AppShell>
 </BaseLayout>

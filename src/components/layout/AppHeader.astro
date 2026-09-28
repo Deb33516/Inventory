@@ -1,0 +1,76 @@
+---
+// Shared header for every authenticated app section (account/sales/
+// inventory/crm/admin). Replaces the per-page hand-rolled <header> blocks
+// that previously duplicated this markup 32 times with inconsistent,
+// partial nav (each section only linked to some siblings) and no sign-out
+// outside /account. Nav visibility is role-driven, sourced from the same
+// APP_SECTIONS config middleware.ts uses to gate these routes, so the nav
+// can never show a link the viewer isn't actually allowed to follow.
+import Button from "../ui/Button.astro";
+import { APP_SECTIONS } from "../../lib/roles";
+
+interface Props {
+  // Which section's nav item is current, for aria-current + highlighting.
+  active: string;
+  // Optional contextual back-link for a sub-page (e.g. "Products" when on
+  // a product's edit page) — rendered as a slim secondary row.
+  backHref?: string;
+  backLabel?: string;
+}
+
+const { active, backHref, backLabel } = Astro.props;
+
+const role = Astro.locals.role;
+const visibleSections = APP_SECTIONS.filter((s) => s.roles === "any" || (role && s.roles.includes(role)));
+---
+
+<header class="border-b border-hairline bg-canvas">
+  <div class="h-16 flex items-center justify-between px-lg gap-md max-w-[1440px] mx-auto">
+    <a href="/" class="font-bold text-ink shrink-0">Inventory</a>
+    <nav aria-label="Main" class="flex-1 min-w-0 overflow-x-auto">
+      <ul class="flex items-center gap-lg text-sm text-ink whitespace-nowrap list-none">
+        {
+          visibleSections.map((s) => (
+            <li>
+              <a
+                href={s.href}
+                aria-current={s.key === active ? "page" : undefined}
+                class={`inline-block py-xs border-b-2 transition-colors ${
+                  s.key === active
+                    ? "border-primary text-ink font-bold"
+                    : "border-transparent hover:text-primary"
+                }`}
+              >
+                {s.label}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </nav>
+    <Button id="app-signout-btn" variant="secondary" class="shrink-0">
+      Sign out
+    </Button>
+  </div>
+  {
+    backHref && (
+      <div class="px-lg py-xs border-t border-hairline bg-surface-soft">
+        <a href={backHref} class="text-xs font-bold text-ink hover:text-primary max-w-[1440px] mx-auto block">
+          ← {backLabel}
+        </a>
+      </div>
+    )
+  }
+</header>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const button = document.querySelector<HTMLButtonElement>("#app-signout-btn");
+
+  button?.addEventListener("click", async () => {
+    button.disabled = true;
+    await actions.signOut();
+    window.location.href = "/login";
+  });
+</script>

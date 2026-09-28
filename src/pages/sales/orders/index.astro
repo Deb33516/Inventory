@@ -3,6 +3,7 @@ import BaseLayout from "../../../layouts/BaseLayout.astro";
 import FilterChip from "../../../components/catalog/FilterChip.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 // orders has two FKs to profiles (customer_id, placed_by), so a plain
 // select embed would be ambiguous without knowing the exact generated
@@ -50,11 +51,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
 ---
 
 <BaseLayout title="Orders — Sales">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/sales" class="font-bold text-ink">← Sales</a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="sales">
     <h1 class="text-2xl font-bold text-ink">Orders</h1>
 
     <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
@@ -136,5 +133,5 @@ function buildUrl(overrides: Record<string, string | undefined>) {
         <EmptyState class="mt-lg" title="No orders found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>

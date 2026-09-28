@@ -1,5 +1,9 @@
 ---
-// Customer self-service profile editor — used on /account only.
+// Customer self-service profile editor — used on /account only. Defaults
+// to a read-only display with an "Edit profile" toggle rather than always
+// showing editable inputs, per standard account-page UX (view first, edit
+// on demand) — matches the interaction convention already established by
+// AddToCartButton's inline success message elsewhere in this app.
 import Input from "../ui/Input.astro";
 import Textarea from "../ui/Textarea.astro";
 import Button from "../ui/Button.astro";
@@ -9,6 +13,7 @@ interface Address {
 }
 
 interface Props {
+  email: string;
   fullName: string | null;
   phone: string | null;
   billingAddress: Address | null;
@@ -16,46 +21,143 @@ interface Props {
   marketingOptIn: boolean;
 }
 
-const { fullName, phone, billingAddress, shippingAddress, marketingOptIn } = Astro.props;
+const { email, fullName, phone, billingAddress, shippingAddress, marketingOptIn } = Astro.props;
 ---
 
-<form id="profile-form" class="space-y-md">
-  <Input label="Full name" name="fullName" value={fullName ?? ""} required />
-  <Input label="Phone (optional)" name="phone" value={phone ?? ""} />
-  <Textarea label="Billing address (optional)" name="billingAddress" value={billingAddress?.formatted ?? ""} />
-  <Textarea label="Shipping address (optional)" name="shippingAddress" value={shippingAddress?.formatted ?? ""} />
-  <label class="flex items-center gap-xs text-sm text-ink">
-    <input type="checkbox" name="marketingOptIn" checked={marketingOptIn} />
-    Send me marketing emails
-  </label>
-  <p id="form-message" class="text-sm" role="status" />
-  <Button type="submit" variant="primary">Save changes</Button>
-</form>
+<div id="profile-block">
+  <div id="profile-display" class="divide-y divide-hairline">
+    <div class="py-sm first:pt-0">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Email</p>
+      <p class="mt-xxs text-sm text-ink">{email}</p>
+    </div>
+    <div class="py-sm">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Full name</p>
+      <p class="mt-xxs text-sm text-ink" data-field="fullName">{fullName || "—"}</p>
+    </div>
+    <div class="py-sm">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Phone</p>
+      <p class="mt-xxs text-sm text-ink" data-field="phone">{phone || "—"}</p>
+    </div>
+    <div class="py-sm">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Billing address</p>
+      <p class="mt-xxs text-sm text-ink whitespace-pre-line" data-field="billingAddress">
+        {billingAddress?.formatted || "—"}
+      </p>
+    </div>
+    <div class="py-sm">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Shipping address</p>
+      <p class="mt-xxs text-sm text-ink whitespace-pre-line" data-field="shippingAddress">
+        {shippingAddress?.formatted || "—"}
+      </p>
+    </div>
+    <div class="py-sm">
+      <p class="text-xs uppercase tracking-[0.5px] text-muted">Marketing emails</p>
+      <p class="mt-xxs text-sm text-ink" data-field="marketingOptIn">{marketingOptIn ? "Yes" : "No"}</p>
+    </div>
+    <div class="pt-md flex items-center gap-md">
+      <Button id="edit-profile-btn" type="button" variant="secondary">
+        Edit profile
+      </Button>
+      <p id="profile-success-message" class="text-sm text-success hidden" role="status">
+        Profile updated
+      </p>
+    </div>
+  </div>
+
+  <form id="profile-form" class="space-y-md hidden">
+    <div>
+      <p class="text-xs uppercase tracking-[0.5px] text-muted mb-xs">Email</p>
+      <p class="text-sm text-body">{email} <span class="text-muted">(cannot be changed here)</span></p>
+    </div>
+    <Input label="Full name" name="fullName" value={fullName ?? ""} required />
+    <Input label="Phone (optional)" name="phone" value={phone ?? ""} />
+    <Textarea label="Billing address (optional)" name="billingAddress" value={billingAddress?.formatted ?? ""} />
+    <Textarea label="Shipping address (optional)" name="shippingAddress" value={shippingAddress?.formatted ?? ""} />
+    <label class="flex items-center gap-xs text-sm text-ink">
+      <input type="checkbox" name="marketingOptIn" checked={marketingOptIn} />
+      Send me marketing emails
+    </label>
+    <p id="form-message" class="text-sm" role="status" />
+    <div class="flex items-center gap-sm">
+      <Button type="submit" variant="primary">Save changes</Button>
+      <Button id="cancel-edit-btn" type="button" variant="secondary">
+        Cancel
+      </Button>
+    </div>
+  </form>
+</div>
 
 <script>
   import { actions } from "astro:actions";
 
-  const form = document.querySelector<HTMLFormElement>("#profile-form")!;
-  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
-  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+  const displayEl = document.querySelector<HTMLDivElement>("#profile-display")!;
+  const formEl = document.querySelector<HTMLFormElement>("#profile-form")!;
+  const editBtn = document.querySelector<HTMLButtonElement>("#edit-profile-btn")!;
+  const cancelBtn = document.querySelector<HTMLButtonElement>("#cancel-edit-btn")!;
+  const successMsg = document.querySelector<HTMLParagraphElement>("#profile-success-message")!;
+  const formMsg = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const saveBtn = formEl.querySelector<HTMLButtonElement>("button[type=submit]")!;
 
-  form.addEventListener("submit", async (event) => {
+  function enterEditMode() {
+    successMsg.classList.add("hidden");
+    displayEl.classList.add("hidden");
+    formEl.classList.remove("hidden");
+  }
+
+  function exitEditMode() {
+    formEl.classList.add("hidden");
+    displayEl.classList.remove("hidden");
+  }
+
+  editBtn.addEventListener("click", enterEditMode);
+
+  cancelBtn.addEventListener("click", () => {
+    formEl.reset();
+    formMsg.textContent = "";
+    formMsg.classList.remove("text-error", "text-success");
+    exitEditMode();
+  });
+
+  formEl.addEventListener("submit", async (event) => {
     event.preventDefault();
-    button.disabled = true;
-    messageEl.textContent = "";
-    messageEl.classList.remove("text-error", "text-success");
+    saveBtn.disabled = true;
+    formMsg.textContent = "";
+    formMsg.classList.remove("text-error", "text-success");
 
-    const { error } = await actions.updateCustomerProfile(new FormData(form));
+    const { error } = await actions.updateCustomerProfile(new FormData(formEl));
 
-    button.disabled = false;
+    saveBtn.disabled = false;
 
     if (error) {
-      messageEl.textContent = error.message;
-      messageEl.classList.add("text-error");
+      formMsg.textContent = error.message;
+      formMsg.classList.add("text-error");
       return;
     }
 
-    messageEl.textContent = "Saved.";
-    messageEl.classList.add("text-success");
+    const fullNameInput = formEl.elements.namedItem("fullName") as HTMLInputElement;
+    const phoneInput = formEl.elements.namedItem("phone") as HTMLInputElement;
+    const billingInput = formEl.elements.namedItem("billingAddress") as HTMLTextAreaElement;
+    const shippingInput = formEl.elements.namedItem("shippingAddress") as HTMLTextAreaElement;
+    const marketingInput = formEl.elements.namedItem("marketingOptIn") as HTMLInputElement;
+
+    // Move the form's own "reset" baseline forward to what was just saved,
+    // so a later Edit → Cancel reverts to these values, not the stale
+    // pre-save ones — form.reset() only restores to defaultValue/
+    // defaultChecked, which otherwise never move past first page load.
+    fullNameInput.defaultValue = fullNameInput.value;
+    phoneInput.defaultValue = phoneInput.value;
+    billingInput.defaultValue = billingInput.value;
+    shippingInput.defaultValue = shippingInput.value;
+    marketingInput.defaultChecked = marketingInput.checked;
+
+    displayEl.querySelector('[data-field="fullName"]')!.textContent = fullNameInput.value || "—";
+    displayEl.querySelector('[data-field="phone"]')!.textContent = phoneInput.value || "—";
+    displayEl.querySelector('[data-field="billingAddress"]')!.textContent = billingInput.value || "—";
+    displayEl.querySelector('[data-field="shippingAddress"]')!.textContent = shippingInput.value || "—";
+    displayEl.querySelector('[data-field="marketingOptIn"]')!.textContent = marketingInput.checked ? "Yes" : "No";
+
+    exitEditMode();
+    successMsg.classList.remove("hidden");
+    setTimeout(() => successMsg.classList.add("hidden"), 3000);
   });
 </script>

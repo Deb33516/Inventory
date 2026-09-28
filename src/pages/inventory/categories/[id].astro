@@ -6,6 +6,7 @@ import Textarea from "../../../components/ui/Textarea.astro";
 import Select from "../../../components/ui/Select.astro";
 import Button from "../../../components/ui/Button.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { id } = Astro.params;
 
@@ -32,13 +33,7 @@ if (!category) {
 ---
 
 <BaseLayout title={category ? `Edit ${category.name} — Inventory` : "Category not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory/categories" class="font-bold text-ink">
-      ← Categories
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="inventory" backHref="/inventory/categories" backLabel="Categories">
     {
       category ? (
         <Card class="max-w-lg">
@@ -65,7 +60,7 @@ if (!category) {
         <EmptyState title="Category not found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>
 
 <script>

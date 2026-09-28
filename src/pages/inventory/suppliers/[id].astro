@@ -3,6 +3,7 @@ import BaseLayout from "../../../layouts/BaseLayout.astro";
 import Card from "../../../components/ui/Card.astro";
 import SupplierForm from "../../../components/inventory/SupplierForm.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { id } = Astro.params;
 
@@ -18,13 +19,7 @@ if (!supplier) {
 ---
 
 <BaseLayout title={supplier ? `Edit ${supplier.name} — Inventory` : "Supplier not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory/suppliers" class="font-bold text-ink">
-      ← Suppliers
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="inventory" backHref="/inventory/suppliers" backLabel="Suppliers">
     {
       supplier ? (
         <Card class="max-w-lg">
@@ -37,5 +32,5 @@ if (!supplier) {
         <EmptyState title="Supplier not found" />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>

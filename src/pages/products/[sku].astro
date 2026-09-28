@@ -2,6 +2,7 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import AddToCartButton from "../../components/cart/AddToCartButton.astro";
+import PublicHeader from "../../components/layout/PublicHeader.astro";
 
 const { sku } = Astro.params;
 
@@ -22,15 +23,15 @@ const formattedPrice = product
 ---
 
 <BaseLayout title={product ? `${product.name} — Inventory` : "Product not found — Inventory"}>
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/" class="font-bold text-ink">Inventory</a>
-    <a href="/products" class="text-sm text-ink hover:text-primary">Back to products</a>
-  </header>
+  <PublicHeader />
 
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
+    <a href="/products" class="text-xs uppercase tracking-[0.5px] font-bold text-muted hover:text-ink">
+      ← Back to products
+    </a>
     {
       product ? (
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-xl">
+        <div class="mt-lg grid grid-cols-1 md:grid-cols-2 gap-xl">
           <div class="aspect-square bg-surface-card flex items-center justify-center overflow-hidden">
             {product.image_url ? (
               <img src={product.image_url} alt={product.name} class="w-full h-full object-cover" />
@@ -59,7 +60,7 @@ const formattedPrice = product
           </div>
         </div>
       ) : (
-        <EmptyState title="Product not found" message="This product may be unavailable or no longer exists." />
+        <EmptyState class="mt-lg" title="Product not found" message="This product may be unavailable or no longer exists." />
       )
     }
   </main>

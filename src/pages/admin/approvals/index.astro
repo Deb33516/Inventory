@@ -4,16 +4,9 @@ import Card from "../../../components/ui/Card.astro";
 import Button from "../../../components/ui/Button.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 import ApprovalStatusBadge from "../../../components/approvals/ApprovalStatusBadge.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
-const userId = Astro.locals.user!.id;
-
-const { data: viewerProfile } = await Astro.locals.supabase
-  .from("profiles")
-  .select("role")
-  .eq("id", userId)
-  .single();
-
-const isSuperAdmin = viewerProfile?.role === "super_admin";
+const isSuperAdmin = Astro.locals.role === "super_admin";
 
 // Admin sees their own request history (approval_requests_select_own).
 // Super admin sees the pending review queue + recently reviewed requests
@@ -109,11 +102,7 @@ function targetLabel(targetTable: string, targetId: string) {
 ---
 
 <BaseLayout title="Approvals — Admin">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/admin" class="font-bold text-ink">← Admin</a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="approvals">
     <h1 class="text-2xl font-bold text-ink">Approvals</h1>
 
     {
@@ -228,7 +217,7 @@ function targetLabel(targetTable: string, targetId: string) {
         </>
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>
 
 <script>

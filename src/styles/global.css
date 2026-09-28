@@ -5,57 +5,75 @@
  * document — it is the single visual source of truth for the app.
  */
 @theme {
-  /* Brand & accent */
-  --color-primary: #1c69d4;
-  --color-primary-active: #0653b6;
-  --color-primary-disabled: #d6d6d6;
+  /* Brand & accent — DESIGN.md (Nike-derived): ink black is the only
+   * brand action color, replacing the old BMW blue. --color-primary-active
+   * uses charcoal (a real documented token, "slightly softer body where
+   * ink is too heavy") as a web-appropriate hover shade — DESIGN.md's own
+   * button spec keeps the pressed background at ink and signals press via
+   * a scale/opacity transform instead (see Button.astro's :active state). */
+  --color-primary: #111111;
+  --color-primary-active: #39393b;
+  --color-primary-disabled: #cacacb;
 
   /* Text */
-  --color-ink: #262626;
-  --color-body: #3c3c3c;
-  --color-body-strong: #1a1a1a;
-  --color-muted: #6b6b6b;
-  --color-muted-soft: #9a9a9a;
+  --color-ink: #111111;
+  --color-body: #39393b;
+  --color-body-strong: #111111;
+  --color-muted: #707072;
+  --color-muted-soft: #9e9ea0;
   --color-on-primary: #ffffff;
   --color-on-dark: #ffffff;
-  --color-on-dark-soft: #bbbbbb;
+  --color-on-dark-soft: #9e9ea0;
 
   /* Surfaces */
   --color-canvas: #ffffff;
-  --color-surface-soft: #f7f7f7;
-  --color-surface-card: #fafafa;
-  --color-surface-strong: #ebebeb;
-  --color-surface-dark: #1a2129;
-  --color-surface-dark-elevated: #262e38;
+  --color-surface-soft: #f5f5f5;
+  --color-surface-card: #f5f5f5;
+  --color-surface-strong: #e5e5e5;
+  --color-surface-dark: #111111;
+  --color-surface-dark-elevated: #39393b;
 
   /* Hairlines */
-  --color-hairline: #e6e6e6;
-  --color-hairline-strong: #cccccc;
+  --color-hairline: #e5e5e5;
+  --color-hairline-strong: #cacacb;
 
-  /* Semantic */
-  --color-success: #22c55e;
+  /* Semantic — success/error mapped to DESIGN.md's success/sale. There is
+   * no "warning" color in the new DESIGN.md (it's a storefront-focused
+   * reference); the amber value is kept unchanged as a deliberate
+   * exception — low-stock/pending indicators are a real CRM/Inventory
+   * operational need outside that reference's scope. */
+  --color-success: #007d48;
   --color-warning: #f59e0b;
-  --color-error: #dc2626;
+  --color-error: #d30005;
 
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
-  /* Spacing (8px base unit) */
-  --spacing-xxs: 4px;
-  --spacing-xs: 8px;
-  --spacing-sm: 12px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
-  --spacing-xxl: 48px;
-  --spacing-section: 80px;
+  /* Spacing — DESIGN.md's tighter 8px-base scale (was a 4px-base scale
+   * topping out at an 80px section rhythm). Shared by every page in the
+   * app; tightens both the storefront (matches the new reference) and the
+   * CRM/dashboard density (more information per screen), with no
+   * structural changes required anywhere that already uses these tokens. */
+  --spacing-xxs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 18px;
+  --spacing-xl: 24px;
+  --spacing-xxl: 30px;
+  --spacing-section: 48px;
 
-  /* Radius — DESIGN.md is rectangular by default; rounded.full is the one exception (icon buttons/avatars) */
+  /* Radius — DESIGN.md is binary: 0px for every container (cards, images,
+   * nav) or fully pill for every interactive control (buttons, chips,
+   * badges). Components mostly use Tailwind's built-in `rounded-full`
+   * directly rather than these named keys (a 48px-tall control looks
+   * identical at 30px radius or at 9999px — full is simpler and carries
+   * no token-resolution risk), but the scale is kept here for reference
+   * and any future arbitrary use. */
   --radius-none: 0px;
-  --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-sm: 18px;
+  --radius-md: 24px;
+  --radius-lg: 30px;
   --radius-pill: 9999px;
 }
 
@@ -63,4 +81,71 @@ body {
   font-family: var(--font-sans);
   color: var(--color-body);
   background-color: var(--color-canvas);
+}
+
+/* Tailwind v4 resolves max-w-{key} against --spacing-{key} whenever that
+ * key exists, in preference to its own built-in --container-{key} scale —
+ * even when --container-{key} is explicitly redeclared above (verified:
+ * doing so had no effect). Because DESIGN.md's named spacing scale reuses
+ * xs/sm/md/lg/xl as spacing keys, every max-w-xs/sm/md/lg/xl in this app
+ * was silently resolving to an 8–32px SPACING value instead of a real
+ * container width (found via Phase 10 browser testing: every Card using
+ * max-w-md/lg rendered as an unusable ~50px sliver). These plain,
+ * unlayered rules always win over Tailwind's @layer utilities output
+ * regardless of source order, restoring Tailwind's intended default
+ * max-width scale for these five class names specifically, without
+ * touching the (correct, widely-used) spacing scale itself.
+ */
+.max-w-xs {
+  max-width: 20rem;
+}
+.max-w-sm {
+  max-width: 24rem;
+}
+.max-w-md {
+  max-width: 28rem;
+}
+.max-w-lg {
+  max-width: 32rem;
+}
+.max-w-xl {
+  max-width: 36rem;
+}
+
+/* The bare classes above only ever covered the unprefixed utility —
+ * Tailwind generates a SEPARATE rule for each responsive variant
+ * (`md:max-w-sm` etc.), each independently re-resolving against
+ * --spacing-{key} inside its own @media block, so bare `.max-w-sm` alone
+ * never touched them. Found via browser testing: three staff search bars
+ * (crm/customers, sales/orders, inventory/stock) and the storefront
+ * search bar all use `md:max-w-sm` and were silently collapsed to 8px
+ * (--spacing-sm) this whole time. Same unlayered-always-wins fix, scoped
+ * to Tailwind's default breakpoints for every currently-possible prefix. */
+@media (min-width: 640px) {
+  .sm\:max-w-xs { max-width: 20rem; }
+  .sm\:max-w-sm { max-width: 24rem; }
+  .sm\:max-w-md { max-width: 28rem; }
+  .sm\:max-w-lg { max-width: 32rem; }
+  .sm\:max-w-xl { max-width: 36rem; }
+}
+@media (min-width: 768px) {
+  .md\:max-w-xs { max-width: 20rem; }
+  .md\:max-w-sm { max-width: 24rem; }
+  .md\:max-w-md { max-width: 28rem; }
+  .md\:max-w-lg { max-width: 32rem; }
+  .md\:max-w-xl { max-width: 36rem; }
+}
+@media (min-width: 1024px) {
+  .lg\:max-w-xs { max-width: 20rem; }
+  .lg\:max-w-sm { max-width: 24rem; }
+  .lg\:max-w-md { max-width: 28rem; }
+  .lg\:max-w-lg { max-width: 32rem; }
+  .lg\:max-w-xl { max-width: 36rem; }
+}
+@media (min-width: 1280px) {
+  .xl\:max-w-xs { max-width: 20rem; }
+  .xl\:max-w-sm { max-width: 24rem; }
+  .xl\:max-w-md { max-width: 28rem; }
+  .xl\:max-w-lg { max-width: 32rem; }
+  .xl\:max-w-xl { max-width: 36rem; }
 }

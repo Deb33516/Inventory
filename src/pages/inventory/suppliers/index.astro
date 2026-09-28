@@ -4,6 +4,7 @@ import Card from "../../../components/ui/Card.astro";
 import Badge from "../../../components/ui/Badge.astro";
 import SupplierForm from "../../../components/inventory/SupplierForm.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const created = Astro.url.searchParams.get("created");
 const updated = Astro.url.searchParams.get("updated");
@@ -15,11 +16,8 @@ const { data: suppliers } = await Astro.locals.supabase
 ---
 
 <BaseLayout title="Suppliers — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory" class="font-bold text-ink">← Inventory</a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl grid grid-cols-1 md:grid-cols-2 gap-xl">
+  <AppShell active="inventory">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-xl">
     <div>
       <h1 class="text-2xl font-bold text-ink">Suppliers</h1>
 
@@ -78,5 +76,6 @@ const { data: suppliers } = await Astro.locals.supabase
         <SupplierForm action="createSupplier" />
       </div>
     </Card>
-  </main>
+  </div>
+  </AppShell>
 </BaseLayout>

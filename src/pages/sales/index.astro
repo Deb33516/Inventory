@@ -6,6 +6,8 @@ import KpiCard from "../../components/dashboard/KpiCard.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
 import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
+import AppShell from "../../components/layout/AppShell.astro";
+import { CHART_COLORS } from "../../lib/chartTheme";
 
 const url = Astro.url;
 const range = resolveDashboardRange(url.searchParams.get("range"));
@@ -35,28 +37,25 @@ const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
 
 const statusColors: Record<string, string> = {
-  pending: "#f59e0b",
-  confirmed: "#6b6b6b",
-  processing: "#6b6b6b",
-  shipped: "#22c55e",
-  delivered: "#22c55e",
-  cancelled: "#dc2626",
-  refunded: "#dc2626",
+  pending: CHART_COLORS.warning,
+  confirmed: CHART_COLORS.mute,
+  processing: CHART_COLORS.mute,
+  shipped: CHART_COLORS.success,
+  delivered: CHART_COLORS.success,
+  cancelled: CHART_COLORS.error,
+  refunded: CHART_COLORS.error,
 };
 ---
 
 <BaseLayout title="Sales dashboard">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <span class="font-bold text-ink">Sales</span>
-    <nav class="flex items-center gap-lg text-sm text-ink">
-      <a href="/sales/orders" class="hover:text-primary">Orders</a>
-      <a href="/sales/orders/new" class="hover:text-primary">New order</a>
-      <a href="/crm" class="hover:text-primary">CRM</a>
-    </nav>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+  <AppShell active="dashboard">
+    <div class="flex items-center justify-between flex-wrap gap-md">
+      <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
+      <nav aria-label="Sales sections" class="flex items-center gap-lg text-sm">
+        <a href="/sales/orders" class="text-primary font-bold hover:underline">Orders</a>
+        <a href="/sales/orders/new" class="text-primary font-bold hover:underline">New order</a>
+      </nav>
+    </div>
 
     <div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
       <a href="/sales/orders?status=pending" class="block">
@@ -88,8 +87,8 @@ const statusColors: Record<string, string> = {
     </div>
 
     <div class="mt-lg grid grid-cols-1 lg:grid-cols-2 gap-lg">
-      <div>
-        <h3 class="font-bold text-ink">Revenue trend</h3>
+      <Card>
+        <h3 class="text-sm font-bold text-ink">Revenue trend</h3>
         <div class="mt-sm">
           {
             revenueRows.length > 0 ? (
@@ -102,23 +101,23 @@ const statusColors: Record<string, string> = {
                     {
                       label: "Revenue",
                       data: revenueRows.map((r) => Number(r.revenue)),
-                      borderColor: "#1c69d4",
-                      backgroundColor: "rgba(28,105,212,0.12)",
-                      tension: 0.25,
+                      borderColor: CHART_COLORS.ink,
+                      backgroundColor: "rgba(17,17,17,0.06)",
                       fill: true,
                     },
                   ],
                 }}
+                options={{ plugins: { legend: { display: false } } }}
               />
             ) : (
-              <EmptyState title="No revenue in this range" />
+              <EmptyState title="No revenue in this range" message="Try another date range." />
             )
           }
         </div>
-      </div>
+      </Card>
 
-      <div>
-        <h3 class="font-bold text-ink">Orders by status</h3>
+      <Card>
+        <h3 class="text-sm font-bold text-ink">Orders by status</h3>
         <div class="mt-sm">
           {
             statusRows.length > 0 ? (
@@ -131,21 +130,21 @@ const statusColors: Record<string, string> = {
                     {
                       label: "Orders",
                       data: statusRows.map((r) => Number(r.order_count)),
-                      backgroundColor: statusRows.map((r) => statusColors[r.status] ?? "#6b6b6b"),
+                      backgroundColor: statusRows.map((r) => statusColors[r.status] ?? CHART_COLORS.mute),
                     },
                   ],
                 }}
                 options={{ plugins: { legend: { display: false } } }}
               />
             ) : (
-              <EmptyState title="No orders in this range" />
+              <EmptyState title="No orders in this range" message="Try another date range." />
             )
           }
         </div>
-      </div>
+      </Card>
 
-      <div class="lg:col-span-2">
-        <h3 class="font-bold text-ink">Top products by revenue</h3>
+      <Card class="lg:col-span-2">
+        <h3 class="text-sm font-bold text-ink">Top products by revenue</h3>
         <div class="mt-sm">
           {
             productRows.length > 0 ? (
@@ -158,18 +157,18 @@ const statusColors: Record<string, string> = {
                     {
                       label: "Revenue",
                       data: productRows.map((r) => Number(r.revenue)),
-                      backgroundColor: "#1c69d4",
+                      backgroundColor: CHART_COLORS.ink,
                     },
                   ],
                 }}
                 options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
               />
             ) : (
-              <EmptyState title="No product sales in this range" />
+              <EmptyState title="No product sales in this range" message="Try another date range." />
             )
           }
         </div>
-      </div>
+      </Card>
     </div>
-  </main>
+  </AppShell>
 </BaseLayout>

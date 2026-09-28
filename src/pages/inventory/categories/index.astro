@@ -6,6 +6,7 @@ import Textarea from "../../../components/ui/Textarea.astro";
 import Select from "../../../components/ui/Select.astro";
 import Button from "../../../components/ui/Button.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const created = Astro.url.searchParams.get("created");
 const updated = Astro.url.searchParams.get("updated");
@@ -27,13 +28,8 @@ function parentName(parentId: string | null) {
 ---
 
 <BaseLayout title="Manage categories — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/inventory/products" class="font-bold text-ink">
-      ← Products
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl grid grid-cols-1 md:grid-cols-2 gap-xl">
+  <AppShell active="inventory">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-xl">
     <div>
       <h1 class="text-2xl font-bold text-ink">Categories</h1>
 
@@ -96,7 +92,8 @@ function parentName(parentId: string | null) {
         <Button type="submit" variant="primary">Create category</Button>
       </form>
     </Card>
-  </main>
+  </div>
+  </AppShell>
 </BaseLayout>
 
 <script>

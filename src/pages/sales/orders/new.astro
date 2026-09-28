@@ -2,6 +2,7 @@
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import Card from "../../../components/ui/Card.astro";
 import OrderForm from "../../../components/orders/OrderForm.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const { data: customers } = await Astro.locals.supabase
   .from("profiles")
@@ -19,18 +20,12 @@ const { data: products } = await Astro.locals.supabase
 ---
 
 <BaseLayout title="New order — Sales">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/sales/orders" class="font-bold text-ink">
-      ← Orders
-    </a>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <AppShell active="sales" backHref="/sales/orders" backLabel="Orders">
     <Card class="max-w-2xl">
       <h1 class="text-2xl font-bold text-ink">New order</h1>
       <div class="mt-lg">
         <OrderForm customers={customerOptions} products={products ?? []} />
       </div>
     </Card>
-  </main>
+  </AppShell>
 </BaseLayout>

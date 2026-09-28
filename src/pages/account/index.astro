@@ -1,225 +1,270 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
-import Button from "../../components/ui/Button.astro";
+import Badge from "../../components/ui/Badge.astro";
 import CustomerProfileForm from "../../components/crm/CustomerProfileForm.astro";
+import AppShell from "../../components/layout/AppShell.astro";
+import PublicHeader from "../../components/layout/PublicHeader.astro";
 import CustomerTimeline from "../../components/crm/CustomerTimeline.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
 import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
+import { CHART_COLORS } from "../../lib/chartTheme";
 
 const url = Astro.url;
 const range = resolveDashboardRange(url.searchParams.get("range"));
 
 // Middleware guarantees a user is present for every /account/* route —
 // this page only renders the authenticated state.
-const { user } = Astro.locals;
+const { user, role } = Astro.locals;
 const userId = user!.id;
+const isCustomer = role === "customer";
 
-const { data: profile } = await Astro.locals.supabase
-  .from("profiles")
-  .select("full_name, phone, created_at")
-  .eq("id", userId)
-  .single();
+// Any staff/admin role gets a minimal "My profile" panel instead — same
+// page URL, genuinely different content, not a redirect (staff explicitly
+// want an Account item in their own sidebar, not a bounce back to their
+// dashboard). None of the customer-only queries below run for a staff
+// viewer, since they'd be empty/irrelevant anyway (a staff account has no
+// real order history).
+const roleLabel: Record<string, string> = {
+  sales_staff: "Sales staff",
+  inventory_staff: "Inventory staff",
+  admin: "Admin",
+  super_admin: "Super admin",
+};
 
-// Deliberately not selecting `notes` — that's staff-only CRM data and
-// must never appear on the customer's own account page, even though RLS
-// (row-level, not column-level) would technically allow the read.
-const { data: customer } = await Astro.locals.supabase
-  .from("customers")
-  .select("billing_address, shipping_address, marketing_opt_in")
-  .eq("profile_id", userId)
-  .single();
+let profile: { full_name: string | null; phone: string | null; created_at: string } | null = null;
+let customer: { billing_address: unknown; shipping_address: unknown; marketing_opt_in: boolean } | null = null;
+let metrics: { order_count: number; last_order_at: string | null } | null = null;
+let orders: { id: string; status: string; total: number; created_at: string }[] = [];
+let spendRows: { day: string; revenue: number }[] = [];
+let statusRows: { status: string; order_count: number }[] = [];
+let productRows: { name: string; units_sold: number }[] = [];
 
-const { data: metrics } = await Astro.locals.supabase
-  .from("customer_metrics")
-  .select("order_count, last_order_at")
-  .eq("profile_id", userId)
-  .maybeSingle();
+if (isCustomer) {
+  const { data: profileRow } = await Astro.locals.supabase
+    .from("profiles")
+    .select("full_name, phone, created_at")
+    .eq("id", userId)
+    .single();
+  profile = profileRow;
 
-const { data: orders } = await Astro.locals.supabase
-  .from("orders")
-  .select("id, status, total, created_at")
-  .eq("customer_id", userId)
-  .order("created_at", { ascending: false })
-  .limit(10);
+  // Deliberately not selecting `notes` — that's staff-only CRM data and
+  // must never appear on the customer's own account page, even though RLS
+  // (row-level, not column-level) would technically allow the read.
+  const { data: customerRow } = await Astro.locals.supabase
+    .from("customers")
+    .select("billing_address, shipping_address, marketing_opt_in")
+    .eq("profile_id", userId)
+    .single();
+  customer = customerRow;
 
-// RLS (orders_select_own / order_items_select_own) auto-scopes these
-// calls to this customer's own orders — the same RPCs staff use for a
-// store-wide view naturally return only "my" data here, no separate
-// customer-specific function needed.
-const [{ data: spendTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
-  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
-]);
+  const { data: metricsRow } = await Astro.locals.supabase
+    .from("customer_metrics")
+    .select("order_count, last_order_at")
+    .eq("profile_id", userId)
+    .maybeSingle();
+  metrics = metricsRow;
 
-const spendRows = spendTrend ?? [];
-const statusRows = ordersByStatus ?? [];
-const productRows = topProducts ?? [];
+  const { data: ordersRows } = await Astro.locals.supabase
+    .from("orders")
+    .select("id, status, total, created_at")
+    .eq("customer_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  orders = ordersRows ?? [];
+
+  // RLS (orders_select_own / order_items_select_own) auto-scopes these
+  // calls to this customer's own orders — the same RPCs staff use for a
+  // store-wide view naturally return only "my" data here, no separate
+  // customer-specific function needed.
+  const [{ data: spendTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
+    Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
+    Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
+    Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
+  ]);
+
+  spendRows = spendTrend ?? [];
+  statusRows = ordersByStatus ?? [];
+  productRows = topProducts ?? [];
+}
 
 const statusColors: Record<string, string> = {
-  pending: "#f59e0b",
-  confirmed: "#6b6b6b",
-  processing: "#6b6b6b",
-  shipped: "#22c55e",
-  delivered: "#22c55e",
-  cancelled: "#dc2626",
-  refunded: "#dc2626",
+  pending: CHART_COLORS.warning,
+  confirmed: CHART_COLORS.mute,
+  processing: CHART_COLORS.mute,
+  shipped: CHART_COLORS.success,
+  delivered: CHART_COLORS.success,
+  cancelled: CHART_COLORS.error,
+  refunded: CHART_COLORS.error,
 };
 ---
 
 <BaseLayout title="Your account — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/" class="font-bold text-ink">Inventory</a>
-    <Button id="signout-btn" variant="secondary">Sign out</Button>
-  </header>
+  {
+    isCustomer ? (
+      <PublicHeader />
 
-  <main class="max-w-[1440px] mx-auto px-lg py-xxl grid grid-cols-1 lg:grid-cols-3 gap-lg">
-    <div class="lg:col-span-2 space-y-lg">
-      <Card>
-        <h1 class="text-2xl font-bold text-ink">Your profile</h1>
-        <p class="mt-xs text-sm font-light text-body">{user?.email}</p>
-        <div class="mt-lg">
-          <CustomerProfileForm
-            fullName={profile?.full_name ?? null}
-            phone={profile?.phone ?? null}
-            billingAddress={customer?.billing_address ?? null}
-            shippingAddress={customer?.shipping_address ?? null}
-            marketingOptIn={customer?.marketing_opt_in ?? false}
-          />
-        </div>
-      </Card>
+      <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xxl grid grid-cols-1 lg:grid-cols-3 gap-lg">
+        <div class="lg:col-span-2 space-y-lg">
+          <Card>
+            <h1 class="text-2xl font-bold text-ink">Your profile</h1>
+            <div class="mt-lg">
+              <CustomerProfileForm
+                email={user?.email ?? ""}
+                fullName={profile?.full_name ?? null}
+                phone={profile?.phone ?? null}
+                billingAddress={customer?.billing_address ?? null}
+                shippingAddress={customer?.shipping_address ?? null}
+                marketingOptIn={customer?.marketing_opt_in ?? false}
+              />
+            </div>
+          </Card>
 
-      <Card>
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold text-ink">Order history</h2>
-          <a href="/account/orders" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
-            View all
-          </a>
-        </div>
-        <div class="mt-md">
-          <CustomerTimeline orders={orders ?? []} accountCreatedAt={profile?.created_at ?? new Date().toISOString()} />
-        </div>
-      </Card>
+          <Card>
+            <div class="flex items-center justify-between">
+              <h2 class="text-lg font-bold text-ink">Order history</h2>
+              <a href="/account/orders" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
+                View all
+              </a>
+            </div>
+            <div class="mt-md">
+              <CustomerTimeline orders={orders} accountCreatedAt={profile?.created_at ?? new Date().toISOString()} />
+            </div>
+          </Card>
 
-      <Card>
-        <div class="flex items-center justify-between flex-wrap gap-md">
-          <h2 class="text-lg font-bold text-ink">My analytics</h2>
-          <DateRangeFilter current={range.preset} url={url} pathname="/account" />
-        </div>
-        <p class="mt-xs text-xs text-muted">{range.label}</p>
+          <Card>
+            <div class="flex items-center justify-between flex-wrap gap-md">
+              <h2 class="text-lg font-bold text-ink">My analytics</h2>
+              <DateRangeFilter current={range.preset} url={url} pathname="/account" />
+            </div>
+            <p class="mt-xs text-xs text-muted">{range.label}</p>
 
-        <div class="mt-md grid grid-cols-1 gap-lg">
-          <div>
-            <h3 class="text-sm font-bold text-ink">Spend over time</h3>
-            <div class="mt-sm">
-              {
-                spendRows.length > 0 ? (
-                  <ChartCanvas
-                    id="account-spend-trend"
-                    type="line"
-                    height={220}
-                    data={{
-                      labels: spendRows.map((r) => r.day),
-                      datasets: [
-                        {
-                          label: "Spend",
-                          data: spendRows.map((r) => Number(r.revenue)),
-                          borderColor: "#1c69d4",
-                          backgroundColor: "rgba(28,105,212,0.12)",
-                          tension: 0.25,
-                          fill: true,
-                        },
-                      ],
-                    }}
-                  />
-                ) : (
-                  <EmptyState title="No orders in this range" />
-                )
-              }
+            <div class="mt-md grid grid-cols-1 gap-lg">
+              <div>
+                <h3 class="text-sm font-bold text-ink">Spend over time</h3>
+                <div class="mt-sm">
+                  {
+                    spendRows.length > 0 ? (
+                      <ChartCanvas
+                        id="account-spend-trend"
+                        type="line"
+                        height={260}
+                        data={{
+                          labels: spendRows.map((r) => r.day),
+                          datasets: [
+                            {
+                              label: "Spend",
+                              data: spendRows.map((r) => Number(r.revenue)),
+                              borderColor: CHART_COLORS.ink,
+                              backgroundColor: "rgba(17,17,17,0.06)",
+                              fill: true,
+                            },
+                          ],
+                        }}
+                        options={{ plugins: { legend: { display: false } } }}
+                      />
+                    ) : (
+                      <EmptyState title="No orders in this range" message="Try another date range." />
+                    )
+                  }
+                </div>
+              </div>
+
+              <div>
+                <h3 class="text-sm font-bold text-ink">My orders by status</h3>
+                <div class="mt-sm">
+                  {
+                    statusRows.length > 0 ? (
+                      <ChartCanvas
+                        id="account-orders-status"
+                        type="bar"
+                        height={260}
+                        data={{
+                          labels: statusRows.map((r) => r.status),
+                          datasets: [
+                            {
+                              label: "Orders",
+                              data: statusRows.map((r) => Number(r.order_count)),
+                              backgroundColor: statusRows.map((r) => statusColors[r.status] ?? CHART_COLORS.mute),
+                            },
+                          ],
+                        }}
+                        options={{ plugins: { legend: { display: false } } }}
+                      />
+                    ) : (
+                      <EmptyState title="No orders in this range" message="Try another date range." />
+                    )
+                  }
+                </div>
+              </div>
+
+              <div>
+                <h3 class="text-sm font-bold text-ink">My top purchased products</h3>
+                <div class="mt-sm">
+                  {
+                    productRows.length > 0 ? (
+                      <ChartCanvas
+                        id="account-top-products"
+                        type="bar"
+                        height={260}
+                        data={{
+                          labels: productRows.map((r) => r.name),
+                          datasets: [
+                            {
+                              label: "Units",
+                              data: productRows.map((r) => Number(r.units_sold)),
+                              backgroundColor: CHART_COLORS.ink,
+                            },
+                          ],
+                        }}
+                        options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
+                      />
+                    ) : (
+                      <EmptyState title="No purchases in this range" message="Try another date range." />
+                    )
+                  }
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <Card class="h-fit">
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders placed</p>
+          <p class="mt-xs text-3xl font-bold text-ink">{metrics?.order_count ?? 0}</p>
+          <p class="mt-md text-xs uppercase tracking-[0.5px] text-muted">Last order</p>
+          <p class="mt-xs text-lg font-bold text-ink">
+            {metrics?.last_order_at ? new Date(metrics.last_order_at).toLocaleDateString() : "—"}
+          </p>
+        </Card>
+      </main>
+    ) : (
+      <AppShell active="account">
+        <Card class="max-w-lg">
+          <h1 class="text-2xl font-bold text-ink">My profile</h1>
+          <div class="mt-lg space-y-md">
+            <div>
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Name</p>
+              <p class="mt-xs text-sm text-ink font-bold">{user?.user_metadata?.full_name ?? "—"}</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Email</p>
+              <p class="mt-xs text-sm text-ink">{user?.email}</p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Role</p>
+              <p class="mt-xs">
+                <Badge tone="success">{roleLabel[role ?? ""] ?? role}</Badge>
+              </p>
             </div>
           </div>
-
-          <div>
-            <h3 class="text-sm font-bold text-ink">My orders by status</h3>
-            <div class="mt-sm">
-              {
-                statusRows.length > 0 ? (
-                  <ChartCanvas
-                    id="account-orders-status"
-                    type="bar"
-                    height={220}
-                    data={{
-                      labels: statusRows.map((r) => r.status),
-                      datasets: [
-                        {
-                          label: "Orders",
-                          data: statusRows.map((r) => Number(r.order_count)),
-                          backgroundColor: statusRows.map((r) => statusColors[r.status] ?? "#6b6b6b"),
-                        },
-                      ],
-                    }}
-                    options={{ plugins: { legend: { display: false } } }}
-                  />
-                ) : (
-                  <EmptyState title="No orders in this range" />
-                )
-              }
-            </div>
-          </div>
-
-          <div>
-            <h3 class="text-sm font-bold text-ink">My top purchased products</h3>
-            <div class="mt-sm">
-              {
-                productRows.length > 0 ? (
-                  <ChartCanvas
-                    id="account-top-products"
-                    type="bar"
-                    height={220}
-                    data={{
-                      labels: productRows.map((r) => r.name),
-                      datasets: [
-                        {
-                          label: "Units",
-                          data: productRows.map((r) => Number(r.units_sold)),
-                          backgroundColor: "#1c69d4",
-                        },
-                      ],
-                    }}
-                    options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
-                  />
-                ) : (
-                  <EmptyState title="No purchases in this range" />
-                )
-              }
-            </div>
-          </div>
-        </div>
-      </Card>
-    </div>
-
-    <Card class="h-fit">
-      <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders placed</p>
-      <p class="mt-xs text-3xl font-bold text-ink">{metrics?.order_count ?? 0}</p>
-      <p class="mt-md text-xs uppercase tracking-[0.5px] text-muted">Last order</p>
-      <p class="mt-xs text-lg font-bold text-ink">
-        {metrics?.last_order_at ? new Date(metrics.last_order_at).toLocaleDateString() : "—"}
-      </p>
-    </Card>
-  </main>
+          <p class="mt-lg text-xs text-muted">
+            To change your password, sign out and use "Forgot password?" on the sign-in page.
+          </p>
+        </Card>
+      </AppShell>
+    )
+  }
 </BaseLayout>
-
-<script>
-  import { actions } from "astro:actions";
-
-  const button = document.querySelector<HTMLButtonElement>("#signout-btn")!;
-
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    await actions.signOut();
-    window.location.href = "/login";
-  });
-</script>

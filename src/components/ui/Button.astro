@@ -1,6 +1,9 @@
 ---
-// Implements DESIGN.md `button-primary` / `button-secondary` — rectangular
-// (0px radius), 48px tall, no drop shadow. See DESIGN.md § Buttons.
+// Implements DESIGN.md `button-primary` / `button-secondary` — full pill
+// radius, 48px tall, no drop shadow. See DESIGN.md § Buttons. The pressed
+// state adapts DESIGN.md's documented "tap collapse" (scale(0.5)/opacity
+// 0.5 — a touch-target effect) into a moderate scale+opacity dip suited to
+// a mouse/click web interaction rather than a full-size touch button.
 interface Props extends astroHTML.JSX.HTMLAttributes {
   variant?: "primary" | "secondary" | "text-link";
   href?: string;
@@ -16,11 +19,12 @@ const {
   ...rest
 } = Astro.props;
 
-const base = "inline-flex items-center justify-center font-bold text-sm tracking-[0.5px] transition-colors";
+const base =
+  "inline-flex items-center justify-center font-bold text-sm tracking-[0.5px] rounded-full transition-[color,background-color,border-color,opacity,transform] duration-150 active:scale-[0.97] active:opacity-80";
 const variants: Record<string, string> = {
   primary: "bg-primary text-on-primary h-12 px-8 hover:bg-primary-active",
-  secondary: "bg-canvas text-ink h-12 px-8 border border-hairline-strong hover:border-ink",
-  "text-link": "bg-transparent text-ink uppercase tracking-[1.5px] text-[13px] hover:text-primary",
+  secondary: "bg-surface-soft text-ink h-12 px-8 border border-hairline hover:border-hairline-strong",
+  "text-link": "bg-transparent text-ink uppercase tracking-[1.5px] text-[13px] rounded-none hover:text-body",
 };
 const classes = `${base} ${variants[variant]} ${className}`;
 

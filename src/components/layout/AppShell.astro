@@ -1,0 +1,198 @@
+---
+// Persistent-sidebar dashboard shell for every staff/admin page (sales,
+// inventory, crm, admin, and the staff branch of /account). Replaces
+// AppHeader.astro's horizontal top-nav pattern. Nav content is entirely
+// derived from ROLE_DASHBOARD/SIDEBAR_NAV/SECTION_SUBNAV in lib/roles.ts —
+// the same source of truth middleware.ts already gates against — so this
+// component can never show a link the viewer isn't actually allowed to
+// follow. Purely presentational: no route gating lives here.
+import Button from "../ui/Button.astro";
+import { ROLE_DASHBOARD, SIDEBAR_NAV, SECTION_SUBNAV } from "../../lib/roles";
+import type { UserRole } from "../../lib/types";
+
+interface Props {
+  // Which nav item is current: "dashboard" | "sales" | "inventory" | "crm"
+  // | "approvals" | "staff" | "account".
+  active: string;
+  // Optional page heading shown in the topbar.
+  title?: string;
+  // Detail/form sub-pages: a single "back to parent" link instead of the
+  // section's subnav row (e.g. product edit page -> back to Products list).
+  backHref?: string;
+  backLabel?: string;
+}
+
+const { active, title, backHref, backLabel } = Astro.props;
+
+const role = Astro.locals.role as Exclude<UserRole, "customer">;
+
+const dashboardHref = ROLE_DASHBOARD[role];
+const sectionItems = SIDEBAR_NAV.filter((item) => item.roles.includes(role));
+const subNav = !backHref ? SECTION_SUBNAV[active] : undefined;
+
+const roleLabel: Record<Exclude<UserRole, "customer">, string> = {
+  sales_staff: "Sales staff",
+  inventory_staff: "Inventory staff",
+  admin: "Admin",
+  super_admin: "Super admin",
+};
+---
+
+<div class="min-h-screen lg:flex">
+  <!-- Mobile topbar: hamburger + brand, sidebar hidden until toggled. -->
+  <div class="lg:hidden h-14 flex items-center justify-between px-md border-b border-hairline bg-canvas sticky top-0 z-30">
+    <button
+      type="button"
+      id="sidebar-toggle"
+      aria-label="Open navigation"
+      aria-expanded="false"
+      aria-controls="app-sidebar"
+      class="h-10 w-10 flex items-center justify-center border border-hairline"
+    >
+      <span aria-hidden="true">☰</span>
+    </button>
+    <a href={dashboardHref} class="font-bold text-ink">Inventory</a>
+    <div class="w-10"></div>
+  </div>
+
+  <div id="sidebar-backdrop" class="hidden fixed inset-0 bg-ink/40 z-30 lg:hidden"></div>
+
+  <aside
+    id="app-sidebar"
+    class="fixed inset-y-0 left-0 z-40 w-64 -translate-x-full transition-transform bg-canvas border-r border-hairline flex flex-col lg:static lg:translate-x-0 lg:shrink-0"
+  >
+    <div class="h-16 flex items-center px-lg border-b border-hairline shrink-0">
+      <a href={dashboardHref} class="font-bold text-ink">Inventory</a>
+    </div>
+
+    <nav aria-label="Main" class="flex-1 overflow-y-auto py-md">
+      <ul class="list-none space-y-xxs px-sm">
+        <li>
+          <a
+            href={dashboardHref}
+            aria-current={active === "dashboard" ? "page" : undefined}
+            class={`block px-md py-sm text-sm font-bold transition-colors ${
+              active === "dashboard" ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
+            }`}
+          >
+            Dashboard
+          </a>
+        </li>
+        {
+          sectionItems.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                aria-current={active === item.key ? "page" : undefined}
+                class={`block px-md py-sm text-sm font-bold transition-colors ${
+                  active === item.key ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
+                }`}
+              >
+                {item.label}
+              </a>
+            </li>
+          ))
+        }
+        <li>
+          <a
+            href="/account"
+            aria-current={active === "account" ? "page" : undefined}
+            class={`block px-md py-sm text-sm font-bold transition-colors ${
+              active === "account" ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
+            }`}
+          >
+            Account
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="p-md border-t border-hairline shrink-0">
+      <p class="text-xs text-muted uppercase tracking-[0.5px]">{roleLabel[role]}</p>
+      <Button id="app-signout-btn" variant="secondary" class="mt-sm w-full">
+        Sign out
+      </Button>
+    </div>
+  </aside>
+
+  <div class="flex-1 min-w-0">
+    <header class="hidden lg:flex h-16 items-center justify-between px-lg border-b border-hairline bg-canvas">
+      <div>
+        {
+          backHref ? (
+            <a href={backHref} class="text-xs font-bold text-muted hover:text-ink uppercase tracking-[0.5px]">
+              ← {backLabel}
+            </a>
+          ) : (
+            title && <h1 class="text-lg font-bold text-ink">{title}</h1>
+          )
+        }
+      </div>
+      <p class="text-sm text-body">{roleLabel[role]}</p>
+    </header>
+
+    {
+      backHref && (
+        <div class="lg:hidden px-md py-sm border-b border-hairline bg-surface-soft">
+          <a href={backHref} class="text-xs font-bold text-ink">
+            ← {backLabel}
+          </a>
+        </div>
+      )
+    }
+
+    {
+      subNav && subNav.length > 0 && (
+        <nav aria-label={`${active} sections`} class="px-lg py-sm border-b border-hairline bg-canvas overflow-x-auto">
+          <ul class="flex items-center gap-lg text-sm list-none whitespace-nowrap">
+            {subNav.map((item) => (
+              <li>
+                <a href={item.href} class="text-primary font-bold hover:underline">
+                  {item.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )
+    }
+
+    <main id="main-content" class="px-lg py-xl max-w-[1440px] mx-auto">
+      <slot />
+    </main>
+  </div>
+</div>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const signOutButton = document.querySelector<HTMLButtonElement>("#app-signout-btn");
+  signOutButton?.addEventListener("click", async () => {
+    signOutButton.disabled = true;
+    await actions.signOut();
+    window.location.href = "/login";
+  });
+
+  const toggle = document.querySelector<HTMLButtonElement>("#sidebar-toggle");
+  const sidebar = document.querySelector<HTMLElement>("#app-sidebar");
+  const backdrop = document.querySelector<HTMLElement>("#sidebar-backdrop");
+
+  const closeSidebar = () => {
+    sidebar?.classList.add("-translate-x-full");
+    backdrop?.classList.add("hidden");
+    toggle?.setAttribute("aria-expanded", "false");
+  };
+
+  const openSidebar = () => {
+    sidebar?.classList.remove("-translate-x-full");
+    backdrop?.classList.remove("hidden");
+    toggle?.setAttribute("aria-expanded", "true");
+  };
+
+  toggle?.addEventListener("click", () => {
+    const isOpen = toggle.getAttribute("aria-expanded") === "true";
+    isOpen ? closeSidebar() : openSidebar();
+  });
+
+  backdrop?.addEventListener("click", closeSidebar);
+</script>

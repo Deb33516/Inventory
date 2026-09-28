@@ -1,21 +1,12 @@
 import { defineMiddleware } from "astro:middleware";
 import { createClient } from "./lib/supabase/server";
 import type { UserRole } from "./lib/types";
+import { ROLE_GATED_PREFIXES, ROLE_DASHBOARD, CUSTOMER_ONLY_PREFIXES } from "./lib/roles";
 
 // /cart is deliberately NOT protected — it's a pure localStorage read
 // with no DB call, browsable while signed out (like any real cart).
 // /checkout is protected since it actually calls place_order().
 const PROTECTED_PREFIXES = ["/account", "/inventory", "/crm", "/checkout", "/sales", "/admin"];
-
-// Prefixes that require not just a session, but a specific role. Checked
-// only when the path actually matches, so routes that don't need it (e.g.
-// /account) avoid the extra profiles lookup.
-const ROLE_GATED_PREFIXES: Record<string, UserRole[]> = {
-  "/inventory": ["inventory_staff", "admin", "super_admin"],
-  "/crm": ["sales_staff", "admin", "super_admin"],
-  "/sales": ["sales_staff", "admin", "super_admin"],
-  "/admin": ["admin", "super_admin"],
-};
 
 function matchesPrefix(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(prefix + "/");
@@ -36,6 +27,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
   context.locals.supabase = supabase;
   context.locals.user = user;
 
+  // Fetched once per request (not per-page) so every page and AppHeader
+  // can read the viewer's role off Astro.locals without a duplicate query.
+  // Only needed for an authenticated request — anonymous visitors get null.
+  let role: UserRole | null = null;
+  if (user) {
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+    role = (profile?.role as UserRole) ?? null;
+  }
+  context.locals.role = role;
+
   const isProtected = PROTECTED_PREFIXES.some((prefix) =>
     matchesPrefix(context.url.pathname, prefix)
   );
@@ -52,17 +53,22 @@ export const onRequest = defineMiddleware(async (context, next) => {
   );
 
   if (gatedPrefix && user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
     const allowedRoles = ROLE_GATED_PREFIXES[gatedPrefix];
 
-    if (!profile || !allowedRoles.includes(profile.role as UserRole)) {
+    if (!role || !allowedRoles.includes(role)) {
       return context.redirect("/");
     }
+  }
+
+  // /cart and /checkout are the customer purchase flow — a staff/admin
+  // role landing here (nothing stops them navigating directly) gets sent
+  // to their own dashboard instead of an irrelevant customer checkout UI.
+  // Anonymous visitors (role is null) and the `customer` role pass through
+  // unaffected — /cart stays intentionally browsable while signed out.
+  const isCustomerOnly = CUSTOMER_ONLY_PREFIXES.some((prefix) => matchesPrefix(context.url.pathname, prefix));
+
+  if (isCustomerOnly && role && role !== "customer") {
+    return context.redirect(ROLE_DASHBOARD[role]);
   }
 
   return next();

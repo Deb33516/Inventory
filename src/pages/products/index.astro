@@ -3,6 +3,7 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 import ProductCard from "../../components/catalog/ProductCard.astro";
 import FilterChip from "../../components/catalog/FilterChip.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
+import PublicHeader from "../../components/layout/PublicHeader.astro";
 
 const PAGE_SIZE = 24;
 
@@ -62,34 +63,32 @@ function buildUrl(overrides: Record<string, string | undefined>) {
 ---
 
 <BaseLayout title="Products — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/" class="font-bold text-ink">Inventory</a>
-    <nav class="flex items-center gap-lg text-sm text-ink">
-      <a href="/login" class="hover:text-primary">Log in</a>
-    </nav>
-  </header>
+  <PublicHeader />
 
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
     <h1 class="text-3xl font-bold text-ink">Products</h1>
 
-    <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
+    <form method="get" class="mt-lg flex flex-col md:flex-row gap-sm">
       <input
         type="text"
         name="search"
         value={search}
         placeholder="Search products..."
-        class="w-full md:max-w-sm h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
+        class="flex-1 min-w-0 md:max-w-sm h-12 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none transition-colors"
       />
       <select
         name="sort"
-        class="h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none"
+        class="h-12 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none"
       >
         <option value="name" selected={sort === "name"}>Name</option>
         <option value="price_asc" selected={sort === "price_asc"}>Price: low to high</option>
         <option value="price_desc" selected={sort === "price_desc"}>Price: high to low</option>
       </select>
       {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
-      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
+      <button
+        type="submit"
+        class="h-12 px-lg rounded-full bg-primary text-on-primary font-bold text-sm transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80"
+      >
         Apply
       </button>
     </form>
@@ -110,7 +109,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
     {
       products && products.length > 0 ? (
         <>
-          <div class="mt-lg grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-lg">
+          <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
             {products.map((p) => (
               <ProductCard
                 productId={p.id}
@@ -128,7 +127,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
               <a
                 href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
                 aria-disabled={page <= 1}
-                class={`px-md py-xs border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
+                class={`px-md py-xs rounded-full border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
               >
                 Previous
               </a>
@@ -138,7 +137,7 @@ function buildUrl(overrides: Record<string, string | undefined>) {
               <a
                 href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
                 aria-disabled={page >= totalPages}
-                class={`px-md py-xs border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : ""}`}
+                class={`px-md py-xs rounded-full border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
               >
                 Next
               </a>

@@ -3,6 +3,7 @@ import BaseLayout from "../../../layouts/BaseLayout.astro";
 import Badge from "../../../components/ui/Badge.astro";
 import Button from "../../../components/ui/Button.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
 
 const created = Astro.url.searchParams.get("created");
 const updated = Astro.url.searchParams.get("updated");
@@ -14,16 +15,14 @@ const { data: products } = await Astro.locals.supabase
 ---
 
 <BaseLayout title="Manage products — Inventory">
-  <header class="h-16 flex items-center justify-between px-lg border-b border-hairline bg-canvas">
-    <a href="/" class="font-bold text-ink">Inventory</a>
-    <nav class="flex items-center gap-lg text-sm">
-      <a href="/inventory/categories" class="text-ink hover:text-primary">Categories</a>
-      <Button href="/inventory/products/new" variant="primary">New product</Button>
-    </nav>
-  </header>
-
-  <main class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Products</h1>
+  <AppShell active="inventory">
+    <div class="flex items-center justify-between flex-wrap gap-md">
+      <h1 class="text-2xl font-bold text-ink">Products</h1>
+      <div class="flex items-center gap-lg text-sm">
+        <a href="/inventory/categories" class="text-ink hover:text-primary font-bold">Categories</a>
+        <Button href="/inventory/products/new" variant="primary">New product</Button>
+      </div>
+    </div>
 
     {created && (
       <p class="mt-md text-sm text-success" role="status">
@@ -76,5 +75,5 @@ const { data: products } = await Astro.locals.supabase
         <EmptyState class="mt-lg" title="No products yet" message="Create your first product to get started." />
       )
     }
-  </main>
+  </AppShell>
 </BaseLayout>
