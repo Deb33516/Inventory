@@ -31,8 +31,10 @@ async function loginAsCustomer(page: import("@playwright/test").Page) {
 test("customer can log in and see their account dashboard", async ({ page }) => {
   const problems = collectConsoleProblems(page);
   await loginAsCustomer(page);
-  await expect(page.getByRole("heading", { name: "Your profile" })).toBeVisible();
-  await expect(page.getByText(customerCreds.email)).toBeVisible();
+  // /account is the Claude Design canvas's Customer portal artboard — a
+  // lean dashboard overview now, not the full profile page (moved to
+  // /account/profile, see below).
+  await expect(page.getByRole("heading", { name: /Welcome back/ })).toBeVisible();
   // /account renders ChartCanvas (Chart.js) — the exact component class
   // that carried the Phase 8 define:vars/import regression.
   expect(problems).toEqual([]);
@@ -76,9 +78,10 @@ test("signed-in customer sees the customer header everywhere, not the signed-out
   for (const path of ["/", "/products", "/account"]) {
     await page.goto(path);
     const header = page.locator("header");
-    await expect(header.getByRole("link", { name: "Products" })).toBeVisible();
     await expect(header.getByRole("link", { name: "Cart" })).toBeVisible();
-    await expect(header.getByRole("link", { name: "My account" })).toBeVisible();
+    // "My account" is now an avatar link (initials, no literal "My
+    // account" text) matching the Claude Design canvas's NavCustomer.
+    await expect(header.getByRole("link", { name: "My profile" })).toBeVisible();
     await expect(header.getByRole("button", { name: "Sign out" })).toBeVisible();
     await expect(header.getByRole("link", { name: "Sign in" })).toHaveCount(0);
     await expect(header.getByRole("link", { name: "Create an account" })).toHaveCount(0);
@@ -113,6 +116,9 @@ test("cart badge updates immediately after Add to cart and persists across pages
 
 test("account profile: Edit shows inputs, Cancel discards changes and reverts to display", async ({ page }) => {
   await loginAsCustomer(page);
+  // Profile editing moved to its own route, matching the Claude Design
+  // canvas's separate Profile screen — no longer bundled into /account.
+  await page.goto("/account/profile");
 
   const originalPhone = (await page.locator('[data-field="phone"]').textContent())?.trim() ?? "";
 
@@ -129,6 +135,7 @@ test("account profile: Edit shows inputs, Cancel discards changes and reverts to
 
 test("account profile: Edit, Save shows a non-blocking confirmation and returns to display", async ({ page }) => {
   await loginAsCustomer(page);
+  await page.goto("/account/profile");
 
   const uniquePhone = `+1-555-${Date.now().toString().slice(-7)}`;
 

@@ -1,0 +1,130 @@
+---
+// Matches the Claude Design canvas's Customer Support Ticket artboard
+// (project/PageCustTicket.dc.html, imported by CustTicket.dc.html).
+//
+// Real: subject/description (rendered as the customer's own opening
+// message), status, resolution once set, and a Created/current-status
+// timeline built from created_at/updated_at.
+//
+// Deliberately deferred, not fabricated: the design's live conversation
+// thread (staff replies, a follow-up composer, photo attachments, and a
+// "related order" link) has no backing data model — support_tickets is a
+// single row (subject/description/status/resolution), not a message
+// thread, and has no order-reference column. RLS also gives the customer
+// SELECT only on this table (support_tickets_select_own_customer) — no
+// UPDATE policy exists for the customer role at all, so even if a reply
+// composer were built here, there's no write path for it to call. Rather
+// than invent a ticket_messages table or a customer-write RLS policy
+// without approval, this page shows the real single-message ticket
+// honestly and omits the composer entirely.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Badge from "../../../components/ui/Badge.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import PublicHeader from "../../../components/layout/PublicHeader.astro";
+import type { TicketStatus } from "../../../lib/types";
+
+const { id } = Astro.params;
+const userId = Astro.locals.user!.id;
+
+const { data: ticket } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("id, subject, description, status, resolution, created_at, updated_at")
+  .eq("id", id)
+  .eq("created_by", userId)
+  .maybeSingle();
+
+if (!ticket) {
+  Astro.response.status = 404;
+}
+
+const statusTone: Record<TicketStatus, "success" | "warning" | "error" | "neutral"> = {
+  open: "neutral",
+  in_progress: "warning",
+  waiting: "warning",
+  resolved: "success",
+  closed: "neutral",
+};
+const statusLabel: Record<TicketStatus, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  waiting: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+const isDone = ticket ? ["resolved", "closed"].includes(ticket.status) : false;
+---
+
+<BaseLayout title={ticket ? `${ticket.subject} — Support` : "Ticket not found — Inventory"}>
+  <PublicHeader backHref="/account/support" backLabel="My tickets" />
+
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
+    {
+      ticket ? (
+        <>
+          <div class="flex items-center gap-sm flex-wrap">
+            <h1 class="text-2xl font-bold text-ink">{ticket.subject}</h1>
+            <Badge tone={statusTone[ticket.status as TicketStatus]}>{statusLabel[ticket.status as TicketStatus]}</Badge>
+          </div>
+          <p class="mt-xs text-sm text-muted">Created {new Date(ticket.created_at).toLocaleString()}</p>
+
+          <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-lg items-start">
+            <Card>
+              <div class="flex gap-md">
+                <span class="w-8 h-8 rounded-full bg-surface-soft text-xs font-bold text-muted flex items-center justify-center shrink-0">You</span>
+                <div class="flex-grow min-w-0">
+                  <p class="text-sm font-bold text-ink">You</p>
+                  <p class="mt-xxs text-sm text-body whitespace-pre-line">{ticket.description}</p>
+                </div>
+              </div>
+
+              {ticket.resolution && (
+                <div class="mt-md pt-md border-t border-hairline flex gap-md">
+                  <span class="w-8 h-8 rounded-full bg-surface-strong text-xs font-bold text-ink flex items-center justify-center shrink-0">
+                    ST
+                  </span>
+                  <div class="flex-grow min-w-0">
+                    <p class="text-sm font-bold text-ink">Support team</p>
+                    <p class="mt-xxs text-sm text-body whitespace-pre-line">{ticket.resolution}</p>
+                  </div>
+                </div>
+              )}
+
+              <p class="mt-lg pt-md border-t border-hairline text-xs text-muted">
+                Replying isn't available on this page yet. If you have more details to add, create a new ticket and mention this
+                one's subject.
+              </p>
+            </Card>
+
+            <Card>
+              <h2 class="text-sm font-bold text-ink">Status</h2>
+              <div class="mt-md space-y-md">
+                <div class="flex gap-sm">
+                  <span class="w-2.5 h-2.5 mt-1 rounded-full bg-ink shrink-0" />
+                  <div>
+                    <p class="text-sm font-bold text-ink">Created</p>
+                    <p class="text-xs text-muted">{new Date(ticket.created_at).toLocaleString()}</p>
+                  </div>
+                </div>
+                <div class="flex gap-sm">
+                  <span class={`w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${isDone ? "bg-ink" : "bg-hairline-strong"}`} />
+                  <div>
+                    <p class={`text-sm font-bold ${isDone ? "text-ink" : "text-muted"}`}>
+                      {isDone ? statusLabel[ticket.status as TicketStatus] : "In progress"}
+                    </p>
+                    <p class="text-xs text-muted">{new Date(ticket.updated_at).toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+              {!isDone && (
+                <p class="mt-md pt-md border-t border-hairline text-xs text-muted">You'll see the resolution here once resolved.</p>
+              )}
+            </Card>
+          </div>
+        </>
+      ) : (
+        <EmptyState title="Ticket not found" />
+      )
+    }
+  </main>
+</BaseLayout>

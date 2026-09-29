@@ -1,6 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Card from "../components/ui/Card.astro";
+import AuthSplitLayout from "../components/auth/AuthSplitLayout.astro";
 import Input from "../components/ui/Input.astro";
 import Button from "../components/ui/Button.astro";
 
@@ -10,34 +10,34 @@ if (Astro.locals.user) {
 ---
 
 <BaseLayout title="Create an account — Inventory">
-  <main id="main-content" class="min-h-screen flex items-center justify-center bg-surface-soft px-md py-xxl">
-    <Card class="w-full max-w-md">
-      <a href="/" class="text-sm font-bold text-ink hover:text-primary">← Inventory</a>
-      <h1 class="mt-md text-2xl font-bold text-ink">Create your account</h1>
-      <p class="mt-xs text-sm font-light text-body">
-        Track your orders and manage your account.
-      </p>
+  <AuthSplitLayout formTitle="Create your account">
+    <p class="text-sm font-light text-body">
+      Order online, track deliveries and get support in one place.
+    </p>
 
-      <form id="register-form" class="mt-lg space-y-md">
-        <Input label="Full name" name="fullName" autocomplete="name" required />
-        <Input label="Email" name="email" type="email" autocomplete="email" required />
-        <Input
-          label="Password"
-          name="password"
-          type="password"
-          autocomplete="new-password"
-          minlength={8}
-          required
-        />
-        <p id="form-message" class="text-sm" role="status"></p>
-        <Button type="submit" variant="primary" class="w-full">Create account</Button>
-      </form>
+    <form id="register-form" class="mt-lg space-y-md">
+      <Input label="Full name" name="fullName" autocomplete="name" required />
+      <Input label="Email" name="email" type="email" autocomplete="email" required />
+      <Input
+        label="Password"
+        name="password"
+        type="password"
+        autocomplete="new-password"
+        minlength={8}
+        required
+      />
+      <p id="form-message" class="text-sm" role="status"></p>
+      <Button type="submit" variant="primary" class="w-full">Create account</Button>
+    </form>
 
-      <p class="mt-lg text-sm text-body">
-        Already have an account? <a href="/login" class="text-primary font-bold">Sign in</a>
-      </p>
-    </Card>
-  </main>
+    <p class="mt-lg text-sm text-body">
+      Already have an account? <a href="/login" class="text-primary font-bold">Sign in</a>
+    </p>
+
+    <div class="mt-lg p-md rounded-md bg-surface-soft text-xs text-muted leading-relaxed">
+      Joining as staff? Staff accounts are created by your admin — ask them for an invite.
+    </div>
+  </AuthSplitLayout>
 </BaseLayout>
 
 <script>

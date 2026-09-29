@@ -1,34 +1,93 @@
 ---
 // Persistent-sidebar dashboard shell for every staff/admin page (sales,
 // inventory, crm, admin, and the staff branch of /account). Replaces
-// AppHeader.astro's horizontal top-nav pattern. Nav content is entirely
-// derived from ROLE_DASHBOARD/SIDEBAR_NAV/SECTION_SUBNAV in lib/roles.ts —
-// the same source of truth middleware.ts already gates against — so this
-// component can never show a link the viewer isn't actually allowed to
-// follow. Purely presentational: no route gating lives here.
+// AppHeader.astro's horizontal top-nav pattern. Default nav content is
+// entirely derived from ROLE_DASHBOARD/SIDEBAR_NAV/SECTION_SUBNAV in
+// lib/roles.ts — the same source of truth middleware.ts already gates
+// against — so the default sidebar can never show a link the viewer isn't
+// actually allowed to follow. Purely presentational: no route gating lives
+// here, including in the optional extension props below (a page passing
+// sidebarNav/breadcrumb/etc. is responsible for only linking the viewer
+// somewhere their role can actually reach).
+//
+// Every prop below the first four (active/title/backHref/backLabel) is an
+// OPTIONAL extension, each independently gated — a page that passes none of
+// them renders byte-identical to the original shell. This is what lets one
+// Claude Design handoff (e.g. Inventory Staff's "Warehouse tasks") opt into
+// a fully custom sidebar/topbar without changing how every other role's
+// pages render.
 import Button from "../ui/Button.astro";
 import { ROLE_DASHBOARD, SIDEBAR_NAV, SECTION_SUBNAV } from "../../lib/roles";
 import type { UserRole } from "../../lib/types";
 
+export interface SidebarNavEntry {
+  label: string;
+  href: string;
+  icon?: string; // SVG path `d` — rendered at 18x18, stroke currentColor
+  badge?: string; // omit for no badge pill
+}
+export interface SidebarNavGroup {
+  heading?: string; // group header label; omit for an ungrouped leading item
+  items: SidebarNavEntry[];
+}
+export interface TopbarAction {
+  label: string;
+  href: string;
+}
+
 interface Props {
   // Which nav item is current: "dashboard" | "sales" | "inventory" | "crm"
-  // | "approvals" | "staff" | "account".
+  // | "approvals" | "staff" | "account", or a custom key when sidebarNav is
+  // supplied (matched against each entry's own href, not this key).
   active: string;
-  // Optional page heading shown in the topbar.
+  // Optional page heading shown in the topbar (ignored when breadcrumb is set).
   title?: string;
   // Detail/form sub-pages: a single "back to parent" link instead of the
   // section's subnav row (e.g. product edit page -> back to Products list).
   backHref?: string;
   backLabel?: string;
+
+  // --- Optional extensions (all default to today's behavior) ---
+  // Replaces the default Dashboard+SIDEBAR_NAV+Account list wholesale, and
+  // switches the sidebar footer to the identity variant (avatar + real
+  // signed-in name/role + icon-only sign-out) instead of the plain role
+  // label + full-width button.
+  sidebarNav?: SidebarNavGroup[];
+  // Role-badge pill next to the brand mark (e.g. "INVENTORY"). Only
+  // meaningful alongside sidebarNav.
+  sidebarBadge?: string;
+  // Replaces the topbar's backHref/title slot with a "/"-joined breadcrumb
+  // trail, plus a working sidebar-collapse toggle button next to it.
+  breadcrumb?: string[];
+  // Shows a topbar search input.
+  topbarSearch?: { placeholder: string };
+  // Extra topbar link buttons (e.g. "Report an issue").
+  topbarActions?: TopbarAction[];
+  // Shows the topbar notification bell button (decorative — no backend).
+  showNotifications?: boolean;
+  // Overrides the SECTION_SUBNAV[active] lookup for the secondary nav row.
+  secondaryNav?: { label: string; href: string }[];
 }
 
-const { active, title, backHref, backLabel } = Astro.props;
+const {
+  active,
+  title,
+  backHref,
+  backLabel,
+  sidebarNav,
+  sidebarBadge,
+  breadcrumb,
+  topbarSearch,
+  topbarActions,
+  showNotifications,
+  secondaryNav,
+} = Astro.props;
 
 const role = Astro.locals.role as Exclude<UserRole, "customer">;
 
 const dashboardHref = ROLE_DASHBOARD[role];
 const sectionItems = SIDEBAR_NAV.filter((item) => item.roles.includes(role));
-const subNav = !backHref ? SECTION_SUBNAV[active] : undefined;
+const subNav = secondaryNav ?? (!backHref ? SECTION_SUBNAV[active] : undefined);
 
 const roleLabel: Record<Exclude<UserRole, "customer">, string> = {
   sales_staff: "Sales staff",
@@ -36,6 +95,17 @@ const roleLabel: Record<Exclude<UserRole, "customer">, string> = {
   admin: "Admin",
   super_admin: "Super admin",
 };
+
+// Real signed-in identity for the extended sidebar footer — never a mock
+// name. full_name comes from auth user_metadata (set at signup/invite),
+// the same source already used on the staff branch of /account.
+const displayName = Astro.locals.user?.user_metadata?.full_name ?? Astro.locals.user?.email ?? "—";
+const initials = displayName
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 2)
+  .map((part: string) => part[0]?.toUpperCase())
+  .join("") || "?";
 ---
 
 <div class="min-h-screen lg:flex">
@@ -43,11 +113,10 @@ const roleLabel: Record<Exclude<UserRole, "customer">, string> = {
   <div class="lg:hidden h-14 flex items-center justify-between px-md border-b border-hairline bg-canvas sticky top-0 z-30">
     <button
       type="button"
-      id="sidebar-toggle"
+      class="js-sidebar-toggle h-10 w-10 flex items-center justify-center border border-hairline"
       aria-label="Open navigation"
       aria-expanded="false"
       aria-controls="app-sidebar"
-      class="h-10 w-10 flex items-center justify-center border border-hairline"
     >
       <span aria-hidden="true">☰</span>
     </button>
@@ -61,78 +130,225 @@ const roleLabel: Record<Exclude<UserRole, "customer">, string> = {
     id="app-sidebar"
     class="fixed inset-y-0 left-0 z-40 w-64 -translate-x-full transition-transform bg-canvas border-r border-hairline flex flex-col lg:static lg:translate-x-0 lg:shrink-0"
   >
-    <div class="h-16 flex items-center px-lg border-b border-hairline shrink-0">
+    <div class="h-16 flex items-center gap-sm px-lg border-b border-hairline shrink-0">
       <a href={dashboardHref} class="font-bold text-ink">Inventory</a>
+      {
+        sidebarBadge && (
+          <span class="ml-auto px-sm py-1 rounded-full bg-surface-soft text-[11px] font-bold text-muted tracking-[0.5px]">
+            {sidebarBadge}
+          </span>
+        )
+      }
     </div>
 
     <nav aria-label="Main" class="flex-1 overflow-y-auto py-md">
-      <ul class="list-none space-y-xxs px-sm">
-        <li>
-          <a
-            href={dashboardHref}
-            aria-current={active === "dashboard" ? "page" : undefined}
-            class={`block px-md py-sm text-sm font-bold transition-colors ${
-              active === "dashboard" ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
-            }`}
-          >
-            Dashboard
-          </a>
-        </li>
-        {
-          sectionItems.map((item) => (
+      {
+        sidebarNav ? (
+          <ul class="list-none space-y-xxs px-sm">
+            {sidebarNav.map((group) => (
+              <>
+                {group.heading && (
+                  <li class="px-md pt-md pb-xxs text-[11px] font-bold uppercase tracking-[0.5px] text-muted">
+                    {group.heading}
+                  </li>
+                )}
+                {group.items.map((item) => (
+                  <li>
+                    <a
+                      href={item.href}
+                      aria-current={item.href === active ? "page" : undefined}
+                      class={`flex items-center gap-sm px-md py-sm text-sm font-bold transition-colors ${
+                        item.href === active
+                          ? "bg-surface-soft text-ink"
+                          : "text-body hover:bg-surface-soft hover:text-ink"
+                      }`}
+                    >
+                      {item.icon && (
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                          class="shrink-0"
+                        >
+                          <path d={item.icon} />
+                        </svg>
+                      )}
+                      <span class="flex-grow">{item.label}</span>
+                      {item.badge && (
+                        <span class="px-xs py-0.5 rounded-full bg-warning/15 text-warning text-[11px] font-bold">
+                          {item.badge}
+                        </span>
+                      )}
+                    </a>
+                  </li>
+                ))}
+              </>
+            ))}
+          </ul>
+        ) : (
+          <ul class="list-none space-y-xxs px-sm">
             <li>
               <a
-                href={item.href}
-                aria-current={active === item.key ? "page" : undefined}
+                href={dashboardHref}
+                aria-current={active === "dashboard" ? "page" : undefined}
                 class={`block px-md py-sm text-sm font-bold transition-colors ${
-                  active === item.key ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
+                  active === "dashboard" ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
                 }`}
               >
-                {item.label}
+                Dashboard
               </a>
             </li>
-          ))
-        }
-        <li>
-          <a
-            href="/account"
-            aria-current={active === "account" ? "page" : undefined}
-            class={`block px-md py-sm text-sm font-bold transition-colors ${
-              active === "account" ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
-            }`}
-          >
-            Account
-          </a>
-        </li>
-      </ul>
+            {sectionItems.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  aria-current={active === item.key ? "page" : undefined}
+                  class={`block px-md py-sm text-sm font-bold transition-colors ${
+                    active === item.key ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
+                  }`}
+                >
+                  {item.label}
+                </a>
+              </li>
+            ))}
+            <li>
+              <a
+                href="/account"
+                aria-current={active === "account" ? "page" : undefined}
+                class={`block px-md py-sm text-sm font-bold transition-colors ${
+                  active === "account" ? "bg-surface-soft text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
+                }`}
+              >
+                Account
+              </a>
+            </li>
+          </ul>
+        )
+      }
     </nav>
 
-    <div class="p-md border-t border-hairline shrink-0">
-      <p class="text-xs text-muted uppercase tracking-[0.5px]">{roleLabel[role]}</p>
-      <Button id="app-signout-btn" variant="secondary" class="mt-sm w-full">
-        Sign out
-      </Button>
-    </div>
+    <slot name="sidebar-widget" />
+
+    {
+      sidebarNav ? (
+        <div class="flex items-center gap-sm p-md border-t border-hairline shrink-0">
+          <div class="w-8 h-8 rounded-full bg-info/15 text-info flex items-center justify-center text-xs font-bold shrink-0">
+            {initials}
+          </div>
+          <div class="flex flex-col min-w-0 flex-grow">
+            <span class="text-sm font-bold text-ink truncate">{displayName}</span>
+            <span class="text-xs text-muted truncate">{roleLabel[role]}</span>
+          </div>
+          <button
+            type="button"
+            id="app-signout-btn"
+            aria-label="Sign out"
+            class="w-8 h-8 shrink-0 flex items-center justify-center text-muted hover:text-ink"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <div class="p-md border-t border-hairline shrink-0">
+          <p class="text-xs text-muted uppercase tracking-[0.5px]">{roleLabel[role]}</p>
+          <Button id="app-signout-btn" variant="secondary" class="mt-sm w-full">
+            Sign out
+          </Button>
+        </div>
+      )
+    }
   </aside>
 
   <div class="flex-1 min-w-0">
-    <header class="hidden lg:flex h-16 items-center justify-between px-lg border-b border-hairline bg-canvas">
-      <div>
-        {
-          backHref ? (
-            <a href={backHref} class="text-xs font-bold text-muted hover:text-ink uppercase tracking-[0.5px]">
-              ← {backLabel}
-            </a>
-          ) : (
-            title && <h1 class="text-lg font-bold text-ink">{title}</h1>
-          )
-        }
-      </div>
-      <p class="text-sm text-body">{roleLabel[role]}</p>
+    <header class="hidden lg:flex h-16 items-center gap-md px-lg border-b border-hairline bg-canvas">
+      {
+        breadcrumb ? (
+          <>
+            <button
+              type="button"
+              id="sidebar-toggle-desktop"
+              aria-label="Toggle sidebar"
+              class="w-8 h-8 -ml-2 flex items-center justify-center text-ink"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18" />
+              </svg>
+            </button>
+            <div class="w-px h-4 bg-hairline"></div>
+            <nav aria-label="Breadcrumb" class="flex items-center gap-sm text-sm text-muted">
+              {breadcrumb.map((seg, i) => (
+                <>
+                  {i > 0 && <span aria-hidden="true">/</span>}
+                  <span class={i === breadcrumb.length - 1 ? "text-ink font-bold" : undefined}>{seg}</span>
+                </>
+              ))}
+            </nav>
+          </>
+        ) : backHref ? (
+          <a href={backHref} class="text-xs font-bold text-muted hover:text-ink uppercase tracking-[0.5px]">
+            ← {backLabel}
+          </a>
+        ) : (
+          title && <h1 class="text-lg font-bold text-ink">{title}</h1>
+        )
+      }
+
+      <div class="flex-grow"></div>
+
+      {
+        topbarSearch && (
+          <label class="w-[300px] h-[38px] box-border px-md border border-hairline rounded-lg bg-surface-soft flex items-center gap-sm text-muted">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4" />
+            </svg>
+            <input
+              type="search"
+              aria-label="Search"
+              placeholder={topbarSearch.placeholder}
+              class="border-0 outline-none bg-transparent text-sm flex-grow text-ink"
+            />
+          </label>
+        )
+      }
+
+      {
+        topbarActions?.map((a) => (
+          <a
+            href={a.href}
+            class="h-10 px-md rounded-lg border border-hairline bg-canvas text-sm font-bold text-ink flex items-center hover:border-hairline-strong"
+          >
+            {a.label}
+          </a>
+        ))
+      }
+
+      {
+        showNotifications && (
+          <button
+            type="button"
+            aria-label="Notifications"
+            class="w-10 h-10 rounded-lg border border-hairline bg-canvas text-muted flex items-center justify-center"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4zM10 21h4" />
+            </svg>
+          </button>
+        )
+      }
+
+      {!breadcrumb && <p class="text-sm text-body">{roleLabel[role]}</p>}
     </header>
 
     {
-      backHref && (
+      !breadcrumb && backHref && (
         <div class="lg:hidden px-md py-sm border-b border-hairline bg-surface-soft">
           <a href={backHref} class="text-xs font-bold text-ink">
             ← {backLabel}
@@ -173,26 +389,35 @@ const roleLabel: Record<Exclude<UserRole, "customer">, string> = {
     window.location.href = "/login";
   });
 
-  const toggle = document.querySelector<HTMLButtonElement>("#sidebar-toggle");
   const sidebar = document.querySelector<HTMLElement>("#app-sidebar");
   const backdrop = document.querySelector<HTMLElement>("#sidebar-backdrop");
 
   const closeSidebar = () => {
     sidebar?.classList.add("-translate-x-full");
     backdrop?.classList.add("hidden");
-    toggle?.setAttribute("aria-expanded", "false");
+    document.querySelectorAll<HTMLButtonElement>(".js-sidebar-toggle").forEach((b) => b.setAttribute("aria-expanded", "false"));
   };
 
   const openSidebar = () => {
     sidebar?.classList.remove("-translate-x-full");
     backdrop?.classList.remove("hidden");
-    toggle?.setAttribute("aria-expanded", "true");
+    document.querySelectorAll<HTMLButtonElement>(".js-sidebar-toggle").forEach((b) => b.setAttribute("aria-expanded", "true"));
   };
 
-  toggle?.addEventListener("click", () => {
-    const isOpen = toggle.getAttribute("aria-expanded") === "true";
-    isOpen ? closeSidebar() : openSidebar();
+  document.querySelectorAll<HTMLButtonElement>(".js-sidebar-toggle").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const isOpen = toggle.getAttribute("aria-expanded") === "true";
+      isOpen ? closeSidebar() : openSidebar();
+    });
   });
 
   backdrop?.addEventListener("click", closeSidebar);
+
+  // Desktop collapse toggle — only rendered when a page opts into
+  // `breadcrumb`, so this never affects a page that doesn't use it.
+  const desktopToggle = document.querySelector<HTMLButtonElement>("#sidebar-toggle-desktop");
+  desktopToggle?.addEventListener("click", () => {
+    if (!sidebar) return;
+    sidebar.style.display = sidebar.style.display === "none" ? "" : "none";
+  });
 </script>

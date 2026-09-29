@@ -1,7 +1,6 @@
 ---
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import ProductCard from "../../components/catalog/ProductCard.astro";
-import FilterChip from "../../components/catalog/FilterChip.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import PublicHeader from "../../components/layout/PublicHeader.astro";
 
@@ -23,6 +22,21 @@ if (categorySlug) {
   categoryId = categories?.find((c) => c.slug === categorySlug)?.id ?? null;
 }
 
+// Real per-category counts for the sidebar — a lightweight id+category_id
+// projection over every active product, counted here rather than fetched
+// per-category (avoids an N+1 query for a handful of categories).
+const { data: countRows } = await Astro.locals.supabase
+  .from("products")
+  .select("category_id")
+  .eq("is_active", true);
+
+const categoryCounts = new Map<string, number>();
+for (const row of countRows ?? []) {
+  if (!row.category_id) continue;
+  categoryCounts.set(row.category_id, (categoryCounts.get(row.category_id) ?? 0) + 1);
+}
+const totalActiveCount = countRows?.length ?? 0;
+
 const sortMap: Record<string, { column: string; ascending: boolean }> = {
   name: { column: "name", ascending: true },
   price_asc: { column: "price", ascending: true },
@@ -33,6 +47,10 @@ const sortConfig = sortMap[sort] ?? sortMap.name;
 const from = (page - 1) * PAGE_SIZE;
 const to = from + PAGE_SIZE - 1;
 
+// No stock join here — `inventory` RLS only grants SELECT to staff roles
+// (0005_inventory.sql, inventory_select_staff), so a customer/anonymous
+// shopper has no live stock figure to show. See products/[sku].astro's
+// fuller note.
 let query = Astro.locals.supabase
   .from("products")
   .select("id, sku, name, price, image_url, categories(name)", { count: "exact" })
@@ -62,91 +80,115 @@ function buildUrl(overrides: Record<string, string | undefined>) {
 }
 ---
 
-<BaseLayout title="Products — Inventory">
+<BaseLayout title="Shop — Inventory">
   <PublicHeader />
 
   <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-3xl font-bold text-ink">Products</h1>
+    <h1 class="text-3xl font-bold text-ink">Shop</h1>
 
-    <form method="get" class="mt-lg flex flex-col md:flex-row gap-sm">
-      <input
-        type="text"
-        name="search"
-        value={search}
-        placeholder="Search products..."
-        class="flex-1 min-w-0 md:max-w-sm h-12 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none transition-colors"
-      />
-      <select
-        name="sort"
-        class="h-12 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none"
-      >
-        <option value="name" selected={sort === "name"}>Name</option>
-        <option value="price_asc" selected={sort === "price_asc"}>Price: low to high</option>
-        <option value="price_desc" selected={sort === "price_desc"}>Price: high to low</option>
-      </select>
-      {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
-      <button
-        type="submit"
-        class="h-12 px-lg rounded-full bg-primary text-on-primary font-bold text-sm transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80"
-      >
-        Apply
-      </button>
-    </form>
+    <div class="mt-lg flex flex-col lg:flex-row gap-lg items-start">
+      <aside aria-label="Filters" class="w-full lg:w-[220px] shrink-0 flex flex-col gap-md">
+        <div class="flex flex-col gap-xxs">
+          <span class="text-xs font-bold uppercase tracking-[0.5px] text-muted px-xs pb-xs">Categories</span>
+          <a
+            href={buildUrl({ category: undefined, page: undefined })}
+            class={`px-sm py-xs flex justify-between text-sm rounded-md ${!categorySlug ? "bg-surface-soft font-bold text-ink" : "text-body hover:text-ink"}`}
+          >
+            <span>All products</span>
+            <span class="text-muted">{totalActiveCount}</span>
+          </a>
+          {
+            categories?.map((c) => (
+              <a
+                href={buildUrl({ category: c.slug, page: undefined })}
+                class={`px-sm py-xs flex justify-between text-sm rounded-md ${categorySlug === c.slug ? "bg-surface-soft font-bold text-ink" : "text-body hover:text-ink"}`}
+              >
+                <span>{c.name}</span>
+                <span class="text-muted">{categoryCounts.get(c.id) ?? 0}</span>
+              </a>
+            ))
+          }
+        </div>
 
-    <div class="mt-md flex gap-xs overflow-x-auto pb-xs">
-      <FilterChip href={buildUrl({ category: undefined, page: undefined })} active={!categorySlug}>
-        All
-      </FilterChip>
-      {
-        categories?.map((c) => (
-          <FilterChip href={buildUrl({ category: c.slug, page: undefined })} active={categorySlug === c.slug}>
-            {c.name}
-          </FilterChip>
-        ))
-      }
+        <div class="p-md bg-surface-soft flex flex-col gap-xxs">
+          <p class="text-sm font-bold text-ink">Not sure what to pick?</p>
+          <p class="text-xs text-muted leading-relaxed">Ask our support team about sizes, fit or compatibility.</p>
+          <a href="/account/support" class="mt-xxs text-xs font-bold text-primary">Ask a question</a>
+        </div>
+      </aside>
+
+      <div class="flex-grow w-full min-w-0 flex flex-col gap-md">
+        <form method="get" class="flex flex-col md:flex-row gap-sm items-stretch">
+          <input
+            type="text"
+            name="search"
+            value={search}
+            placeholder="Search by name or SKU…"
+            class="flex-1 min-w-0 md:max-w-sm h-11 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none transition-colors"
+          />
+          <select
+            name="sort"
+            class="h-11 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none"
+          >
+            <option value="name" selected={sort === "name"}>Name</option>
+            <option value="price_asc" selected={sort === "price_asc"}>Price: low to high</option>
+            <option value="price_desc" selected={sort === "price_desc"}>Price: high to low</option>
+          </select>
+          {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
+          <button
+            type="submit"
+            class="h-11 px-lg rounded-full bg-primary text-on-primary font-bold text-sm transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80"
+          >
+            Apply
+          </button>
+          <span class="flex-grow" />
+          <span class="self-center text-xs text-muted whitespace-nowrap">{count ?? 0} products</span>
+        </form>
+
+        {
+          products && products.length > 0 ? (
+            <>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
+                {products.map((p) => (
+                  <ProductCard
+                    productId={p.id}
+                    sku={p.sku}
+                    name={p.name}
+                    price={p.price}
+                    imageUrl={p.image_url}
+                    categoryName={p.categories?.name}
+                    showStepper
+                  />
+                ))}
+              </div>
+
+              {totalPages > 1 && (
+                <div class="mt-md flex items-center justify-center gap-md text-sm">
+                  <a
+                    href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
+                    aria-disabled={page <= 1}
+                    class={`px-md py-xs rounded-full border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
+                  >
+                    Previous
+                  </a>
+                  <span class="text-muted">
+                    Page {page} of {totalPages}
+                  </span>
+                  <a
+                    href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
+                    aria-disabled={page >= totalPages}
+                    class={`px-md py-xs rounded-full border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
+                  >
+                    Next
+                  </a>
+                </div>
+              )}
+            </>
+          ) : (
+            <EmptyState title="No products found" message="Try a different search term or category." />
+          )
+        }
+      </div>
     </div>
-
-    {
-      products && products.length > 0 ? (
-        <>
-          <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
-            {products.map((p) => (
-              <ProductCard
-                productId={p.id}
-                sku={p.sku}
-                name={p.name}
-                price={p.price}
-                imageUrl={p.image_url}
-                categoryName={p.categories?.name}
-              />
-            ))}
-          </div>
-
-          {totalPages > 1 && (
-            <div class="mt-xl flex items-center justify-center gap-md text-sm">
-              <a
-                href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
-                aria-disabled={page <= 1}
-                class={`px-md py-xs rounded-full border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
-              >
-                Previous
-              </a>
-              <span class="text-muted">
-                Page {page} of {totalPages}
-              </span>
-              <a
-                href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
-                aria-disabled={page >= totalPages}
-                class={`px-md py-xs rounded-full border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
-              >
-                Next
-              </a>
-            </div>
-          )}
-        </>
-      ) : (
-        <EmptyState class="mt-lg" title="No products found" message="Try a different search term or category." />
-      )
-    }
   </main>
 </BaseLayout>

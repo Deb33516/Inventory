@@ -1,0 +1,45 @@
+---
+// Shared two-column auth shell — reused by login, register, forgot-password
+// and reset-password. Matches the Claude Design canvas's Main.dc.html /
+// ForgotPassword.dc.html / ResetPassword.dc.html / SignUp.dc.html artboards'
+// shared layout: a dark brand panel on the left, the page's own form
+// (passed via the default slot) centered on the right.
+//
+// The design's brand panel also shows a fabricated "Revenue · September
+// +8.2% · ₹38.6L" preview card — deliberately dropped here rather than
+// reproduced, since it would be a financial figure with no real backing
+// data. The headline/tagline copy is marketing prose, not a data claim, so
+// it's kept.
+interface Props {
+  formTitle: string;
+}
+
+const { formTitle } = Astro.props;
+---
+
+<main id="main-content" class="min-h-screen flex flex-col lg:flex-row bg-canvas">
+  <div class="lg:w-[420px] xl:w-[480px] shrink-0 bg-surface-dark text-on-dark px-lg py-xl flex flex-col justify-between gap-xl">
+    <a href="/" class="inline-flex items-center gap-xs font-bold">
+      <span class="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
+        <span class="w-2.5 h-2.5 rounded-full border-2 border-on-primary"></span>
+      </span>
+      ← Inventory
+    </a>
+    <div>
+      <h2 class="text-3xl sm:text-4xl font-bold leading-tight">Customers, orders and stock — in one quiet place.</h2>
+      <p class="mt-md text-sm font-light text-on-dark-soft max-w-md">
+        Every person signs in to the same app and lands on a dashboard built for their job.
+      </p>
+    </div>
+    <p class="text-xs text-on-dark-soft">© 2026 Inventory</p>
+  </div>
+
+  <div class="flex-grow flex items-center justify-center px-md py-xxl">
+    <div class="w-full max-w-md">
+      <h1 class="text-2xl font-bold text-ink">{formTitle}</h1>
+      <div class="mt-lg">
+        <slot />
+      </div>
+    </div>
+  </div>
+</main>

@@ -1,6 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Card from "../components/ui/Card.astro";
+import AuthSplitLayout from "../components/auth/AuthSplitLayout.astro";
 import Input from "../components/ui/Input.astro";
 import Button from "../components/ui/Button.astro";
 
@@ -32,42 +32,38 @@ if (errorParam === "invalid_link") {
 ---
 
 <BaseLayout title="Sign in — Inventory">
-  <main id="main-content" class="min-h-screen flex items-center justify-center bg-surface-soft px-md py-xxl">
-    <Card class="w-full max-w-md">
-      <a href="/" class="text-sm font-bold text-ink hover:text-primary">← Inventory</a>
-      <h1 class="mt-md text-2xl font-bold text-ink">Sign in</h1>
-      <p class="mt-xs text-sm font-light text-body">Welcome back.</p>
+  <AuthSplitLayout formTitle="Sign in">
+    <p class="text-sm font-light text-body">Use your account email. We'll take you to the dashboard for your role.</p>
 
-      {
-        notice && (
-          <p
-            class={`mt-md text-sm ${noticeTone === "error" ? "text-error" : "text-success"}`}
-            role="status"
-          >
-            {notice}
-          </p>
-        )
-      }
+    {
+      notice && (
+        <p
+          class={`mt-md text-sm ${noticeTone === "error" ? "text-error" : "text-success"}`}
+          role="status"
+        >
+          {notice}
+        </p>
+      )
+    }
 
-      <form id="login-form" class="mt-lg space-y-md" data-redirect-to={explicitRedirect}>
-        <Input label="Email" name="email" type="email" autocomplete="email" required />
-        <Input
-          label="Password"
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          required
-        />
-        <p id="form-message" class="text-sm" role="status"></p>
-        <Button type="submit" variant="primary" class="w-full">Sign in</Button>
-      </form>
+    <form id="login-form" class="mt-lg space-y-md" data-redirect-to={explicitRedirect}>
+      <Input label="Email" name="email" type="email" autocomplete="email" required />
+      <Input
+        label="Password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+      />
+      <p id="form-message" class="text-sm" role="status"></p>
+      <Button type="submit" variant="primary" class="w-full">Sign in</Button>
+    </form>
 
-      <div class="mt-lg flex items-center justify-between text-sm">
-        <a href="/forgot-password" class="text-primary font-bold">Forgot password?</a>
-        <a href="/register" class="text-body">Create an account</a>
-      </div>
-    </Card>
-  </main>
+    <div class="mt-lg flex items-center justify-between text-sm">
+      <a href="/forgot-password" class="text-primary font-bold">Forgot password?</a>
+      <a href="/register" class="text-body">Create an account</a>
+    </div>
+  </AuthSplitLayout>
 </BaseLayout>
 
 <script>

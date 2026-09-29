@@ -8,9 +8,16 @@ interface Props {
   price: number;
   categoryName?: string | null;
   imageUrl?: string | null;
+  // Quantity stepper before the Add to cart button — every existing
+  // caller omits this and keeps the original single-click "add 1" button
+  // unchanged. No stock badge here: `inventory` RLS only grants SELECT to
+  // staff roles (0005_inventory.sql, inventory_select_staff), so a
+  // customer/anonymous shopper has no live stock figure to show at all —
+  // see products/[sku].astro's fuller note.
+  showStepper?: boolean;
 }
 
-const { productId, sku, name, price, categoryName, imageUrl } = Astro.props;
+const { productId, sku, name, price, categoryName, imageUrl, showStepper = false } = Astro.props;
 
 const formattedPrice = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -46,6 +53,6 @@ const href = `/products/${sku}`;
       <h3 class="font-bold text-ink text-sm leading-snug">{name}</h3>
       <p class="text-sm font-bold text-ink">{formattedPrice}</p>
     </a>
-    <AddToCartButton productId={productId} sku={sku} name={name} price={price} class="mt-auto pt-sm" />
+    <AddToCartButton productId={productId} sku={sku} name={name} price={price} showStepper={showStepper} class="mt-auto pt-sm" />
   </div>
 </div>

@@ -1,4 +1,15 @@
 ---
+// Matches the Claude Design canvas's Checkout artboard
+// (project/PageCheckout.dc.html, imported by CustCheckout.dc.html). The
+// design's separate "Delivery date" picker and "Payment" method cards with
+// icons are simplified to the existing real fields (a shipping-address
+// text field, a payment-method select) — there's no delivery-slot data
+// model to pick a real date/window from. No GST/tax line in the summary:
+// place_order() computes `tax` server-side (defaulting to 0, no rate
+// logic implemented anywhere in this schema/RPC) — showing a guessed
+// percentage here would be a fabricated financial figure, so the summary
+// only ever shows the real cart subtotal pre-checkout; the authoritative
+// total (from the order row) is what's shown after the order is placed.
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
 import Input from "../../components/ui/Input.astro";
@@ -17,32 +28,43 @@ const userId = user!.id;
 <BaseLayout title="Checkout — Inventory">
   <PublicHeader backHref="/cart" backLabel="Cart" />
 
-  <main id="main-content" class="max-w-[720px] mx-auto px-lg py-xl">
+  <main id="main-content" class="max-w-[1100px] mx-auto px-lg py-xl">
     <h1 class="text-2xl font-bold text-ink">Checkout</h1>
 
-    <Card class="mt-lg">
-      <CartSummary />
-    </Card>
+    <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-lg items-start">
+      <div class="space-y-lg">
+        <Card>
+          <h2 class="text-sm font-bold text-ink">Delivery</h2>
+          <p class="mt-xxs text-xs text-muted">Where should we deliver?</p>
+          <form id="checkout-form" class="mt-md space-y-md" data-user-id={userId}>
+            <Input label="Shipping address" name="shippingAddress" required />
+            <Select
+              label="Payment method"
+              name="paymentMethod"
+              options={[
+                { value: "card", label: "Card" },
+                { value: "upi", label: "UPI" },
+                { value: "cash", label: "Cash" },
+                { value: "bank_transfer", label: "Bank transfer" },
+              ]}
+              required
+            />
+            <Textarea label="Notes (optional)" name="notes" />
+            <p id="form-message" class="text-sm" role="status" />
+            <Button type="submit" variant="primary" class="w-full">
+              Place order
+            </Button>
+          </form>
+        </Card>
+      </div>
 
-    <Card class="mt-lg">
-      <form id="checkout-form" class="space-y-md" data-user-id={userId}>
-        <Input label="Shipping address" name="shippingAddress" required />
-        <Select
-          label="Payment method"
-          name="paymentMethod"
-          options={[
-            { value: "card", label: "Card" },
-            { value: "upi", label: "UPI" },
-            { value: "cash", label: "Cash" },
-            { value: "bank_transfer", label: "Bank transfer" },
-          ]}
-          required
-        />
-        <Textarea label="Notes (optional)" name="notes" />
-        <p id="form-message" class="text-sm" role="status" />
-        <Button type="submit" variant="primary">Place order</Button>
-      </form>
-    </Card>
+      <Card>
+        <h2 class="text-sm font-bold text-ink">Order summary</h2>
+        <div class="mt-md">
+          <CartSummary />
+        </div>
+      </Card>
+    </div>
   </main>
 </BaseLayout>
 

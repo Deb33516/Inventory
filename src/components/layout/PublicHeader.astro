@@ -30,16 +30,66 @@ const isCustomer = Boolean(user) && role === "customer";
 // Narrowed here (rather than via a separate boolean) so TypeScript carries
 // `role`'s type through to the ROLE_DASHBOARD lookup below.
 const staffDashboardHref = user && role && role !== "customer" ? ROLE_DASHBOARD[role] : null;
+
+// Matches the Claude Design canvas's NavCustomer.dc.html tab set — real
+// routes only (My orders/Support both reuse real, RLS-backed pages built
+// in this phase). full_name comes off the session's own user_metadata
+// (set at signup), so no extra profile query is needed just to render an
+// avatar initial.
+const customerTabs = [
+  { label: "Home", href: "/account" },
+  { label: "Shop", href: "/products" },
+  { label: "My orders", href: "/account/orders" },
+  { label: "Support", href: "/account/support" },
+];
+const currentPath = Astro.url.pathname;
+const customerName = (user?.user_metadata?.full_name as string | undefined) ?? "";
+const avatarInitials = customerName
+  ? customerName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]!.toUpperCase())
+      .join("")
+  : (user?.email?.[0]?.toUpperCase() ?? "?");
 ---
 
 <header class="border-b border-hairline bg-canvas">
-  <div class="h-16 flex items-center justify-between px-lg gap-md max-w-[1440px] mx-auto">
+  <div class="h-16 flex items-center px-lg gap-md sm:gap-lg max-w-[1440px] mx-auto">
     <a href="/" class="font-bold text-ink shrink-0">Inventory</a>
+    {
+      isCustomer && (
+        <nav aria-label="Portal" class="hidden md:flex items-center gap-xs">
+          {customerTabs.map((t) => (
+            <a
+              href={t.href}
+              class={`px-sm py-xs text-sm rounded-md ${currentPath === t.href ? "bg-surface-soft text-ink font-bold" : "text-muted hover:text-ink"}`}
+            >
+              {t.label}
+            </a>
+          ))}
+        </nav>
+      )
+    }
+    <div class="flex-grow" />
+    {
+      isCustomer && (
+        <form action="/products" method="get" class="hidden lg:block w-64 mr-sm">
+          <input
+            type="search"
+            name="search"
+            aria-label="Search products"
+            placeholder="Search products…"
+            class="w-full h-9 px-md rounded-md bg-surface-soft text-sm text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none transition-colors"
+          />
+        </form>
+      )
+    }
     <nav
       aria-label="Main"
       class="flex items-center gap-sm sm:gap-lg text-sm text-ink overflow-x-auto whitespace-nowrap [scrollbar-width:none]"
     >
-      <a href="/products" class="hover:text-primary">Products</a>
+      {!isCustomer && <a href="/products" class="hover:text-primary">Products</a>}
       {
         isCustomer ? (
           <>
@@ -52,9 +102,13 @@ const staffDashboardHref = user && role && role !== "customer" ? ROLE_DASHBOARD[
                 0
               </span>
             </a>
-            <Button href="/account" variant="primary">
-              My account
-            </Button>
+            <a
+              href="/account/profile"
+              aria-label="My profile"
+              class="w-8 h-8 rounded-full bg-primary text-on-primary text-xs font-bold flex items-center justify-center shrink-0"
+            >
+              {avatarInitials}
+            </a>
             <Button id="public-header-signout-btn" variant="secondary">
               Sign out
             </Button>

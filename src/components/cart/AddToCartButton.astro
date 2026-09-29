@@ -4,20 +4,49 @@ interface Props {
   sku: string;
   name: string;
   price: number;
+  // Optional quantity stepper shown before the button — every existing
+  // caller omits this and keeps the original single-click "add 1" button
+  // unchanged.
+  showStepper?: boolean;
   class?: string;
 }
 
-const { productId, sku, name, price, class: className = "" } = Astro.props;
+const { productId, sku, name, price, showStepper = false, class: className = "" } = Astro.props;
+const qtyId = `qty-${productId}`;
 ---
 
-<div class={className}>
+<div class={`${showStepper ? "flex items-center gap-xs" : ""} ${className}`}>
+  {
+    showStepper && (
+      <div class="flex items-center h-10 border border-hairline-strong shrink-0">
+        <button
+          type="button"
+          class="qty-dec w-8 h-full text-ink font-bold hover:bg-surface-soft"
+          aria-label={`Decrease quantity of ${name}`}
+        >
+          −
+        </button>
+        <span id={qtyId} class="qty-value w-7 text-center text-sm font-bold" data-qty="1">
+          1
+        </span>
+        <button
+          type="button"
+          class="qty-inc w-8 h-full text-ink font-bold hover:bg-surface-soft"
+          aria-label={`Increase quantity of ${name}`}
+        >
+          +
+        </button>
+      </div>
+    )
+  }
   <button
     type="button"
-    class="add-to-cart-btn w-full h-10 px-md rounded-full bg-primary text-on-primary font-bold text-xs uppercase tracking-[0.5px] transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80"
+    class={`add-to-cart-btn ${showStepper ? "flex-grow" : "w-full"} h-10 px-md rounded-full bg-primary text-on-primary font-bold text-xs uppercase tracking-[0.5px] transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80`}
     data-product-id={productId}
     data-sku={sku}
     data-name={name}
     data-price={price}
+    data-qty-target={showStepper ? qtyId : undefined}
   >
     Add to cart
   </button>
@@ -39,6 +68,19 @@ const { productId, sku, name, price, class: className = "" } = Astro.props;
   // message is the immediate per-click confirmation.
   const MESSAGE_VISIBLE_MS = 6000;
 
+  document.querySelectorAll<HTMLButtonElement>(".qty-dec, .qty-inc").forEach((stepperButton) => {
+    stepperButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const valueEl = stepperButton.parentElement?.querySelector<HTMLSpanElement>(".qty-value");
+      if (!valueEl) return;
+      const current = Number(valueEl.dataset.qty ?? "1");
+      const next = stepperButton.classList.contains("qty-inc") ? current + 1 : Math.max(1, current - 1);
+      valueEl.dataset.qty = String(next);
+      valueEl.textContent = String(next);
+    });
+  });
+
   document.querySelectorAll<HTMLButtonElement>(".add-to-cart-btn").forEach((button) => {
     let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -50,12 +92,20 @@ const { productId, sku, name, price, class: className = "" } = Astro.props;
       event.preventDefault();
       event.stopPropagation();
 
-      addToCart({
-        productId: button.dataset.productId!,
-        sku: button.dataset.sku!,
-        name: button.dataset.name!,
-        price: Number(button.dataset.price),
-      });
+      const qtyTargetId = button.dataset.qtyTarget;
+      const quantity = qtyTargetId
+        ? Number(document.getElementById(qtyTargetId)?.dataset.qty ?? "1")
+        : 1;
+
+      addToCart(
+        {
+          productId: button.dataset.productId!,
+          sku: button.dataset.sku!,
+          name: button.dataset.name!,
+          price: Number(button.dataset.price),
+        },
+        quantity
+      );
 
       const message = button.parentElement?.querySelector<HTMLParagraphElement>(".add-to-cart-message");
       if (message) {

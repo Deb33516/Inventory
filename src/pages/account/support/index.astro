@@ -1,0 +1,165 @@
+---
+// Matches the Claude Design canvas's Customer Support artboard
+// (project/PageCustSupport.dc.html, imported by CustSupport.dc.html).
+// Reuses the existing support_tickets table/RLS (support_tickets_select_
+// own_customer, support_tickets_insert_own) and createSupportTicket action
+// unchanged — this is the first customer-facing UI over that real module.
+//
+// Deviations from the design, all because the backend doesn't have the
+// field: no Category selector (no `category` column), no Related order
+// picker (no order-linking column on support_tickets — see [id].astro for
+// the fuller note), no photo attachments (no storage/attachment table).
+// The form only ever sends Subject + Description, matching the action's
+// actual input schema.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Input from "../../../components/ui/Input.astro";
+import Textarea from "../../../components/ui/Textarea.astro";
+import Button from "../../../components/ui/Button.astro";
+import Badge from "../../../components/ui/Badge.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import PublicHeader from "../../../components/layout/PublicHeader.astro";
+import type { TicketStatus } from "../../../lib/types";
+
+const userId = Astro.locals.user!.id;
+const filter = Astro.url.searchParams.get("filter") ?? "all";
+const prefillSubject = Astro.url.searchParams.get("subject") ?? "";
+
+const { data: ticketRows } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("id, subject, status, created_at, updated_at")
+  .eq("created_by", userId)
+  .order("created_at", { ascending: false });
+
+const tickets = ticketRows ?? [];
+const openCount = tickets.filter((t) => !["resolved", "closed"].includes(t.status)).length;
+const resolvedCount = tickets.filter((t) => ["resolved", "closed"].includes(t.status)).length;
+
+const visibleTickets =
+  filter === "open"
+    ? tickets.filter((t) => !["resolved", "closed"].includes(t.status))
+    : filter === "resolved"
+      ? tickets.filter((t) => ["resolved", "closed"].includes(t.status))
+      : tickets;
+
+const statusTone: Record<TicketStatus, "success" | "warning" | "error" | "neutral"> = {
+  open: "neutral",
+  in_progress: "warning",
+  waiting: "warning",
+  resolved: "success",
+  closed: "neutral",
+};
+const statusLabel: Record<TicketStatus, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  waiting: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+---
+
+<BaseLayout title="Support — Inventory">
+  <PublicHeader backHref="/account" backLabel="Account" />
+
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
+    <h1 class="text-2xl font-bold text-ink">Support</h1>
+    <p class="mt-xs text-sm text-muted">Raise a ticket and follow our replies in one place.</p>
+
+    <div class="mt-lg grid grid-cols-1 lg:grid-cols-[440px_1fr] gap-lg items-start">
+      <div class="space-y-lg">
+        <Card>
+          <div class="flex items-center justify-between flex-wrap gap-sm">
+            <h2 class="text-sm font-bold text-ink">My tickets</h2>
+            <div class="flex gap-xxs text-xs">
+              <a href="/account/support?filter=all" class={`px-sm py-xxs rounded-md ${filter === "all" ? "bg-surface-soft font-bold text-ink" : "text-muted"}`}>
+                All {tickets.length}
+              </a>
+              <a href="/account/support?filter=open" class={`px-sm py-xxs rounded-md ${filter === "open" ? "bg-surface-soft font-bold text-ink" : "text-muted"}`}>
+                Open {openCount}
+              </a>
+              <a href="/account/support?filter=resolved" class={`px-sm py-xxs rounded-md ${filter === "resolved" ? "bg-surface-soft font-bold text-ink" : "text-muted"}`}>
+                Resolved {resolvedCount}
+              </a>
+            </div>
+          </div>
+
+          <div class="mt-sm divide-y divide-hairline">
+            {
+              visibleTickets.length > 0 ? (
+                visibleTickets.map((t) => (
+                  <a href={`/account/support/${t.id}`} class="flex items-center gap-md py-sm">
+                    <div class="flex-grow min-w-0">
+                      <p class="text-sm font-bold text-ink truncate">{t.subject}</p>
+                      <p class="text-xs text-muted">Updated {new Date(t.updated_at).toLocaleDateString()}</p>
+                    </div>
+                    <Badge tone={statusTone[t.status as TicketStatus]}>{statusLabel[t.status as TicketStatus]}</Badge>
+                  </a>
+                ))
+              ) : (
+                <EmptyState class="my-sm" title="No tickets yet" message="Create one using the form." />
+              )
+            }
+          </div>
+        </Card>
+
+        <Card>
+          <h2 class="text-sm font-bold text-ink">How support works</h2>
+          <div class="mt-md space-y-md">
+            <div class="flex gap-sm">
+              <span class="w-6 h-6 rounded-full bg-surface-soft text-xs font-bold text-muted flex items-center justify-center shrink-0">1</span>
+              <div>
+                <p class="text-sm font-bold text-ink">We reply within the ticket</p>
+                <p class="text-xs text-muted">Our team updates the ticket's status as they work on it.</p>
+              </div>
+            </div>
+            <div class="flex gap-sm">
+              <span class="w-6 h-6 rounded-full bg-surface-soft text-xs font-bold text-muted flex items-center justify-center shrink-0">2</span>
+              <div>
+                <p class="text-sm font-bold text-ink">See the resolution here</p>
+                <p class="text-xs text-muted">Once resolved, the outcome is shown on the ticket.</p>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Card>
+        <h2 class="text-sm font-bold text-ink">Create a support ticket</h2>
+        <p class="mt-xxs text-xs text-muted">Tell us what went wrong.</p>
+
+        <form id="create-ticket-form" class="mt-lg space-y-md">
+          <Input label="Subject" name="subject" value={prefillSubject} placeholder="Short summary of the issue" required />
+          <Textarea label="Message" name="description" placeholder="Describe the problem…" rows={6} required />
+          <p id="form-message" class="text-sm" role="status" />
+          <Button type="submit" variant="primary">Submit ticket</Button>
+        </form>
+      </Card>
+    </div>
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#create-ticket-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { data, error } = await actions.createSupportTicket(new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = `/account/support/${data.id}`;
+  });
+</script>

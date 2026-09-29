@@ -984,4 +984,77 @@ export const server = {
       return { message: "Invitation sent." };
     },
   }),
+
+  // "Report an issue" — any of customer/inventory_staff/admin/super_admin
+  // reporting their own issue. RLS (support_tickets_insert_own) is the real
+  // backstop; created_by is always the caller's own id, never client-chosen.
+  createSupportTicket: defineAction({
+    accept: "form",
+    input: z.object({
+      subject: z.string().min(1, "Subject is required"),
+      description: z.string().min(1, "Description is required"),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .insert({
+          created_by: context.locals.user!.id,
+          subject: input.subject,
+          description: input.description,
+        })
+        .select("id")
+        .single();
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      return { message: "Issue reported.", id: data.id };
+    },
+  }),
+
+  // inventory_staff adding operational notes/resolution and advancing
+  // status on a ticket assigned to them. RLS (support_tickets_update_
+  // assigned_staff) rejects this outright for any ticket not currently
+  // assigned to the caller — this handler never checks that itself, the
+  // update simply affects 0 rows and surfaces as a friendly error below.
+  updateSupportTicket: defineAction({
+    accept: "form",
+    input: z.object({
+      ticketId: z.string().uuid(),
+      status: z.enum(["open", "in_progress", "waiting", "resolved", "closed"]),
+      resolution: z.preprocess(emptyToUndefined, z.string().optional()),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .update({ status: input.status, resolution: input.resolution ?? null })
+        .eq("id", input.ticketId)
+        .select("id")
+        .maybeSingle();
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      if (!data) {
+        throw new ActionError({
+          code: "FORBIDDEN",
+          message: "This ticket isn't assigned to you.",
+        });
+      }
+
+      return { message: "Ticket updated." };
+    },
+  }),
 };

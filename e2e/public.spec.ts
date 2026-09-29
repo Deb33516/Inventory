@@ -36,9 +36,11 @@ test("signed-out homepage shows only signed-out nav — no My account, no Cart, 
 test("products page lists products and search/filter controls work", async ({ page }) => {
   const problems = collectConsoleProblems(page);
   await page.goto("/products");
-  await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();
+  // Matches the Claude Design canvas's Customer Shop artboard — the page
+  // is now titled "Shop" (design's real screen name), not "Products".
+  await expect(page.getByRole("heading", { name: "Shop" })).toBeVisible();
 
-  await page.getByPlaceholder("Search products...").fill("zzzzznonexistentzzzz");
+  await page.getByPlaceholder("Search by name or SKU…").fill("zzzzznonexistentzzzz");
   await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.getByText("No products found")).toBeVisible();
 
@@ -65,7 +67,9 @@ test("visiting a product detail page and adding it to the cart works", async ({ 
 
   await viewCartLink.click();
   await expect(page).toHaveURL(/\/cart$/);
-  await expect(page.getByRole("heading", { name: "Your cart" })).toBeVisible();
+  // Matches the Claude Design canvas's Customer Cart artboard — the page
+  // heading is now "Cart" (design's real screen name), not "Your cart".
+  await expect(page.getByRole("heading", { name: "Cart", exact: true })).toBeVisible();
   // The cart is localStorage-only — a successfully added item means the
   // page no longer shows the empty-cart state.
   await expect(page.getByText("Your cart is empty")).not.toBeVisible();

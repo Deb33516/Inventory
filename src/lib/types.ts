@@ -34,3 +34,5 @@ export type ApprovalActionType =
   | "refund_payment";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export type TicketStatus = "open" | "in_progress" | "waiting" | "resolved" | "closed";

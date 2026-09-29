@@ -78,6 +78,17 @@ const { data: payment } = order
           <div class="mt-lg">
             <OrderStatusActions orderId={order.id} status={order.status} viewerRole="customer" />
           </div>
+
+          <Card class="mt-lg">
+            <h2 class="text-sm font-bold text-ink">Need help with this order?</h2>
+            <p class="mt-xxs text-xs text-muted">Damaged, missing or wrong items — tell us and our support team will sort it out.</p>
+            <a
+              href={`/account/support?subject=${encodeURIComponent(`Issue with order ${order.id.slice(0, 8)}`)}`}
+              class="mt-md inline-flex h-10 px-md items-center border border-hairline text-sm font-bold text-ink hover:border-hairline-strong"
+            >
+              Raise a support ticket
+            </a>
+          </Card>
         </>
       ) : (
         <EmptyState title="Order not found" />

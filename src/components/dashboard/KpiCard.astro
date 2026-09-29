@@ -7,10 +7,14 @@ interface Props {
   href?: string;
   tone?: "default" | "warning" | "error" | "success";
   sublabel?: string;
+  // SVG path `d` — optional 32px icon badge beside the label. Omitted by
+  // every existing caller today, so the label row renders exactly as
+  // before (a bare <p>, no wrapping flex row) unless a page opts in.
+  icon?: string;
   class?: string;
 }
 
-const { label, value, href, tone = "default", sublabel, class: className = "" } = Astro.props;
+const { label, value, href, tone = "default", sublabel, icon, class: className = "" } = Astro.props;
 
 const toneClass = {
   default: "text-ink",
@@ -24,14 +28,36 @@ const toneClass = {
   href ? (
     <a href={href} class="block">
       <Card class={`hover:border-ink transition-colors ${className}`}>
-        <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+        {icon ? (
+          <div class="flex items-center justify-between">
+            <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+            <span class="w-8 h-8 rounded-lg bg-surface-soft text-muted flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d={icon} />
+              </svg>
+            </span>
+          </div>
+        ) : (
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+        )}
         <p class={`mt-xs text-3xl font-bold ${toneClass}`}>{value}</p>
         {sublabel && <p class="mt-xs text-xs text-muted">{sublabel}</p>}
       </Card>
     </a>
   ) : (
     <Card class={className}>
-      <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+      {icon ? (
+        <div class="flex items-center justify-between">
+          <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+          <span class="w-8 h-8 rounded-lg bg-surface-soft text-muted flex items-center justify-center shrink-0">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d={icon} />
+            </svg>
+          </span>
+        </div>
+      ) : (
+        <p class="text-xs uppercase tracking-[0.5px] text-muted">{label}</p>
+      )}
       <p class={`mt-xs text-3xl font-bold ${toneClass}`}>{value}</p>
       {sublabel && <p class="mt-xs text-xs text-muted">{sublabel}</p>}
     </Card>

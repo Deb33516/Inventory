@@ -21,18 +21,18 @@ const { data: featuredProducts } = await Astro.locals.supabase
   .limit(8);
 ---
 
-<BaseLayout title="Inventory — Shop products">
+<BaseLayout title="Inventory — CRM, stock and a customer portal, in one place">
   <PublicHeader />
 
-  <section id="main-content" class="bg-surface-dark text-on-dark py-xl px-lg">
-    <div class="max-w-[1440px] mx-auto">
-      <p class="uppercase text-xs tracking-[1.5px] text-on-dark-soft mb-sm">Welcome</p>
-      <h1 class="text-4xl sm:text-5xl font-bold leading-tight max-w-2xl">
-        Quality products, delivered reliably.
+  <section id="main-content" class="bg-surface-dark text-on-dark py-xxl px-lg">
+    <div class="max-w-[1440px] mx-auto flex flex-col items-center text-center">
+      <p class="uppercase text-xs tracking-[1.5px] text-on-dark-soft mb-sm">Role-based dashboards for every login</p>
+      <h1 class="text-4xl sm:text-6xl font-bold leading-[1.05] max-w-3xl">
+        Sell, stock and ship from one calm workspace
       </h1>
-      <p class="mt-sm max-w-xl font-light text-on-dark-soft">
-        Browse the full catalog, track your orders, and manage your account — all in one
-        place.
+      <p class="mt-md max-w-xl font-light text-on-dark-soft">
+        Inventory brings your CRM, stock and customer portal together. Every login, from owner
+        to warehouse floor, sees exactly the screens it needs.
       </p>
       <div class="mt-lg flex gap-md">
         {
@@ -50,6 +50,51 @@ const { data: featuredProducts } = await Astro.locals.supabase
               </Button>
             </>
           )
+        }
+      </div>
+    </div>
+  </section>
+
+  <section aria-label="Built for" class="py-lg px-lg border-b border-hairline">
+    <div class="max-w-[1440px] mx-auto flex flex-col items-center gap-md">
+      <p class="text-sm text-muted">Built for businesses that move physical products</p>
+      <div class="flex flex-wrap justify-center gap-lg text-body">
+        {["Electrical", "Hardware", "Building materials", "Wholesale", "Distribution"].map((label) => (
+          <span class="text-sm font-bold">{label}</span>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section id="roles" class="py-xl px-lg border-b border-hairline">
+    <div class="max-w-[1440px] mx-auto">
+      <div class="flex flex-col items-center text-center gap-xs max-w-2xl mx-auto">
+        <span class="text-xs font-bold uppercase tracking-[0.5px] text-primary">One app, five logins</span>
+        <h2 class="text-2xl sm:text-3xl font-bold text-ink">Everyone sees what they need. Nothing more.</h2>
+        <p class="text-sm text-muted">
+          Permissions decide the menu. Your warehouse team never wades through sales reports, and
+          your customers only ever see their own orders.
+        </p>
+      </div>
+      <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-md">
+        {
+          [
+            { name: "Super admin", desc: "Owns users, roles and system settings.", points: ["Users and invites", "Roles and permissions", "Audit log"] },
+            { name: "Admin", desc: "Runs the business day to day.", points: ["Orders and customers", "Products and stock", "Support ticket queue"] },
+            { name: "Sales staff", desc: "Looks after their own customers.", points: ["Contacts and orders", "Live stock check", "Order reports"] },
+            { name: "Inventory staff", desc: "Keeps stock accurate.", points: ["Receiving restocks", "Adjustments and damage", "Assigned support tickets"] },
+            { name: "Customer", desc: "Serves themselves, any time.", points: ["Shop and checkout", "Order tracking", "Support tickets"] },
+          ].map((r) => (
+            <div class="p-md bg-canvas border border-hairline flex flex-col gap-sm">
+              <span class="text-sm font-bold text-ink">{r.name}</span>
+              <p class="text-xs text-muted leading-relaxed">{r.desc}</p>
+              <ul class="mt-xs pt-sm border-t border-hairline flex flex-col gap-xxs">
+                {r.points.map((p) => (
+                  <li class="text-xs text-body">· {p}</li>
+                ))}
+              </ul>
+            </div>
+          ))
         }
       </div>
     </div>
@@ -75,7 +120,7 @@ const { data: featuredProducts } = await Astro.locals.supabase
     )
   }
 
-  <section class="py-xl px-lg">
+  <section id="features" class="py-xl px-lg border-b border-hairline">
     <div class="max-w-[1440px] mx-auto">
       <div class="flex items-center justify-between flex-wrap gap-md">
         <h2 class="text-2xl font-bold text-ink">Featured products</h2>
@@ -104,4 +149,87 @@ const { data: featuredProducts } = await Astro.locals.supabase
       }
     </div>
   </section>
+
+  <section aria-labelledby="why" class="py-xl px-lg border-b border-hairline">
+    <div class="max-w-[1440px] mx-auto">
+      <div class="flex flex-col items-center text-center gap-xs max-w-2xl mx-auto">
+        <span class="text-xs font-bold uppercase tracking-[0.5px] text-primary">Why teams switch</span>
+        <h2 id="why" class="text-2xl sm:text-3xl font-bold text-ink">Built for the way distributors really work</h2>
+        <p class="text-sm text-muted">Roles, live stock and customer support work together, not as bolt-ons.</p>
+      </div>
+      <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 border-t border-l border-hairline">
+        {
+          [
+            { title: "Five roles, clear access", desc: "Super admin, admin, sales staff, inventory staff and customers each see only what their job needs." },
+            { title: "Live stock in every order", desc: "Sales and customers see real availability before an order is placed." },
+            { title: "Made for the warehouse floor", desc: "A scan-first workflow for receiving, adjustments and lookups." },
+            { title: "Stock you can trust", desc: "Every receipt, sale, adjustment and damage record is logged as a stock movement." },
+            { title: "Customer self-service", desc: "Customers shop, check out, track their orders and raise tickets on their own." },
+            { title: "Support that closes the loop", desc: "Tickets move from customer to staff and back with a clear resolution." },
+          ].map((b) => (
+            <div class="p-lg border-r border-b border-hairline flex flex-col gap-xs">
+              <span class="text-base font-bold text-ink">{b.title}</span>
+              <span class="text-sm text-muted leading-relaxed">{b.desc}</span>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" class="py-xl px-lg border-b border-hairline">
+    <div class="max-w-[1440px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-xl">
+      <div class="flex flex-col gap-sm">
+        <span class="text-xs font-bold uppercase tracking-[0.5px] text-primary">FAQ</span>
+        <h2 class="text-2xl font-bold text-ink">Questions, answered</h2>
+        <p class="text-sm text-muted">Can't find what you're looking for? Reach us from your account's Support page once signed in.</p>
+      </div>
+      <div class="flex flex-col border-t border-hairline">
+        {
+          [
+            ["Can each person see only their own data?", "Yes. Sales staff see their own contacts and orders, inventory staff see stock and the tickets assigned to them, and customers only ever see their own orders and tickets."],
+            ["Can my customers place orders themselves?", "Customers get their own portal: they browse the shop, check out, track orders and raise support tickets."],
+            ["How do support tickets get resolved?", "A customer raises a ticket, and staff or an admin update its status and add a resolution as it's worked."],
+            ["Does it keep a history of stock changes?", "Every receipt, sale, adjustment and damage record is saved as a stock movement, so on-hand numbers can always be explained."],
+          ].map(([q, a]) => (
+            <details class="border-b border-hairline py-sm group">
+              <summary class="cursor-pointer list-none flex items-center justify-between gap-md text-sm font-bold text-ink">
+                {q}
+                <span class="text-muted group-open:rotate-180 transition-transform">▾</span>
+              </summary>
+              <p class="mt-xs text-sm text-muted leading-relaxed">{a}</p>
+            </details>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="py-xl px-lg">
+    <div class="max-w-[1440px] mx-auto bg-surface-soft border border-hairline p-xxl flex flex-col items-center text-center gap-md">
+      <h2 class="text-2xl sm:text-3xl font-bold text-ink max-w-2xl">Run the whole business from one place</h2>
+      <p class="text-sm text-muted max-w-lg">
+        Add your products, invite your team and see every role's dashboard with your own data.
+      </p>
+      <div class="flex gap-md">
+        {
+          user ? (
+            <Button href="/products" variant="primary">Shop products</Button>
+          ) : (
+            <>
+              <Button href="/register" variant="primary">Create an account</Button>
+              <Button href="/login" variant="secondary">Sign in</Button>
+            </>
+          )
+        }
+      </div>
+    </div>
+  </section>
+
+  <footer class="border-t border-hairline py-xl px-lg">
+    <div class="max-w-[1440px] mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-sm text-xs text-muted">
+      <span>© 2026 Inventory</span>
+      <span>Made in India</span>
+    </div>
+  </footer>
 </BaseLayout>

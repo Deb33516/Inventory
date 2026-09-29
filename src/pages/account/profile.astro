@@ -1,0 +1,114 @@
+---
+// Matches the Claude Design canvas's Customer Profile artboard
+// (project/PageCustProfile.dc.html, imported by CustProfile.dc.html).
+// Reuses the existing CustomerProfileForm (Phase 6) unchanged — this page
+// just gives it its own route, matching the design's separate Profile
+// screen instead of bundling it into the portal dashboard.
+//
+// Real vs deferred, per the design's own sections:
+//  - Contact person (name/phone) + addresses (billing/shipping): real,
+//    CustomerProfileForm/updateCustomerProfile, unchanged.
+//  - "Company details" (account code, GST number, account manager): no
+//    backing columns exist anywhere in the schema — omitted rather than
+//    fabricated, not rendered as an empty/deferred stub either, since
+//    there's no real feature behind it to preview.
+//  - "Change password": no in-session password-change action exists
+//    (Supabase's updateUser() has no current-password verification step,
+//    and the existing updatePassword action is purpose-built for the
+//    recovery-link flow) — same "sign out and use Forgot password" note
+//    already used on this page's staff-branch panel, not a new flow.
+//  - "Notifications" (email/SMS toggles): no notification system exists
+//    anywhere in this app (explicitly out of scope) — shown as an honest
+//    disabled/deferred block, not functional toggles.
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import Card from "../../components/ui/Card.astro";
+import PublicHeader from "../../components/layout/PublicHeader.astro";
+import CustomerProfileForm from "../../components/crm/CustomerProfileForm.astro";
+
+const { user, role } = Astro.locals;
+
+if (role !== "customer") {
+  return Astro.redirect("/account");
+}
+
+const userId = user!.id;
+
+const { data: profile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("full_name, phone")
+  .eq("id", userId)
+  .single();
+
+const { data: customer } = await Astro.locals.supabase
+  .from("customers")
+  .select("billing_address, shipping_address, marketing_opt_in")
+  .eq("profile_id", userId)
+  .single();
+---
+
+<BaseLayout title="Profile — Inventory">
+  <PublicHeader backHref="/account" backLabel="Account" />
+
+  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl grid grid-cols-1 lg:grid-cols-3 gap-lg">
+    <div class="lg:col-span-2 space-y-lg">
+      <Card>
+        <h1 class="text-2xl font-bold text-ink">Profile</h1>
+        <p class="mt-xs text-sm text-muted">Contact details and delivery addresses. We send order and support updates here.</p>
+        <div class="mt-lg">
+          <CustomerProfileForm
+            email={user?.email ?? ""}
+            fullName={profile?.full_name ?? null}
+            phone={profile?.phone ?? null}
+            billingAddress={customer?.billing_address ?? null}
+            shippingAddress={customer?.shipping_address ?? null}
+            marketingOptIn={customer?.marketing_opt_in ?? false}
+          />
+        </div>
+      </Card>
+    </div>
+
+    <div class="space-y-lg">
+      <Card>
+        <h2 class="text-lg font-bold text-ink">Password</h2>
+        <p class="mt-xs text-sm text-muted">
+          To change your password, sign out and use "Forgot password?" on the sign-in page.
+        </p>
+        <button id="profile-signout-btn" type="button" class="mt-md text-sm font-bold text-error hover:underline">
+          Sign out
+        </button>
+      </Card>
+
+      <Card>
+        <h2 class="text-lg font-bold text-ink">Notifications</h2>
+        <div class="mt-md space-y-sm opacity-50 pointer-events-none">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-bold text-ink">Order updates</p>
+              <p class="text-xs text-muted">Confirmation, dispatch and delivery</p>
+            </div>
+            <div class="w-9 h-5 rounded-full bg-hairline-strong" />
+          </div>
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-bold text-ink">Support replies</p>
+              <p class="text-xs text-muted">When our team replies to your ticket</p>
+            </div>
+            <div class="w-9 h-5 rounded-full bg-hairline-strong" />
+          </div>
+        </div>
+        <p class="mt-sm text-xs text-muted">Notification preferences aren't available yet.</p>
+      </Card>
+    </div>
+  </main>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const signOutButton = document.querySelector<HTMLButtonElement>("#profile-signout-btn");
+  signOutButton?.addEventListener("click", async () => {
+    signOutButton.disabled = true;
+    await actions.signOut();
+    window.location.href = "/login";
+  });
+</script>

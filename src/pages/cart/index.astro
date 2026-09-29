@@ -1,4 +1,7 @@
 ---
+// Matches the Claude Design canvas's Cart artboard (project/PageCart.dc.html,
+// imported by CustCart.dc.html) — a wide cart-lines panel plus a summary
+// sidebar. No GST/tax line here — see checkout.astro's note on why.
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
 import Button from "../../components/ui/Button.astro";
@@ -9,18 +12,28 @@ import PublicHeader from "../../components/layout/PublicHeader.astro";
 <BaseLayout title="Cart — Inventory">
   <PublicHeader />
 
-  <main id="main-content" class="max-w-[720px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Your cart</h1>
-
-    <Card class="mt-lg">
-      <CartSummary />
-    </Card>
-
-    <div class="mt-lg flex items-center justify-between gap-md">
+  <main id="main-content" class="max-w-[1100px] mx-auto px-lg py-xl">
+    <div class="flex items-end justify-between gap-md">
+      <h1 class="text-2xl font-bold text-ink">Cart</h1>
       <a href="/products" class="text-sm font-bold text-ink hover:text-primary">
         ← Continue shopping
       </a>
-      <Button href="/checkout" variant="primary">Checkout</Button>
+    </div>
+
+    <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-lg items-start">
+      <Card>
+        <CartSummary />
+      </Card>
+
+      <Card>
+        <h2 class="text-sm font-bold text-ink">Order summary</h2>
+        <p class="mt-sm text-xs text-muted">
+          Tax and delivery are calculated when you place the order at checkout.
+        </p>
+        <Button href="/checkout" variant="primary" class="mt-lg w-full">
+          Proceed to checkout
+        </Button>
+      </Card>
     </div>
   </main>
 </BaseLayout>

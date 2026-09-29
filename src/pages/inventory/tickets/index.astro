@@ -1,0 +1,130 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Input from "../../../components/ui/Input.astro";
+import Textarea from "../../../components/ui/Textarea.astro";
+import Button from "../../../components/ui/Button.astro";
+import Badge from "../../../components/ui/Badge.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
+import { staffSidebarNav } from "../../../lib/staffNav";
+
+const reported = Astro.url.searchParams.get("reported");
+const userId = Astro.locals.user!.id;
+
+// RLS (support_tickets_select_assigned_staff) already restricts this to
+// tickets assigned to the caller — filtering explicitly too keeps the
+// query's intent readable, same convention used for customers' own orders.
+const { data: tickets } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("id, subject, status, created_at")
+  .eq("assigned_to", userId)
+  .order("created_at", { ascending: false });
+
+const openCount = (tickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+
+const statusTone: Record<string, "success" | "warning" | "error" | "neutral"> = {
+  open: "warning",
+  in_progress: "warning",
+  waiting: "neutral",
+  resolved: "success",
+  closed: "neutral",
+};
+---
+
+<BaseLayout title="Support tickets — Inventory">
+  <AppShell active="/inventory/tickets" sidebarNav={staffSidebarNav(openCount)} sidebarBadge="INVENTORY" title="Support tickets">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-lg">
+      <div class="lg:col-span-2">
+        <h1 class="text-2xl font-bold text-ink">Support tickets assigned to me</h1>
+        <p class="mt-xs text-sm text-muted">
+          Only tickets currently assigned to you — the overall support queue is managed by admin.
+        </p>
+
+        {
+          reported && (
+            <p class="mt-md text-sm text-success" role="status">
+              Issue reported.
+            </p>
+          )
+        }
+
+        {
+          tickets && tickets.length > 0 ? (
+            <div class="mt-lg overflow-x-auto">
+              <table class="w-full text-sm border-collapse">
+                <thead>
+                  <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
+                    <th class="py-xs pr-md">Subject</th>
+                    <th class="py-xs pr-md">Status</th>
+                    <th class="py-xs pr-md">Reported</th>
+                    <th class="py-xs" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {tickets.map((t) => (
+                    <tr class="border-b border-hairline">
+                      <td class="py-sm pr-md text-ink font-bold">{t.subject}</td>
+                      <td class="py-sm pr-md">
+                        <Badge tone={statusTone[t.status] ?? "neutral"}>{t.status.replace(/_/g, " ")}</Badge>
+                      </td>
+                      <td class="py-sm pr-md text-body">{new Date(t.created_at).toLocaleDateString()}</td>
+                      <td class="py-sm">
+                        <a href={`/inventory/tickets/${t.id}`} class="text-primary font-bold">
+                          Open
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState
+              class="mt-lg"
+              title="No tickets assigned to you"
+              message="Operational issues assigned to you by admin will appear here."
+            />
+          )
+        }
+      </div>
+
+      <Card class="h-fit">
+        <h2 class="text-lg font-bold text-ink">Report an issue</h2>
+        <p class="mt-xs text-xs text-muted">Report an operational problem — a note goes to admin for triage.</p>
+        <form id="report-issue-form" class="mt-md space-y-md">
+          <Input label="Subject" name="subject" required />
+          <Textarea label="Description" name="description" required />
+          <p id="form-message" class="text-sm" role="status" />
+          <Button type="submit" variant="primary">Report issue</Button>
+        </form>
+      </Card>
+    </div>
+  </AppShell>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#report-issue-form")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    messageEl.textContent = "";
+    messageEl.classList.remove("text-error", "text-success");
+
+    const { error } = await actions.createSupportTicket(new FormData(form));
+
+    if (error) {
+      button.disabled = false;
+      messageEl.textContent = error.message;
+      messageEl.classList.add("text-error");
+      return;
+    }
+
+    window.location.href = "/inventory/tickets?reported=1";
+  });
+</script>

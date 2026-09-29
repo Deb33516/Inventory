@@ -1,0 +1,130 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Select from "../../../components/ui/Select.astro";
+import Textarea from "../../../components/ui/Textarea.astro";
+import Button from "../../../components/ui/Button.astro";
+import Badge from "../../../components/ui/Badge.astro";
+import EmptyState from "../../../components/catalog/EmptyState.astro";
+import AppShell from "../../../components/layout/AppShell.astro";
+import { staffSidebarNav } from "../../../lib/staffNav";
+
+const { id } = Astro.params;
+const userId = Astro.locals.user!.id;
+const updated = Astro.url.searchParams.get("updated");
+
+// RLS (support_tickets_select_assigned_staff) already restricts this to a
+// ticket assigned to the caller — a ticket assigned to someone else simply
+// isn't returned, same 404 treatment as any other not-found detail page.
+const { data: ticket } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("id, subject, description, status, resolution, created_at")
+  .eq("id", id)
+  .maybeSingle();
+
+if (!ticket) {
+  Astro.response.status = 404;
+}
+
+const { data: myTickets } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("status")
+  .eq("assigned_to", userId);
+const openCount = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+
+const statusOptions = [
+  { value: "open", label: "Open" },
+  { value: "in_progress", label: "In progress" },
+  { value: "waiting", label: "Waiting" },
+  { value: "resolved", label: "Resolved" },
+  { value: "closed", label: "Closed" },
+];
+
+const statusTone: Record<string, "success" | "warning" | "error" | "neutral"> = {
+  open: "warning",
+  in_progress: "warning",
+  waiting: "neutral",
+  resolved: "success",
+  closed: "neutral",
+};
+---
+
+<BaseLayout title={ticket ? `${ticket.subject} — Support` : "Ticket not found — Support"}>
+  <AppShell
+    active="/inventory/tickets"
+    sidebarNav={staffSidebarNav(openCount)}
+    sidebarBadge="INVENTORY"
+    backHref="/inventory/tickets"
+    backLabel="Support tickets"
+  >
+    {
+      ticket ? (
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-lg">
+          <div class="lg:col-span-2">
+            <div class="flex items-center justify-between flex-wrap gap-sm">
+              <h1 class="text-2xl font-bold text-ink">{ticket.subject}</h1>
+              <Badge tone={statusTone[ticket.status] ?? "neutral"}>{ticket.status.replace(/_/g, " ")}</Badge>
+            </div>
+            <p class="mt-xs text-xs text-muted">Reported {new Date(ticket.created_at).toLocaleString()}</p>
+            <Card class="mt-lg">
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Description</p>
+              <p class="mt-xs text-sm text-body whitespace-pre-wrap">{ticket.description}</p>
+            </Card>
+            {ticket.resolution && (
+              <Card class="mt-lg">
+                <p class="text-xs uppercase tracking-[0.5px] text-muted">Resolution</p>
+                <p class="mt-xs text-sm text-body whitespace-pre-wrap">{ticket.resolution}</p>
+              </Card>
+            )}
+          </div>
+
+          <Card class="h-fit">
+            <h2 class="text-lg font-bold text-ink">Update ticket</h2>
+            {updated && (
+              <p class="mt-xs text-sm text-success" role="status">
+                Ticket updated.
+              </p>
+            )}
+            <form id="update-ticket-form" class="mt-md space-y-md">
+              <input type="hidden" name="ticketId" value={ticket.id} />
+              <Select label="Status" name="status" options={statusOptions} value={ticket.status} required />
+              <Textarea label="Resolution / operational notes" name="resolution" value={ticket.resolution ?? ""} />
+              <p id="form-message" class="text-sm" role="status" />
+              <Button type="submit" variant="primary">Save</Button>
+            </form>
+          </Card>
+        </div>
+      ) : (
+        <EmptyState title="Ticket not found" message="It may not be assigned to you." />
+      )
+    }
+  </AppShell>
+</BaseLayout>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#update-ticket-form");
+  if (form) {
+    const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+    const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      messageEl.textContent = "";
+      messageEl.classList.remove("text-error", "text-success");
+
+      const { error } = await actions.updateSupportTicket(new FormData(form));
+
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        messageEl.classList.add("text-error");
+        return;
+      }
+
+      window.location.reload();
+    });
+  }
+</script>

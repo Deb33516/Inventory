@@ -1,32 +1,38 @@
 ---
+// Customer branch matches the Claude Design canvas's Customer portal
+// artboard (project/Customer.dc.html) — a lean dashboard overview, not the
+// full profile/analytics page this used to be. Profile editing moved to
+// /account/profile (its own named screen in the design), and the detailed
+// spend/status/top-products analytics block moved to the bottom of
+// /account/orders (closest thematic home; not itself a named screen).
+// Order history/detail and support both reuse real, RLS-scoped queries —
+// no new tables, no fabricated numbers.
+//
+// Real vs deferred:
+//  - Open orders / Open support tickets / Spent this year: real, computed
+//    below.
+//  - Items in cart: cart is localStorage-only (no server-side cart table,
+//    a deliberate Phase 7 exception) — rendered client-side on load, not
+//    server-computed.
+//  - Order tracking widget: real, the customer's own most recent
+//    non-final order, status mapped onto the same 5-step shape as the
+//    design (no separate carrier/AWB tracking data exists — omitted).
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
 import Badge from "../../components/ui/Badge.astro";
-import CustomerProfileForm from "../../components/crm/CustomerProfileForm.astro";
 import AppShell from "../../components/layout/AppShell.astro";
 import PublicHeader from "../../components/layout/PublicHeader.astro";
-import CustomerTimeline from "../../components/crm/CustomerTimeline.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
+import OrderStatusBadge from "../../components/orders/OrderStatusBadge.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
 import { CHART_COLORS } from "../../lib/chartTheme";
+import type { TicketStatus } from "../../lib/types";
 
-const url = Astro.url;
-const range = resolveDashboardRange(url.searchParams.get("range"));
-
-// Middleware guarantees a user is present for every /account/* route —
-// this page only renders the authenticated state.
 const { user, role } = Astro.locals;
 const userId = user!.id;
 const isCustomer = role === "customer";
 
-// Any staff/admin role gets a minimal "My profile" panel instead — same
-// page URL, genuinely different content, not a redirect (staff explicitly
-// want an Account item in their own sidebar, not a bounce back to their
-// dashboard). None of the customer-only queries below run for a staff
-// viewer, since they'd be empty/irrelevant anyway (a staff account has no
-// real order history).
 const roleLabel: Record<string, string> = {
   sales_staff: "Sales staff",
   inventory_staff: "Inventory staff",
@@ -34,70 +40,76 @@ const roleLabel: Record<string, string> = {
   super_admin: "Super admin",
 };
 
-let profile: { full_name: string | null; phone: string | null; created_at: string } | null = null;
-let customer: { billing_address: unknown; shipping_address: unknown; marketing_opt_in: boolean } | null = null;
-let metrics: { order_count: number; last_order_at: string | null } | null = null;
-let orders: { id: string; status: string; total: number; created_at: string }[] = [];
+let fullName: string | null = null;
+let openOrderCount = 0;
+let openTicketCount = 0;
+let spentThisYear = 0;
+let trackedOrder: { id: string; status: string; total: number; created_at: string } | null = null;
+let recentOrders: { id: string; status: string; total: number; created_at: string }[] = [];
+let recentTickets: { id: string; subject: string; status: string; updated_at: string }[] = [];
 let spendRows: { day: string; revenue: number }[] = [];
-let statusRows: { status: string; order_count: number }[] = [];
-let productRows: { name: string; units_sold: number }[] = [];
+
+const STEP_ORDER = ["pending", "confirmed", "processing", "shipped", "delivered"];
 
 if (isCustomer) {
   const { data: profileRow } = await Astro.locals.supabase
     .from("profiles")
-    .select("full_name, phone, created_at")
+    .select("full_name")
     .eq("id", userId)
     .single();
-  profile = profileRow;
+  fullName = profileRow?.full_name ?? null;
 
-  // Deliberately not selecting `notes` — that's staff-only CRM data and
-  // must never appear on the customer's own account page, even though RLS
-  // (row-level, not column-level) would technically allow the read.
-  const { data: customerRow } = await Astro.locals.supabase
-    .from("customers")
-    .select("billing_address, shipping_address, marketing_opt_in")
-    .eq("profile_id", userId)
-    .single();
-  customer = customerRow;
-
-  const { data: metricsRow } = await Astro.locals.supabase
-    .from("customer_metrics")
-    .select("order_count, last_order_at")
-    .eq("profile_id", userId)
-    .maybeSingle();
-  metrics = metricsRow;
-
-  const { data: ordersRows } = await Astro.locals.supabase
+  const { data: orderRows } = await Astro.locals.supabase
     .from("orders")
     .select("id, status, total, created_at")
     .eq("customer_id", userId)
     .order("created_at", { ascending: false })
+    .limit(20);
+
+  const orders = orderRows ?? [];
+  openOrderCount = orders.filter((o) => !["delivered", "cancelled", "refunded"].includes(o.status)).length;
+  trackedOrder = orders.find((o) => !["delivered", "cancelled", "refunded"].includes(o.status)) ?? null;
+  recentOrders = orders.slice(0, 5);
+
+  const ytd = resolveDashboardRange("ytd");
+  spentThisYear = orders
+    .filter((o) => o.created_at >= ytd.from! && o.status !== "cancelled")
+    .reduce((sum, o) => sum + o.total, 0);
+
+  const { data: ticketRows } = await Astro.locals.supabase
+    .from("support_tickets")
+    .select("id, subject, status, updated_at")
+    .eq("created_by", userId)
+    .order("updated_at", { ascending: false })
     .limit(10);
-  orders = ordersRows ?? [];
 
-  // RLS (orders_select_own / order_items_select_own) auto-scopes these
-  // calls to this customer's own orders — the same RPCs staff use for a
-  // store-wide view naturally return only "my" data here, no separate
-  // customer-specific function needed.
-  const [{ data: spendTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
-    Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
-    Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
-    Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
-  ]);
+  const tickets = ticketRows ?? [];
+  openTicketCount = tickets.filter((t) => !["resolved", "closed"].includes(t.status)).length;
+  recentTickets = tickets.slice(0, 3);
 
+  const { data: spendTrend } = await Astro.locals.supabase.rpc("dashboard_revenue_trend", {
+    p_from: ytd.from,
+    p_to: ytd.to,
+  });
   spendRows = spendTrend ?? [];
-  statusRows = ordersByStatus ?? [];
-  productRows = topProducts ?? [];
 }
 
-const statusColors: Record<string, string> = {
-  pending: CHART_COLORS.warning,
-  confirmed: CHART_COLORS.mute,
-  processing: CHART_COLORS.mute,
-  shipped: CHART_COLORS.success,
-  delivered: CHART_COLORS.success,
-  cancelled: CHART_COLORS.error,
-  refunded: CHART_COLORS.error,
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+
+const statusTone: Record<TicketStatus, "success" | "warning" | "error" | "neutral"> = {
+  open: "neutral",
+  in_progress: "warning",
+  waiting: "warning",
+  resolved: "success",
+  closed: "neutral",
+};
+const statusLabel: Record<TicketStatus, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  waiting: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
 };
 ---
 
@@ -106,140 +118,176 @@ const statusColors: Record<string, string> = {
     isCustomer ? (
       <PublicHeader />
 
-      <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xxl grid grid-cols-1 lg:grid-cols-3 gap-lg">
-        <div class="lg:col-span-2 space-y-lg">
+      <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
+        <div class="flex items-end justify-between flex-wrap gap-md">
+          <div>
+            <h1 class="text-2xl font-bold text-ink">Welcome back{fullName ? `, ${fullName}` : ""}</h1>
+          </div>
+          <div class="flex gap-sm">
+            <a href="/account/support" class="h-12 px-lg inline-flex items-center border border-hairline text-sm font-bold text-ink hover:border-hairline-strong">
+              Raise a ticket
+            </a>
+            <a href="/products" class="h-12 px-lg inline-flex items-center bg-primary text-on-primary text-sm font-bold">
+              New order
+            </a>
+          </div>
+        </div>
+
+        <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md">
           <Card>
-            <h1 class="text-2xl font-bold text-ink">Your profile</h1>
-            <div class="mt-lg">
-              <CustomerProfileForm
-                email={user?.email ?? ""}
-                fullName={profile?.full_name ?? null}
-                phone={profile?.phone ?? null}
-                billingAddress={customer?.billing_address ?? null}
-                shippingAddress={customer?.shipping_address ?? null}
-                marketingOptIn={customer?.marketing_opt_in ?? false}
-              />
+            <p class="text-xs uppercase tracking-[0.5px] text-muted">Open orders</p>
+            <p class="mt-xs text-3xl font-bold text-ink">{openOrderCount}</p>
+          </Card>
+          <a href="/account/support">
+            <Card class="hover:border-hairline-strong transition-colors h-full">
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Open support tickets</p>
+              <p class="mt-xs text-3xl font-bold text-ink">{openTicketCount}</p>
+            </Card>
+          </a>
+          <a href="/cart">
+            <Card class="hover:border-hairline-strong transition-colors h-full">
+              <p class="text-xs uppercase tracking-[0.5px] text-muted">Items in cart</p>
+              <p id="dashboard-cart-count" class="mt-xs text-3xl font-bold text-ink">—</p>
+            </Card>
+          </a>
+          <Card>
+            <p class="text-xs uppercase tracking-[0.5px] text-muted">Spent this year</p>
+            <p class="mt-xs text-3xl font-bold text-ink">{formatCurrency(spentThisYear)}</p>
+          </Card>
+        </div>
+
+        <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-lg items-start">
+          <Card>
+            <h2 class="text-sm font-bold text-ink">Track your order</h2>
+            {trackedOrder ? (
+              <>
+                <div class="mt-xs flex items-center justify-between">
+                  <p class="text-xs text-muted">
+                    {trackedOrder.id.slice(0, 8)} · {formatCurrency(trackedOrder.total)}
+                  </p>
+                  <OrderStatusBadge status={trackedOrder.status} />
+                </div>
+                <div class="mt-md flex items-start">
+                  {STEP_ORDER.map((step, i) => {
+                    const currentIndex = STEP_ORDER.indexOf(trackedOrder!.status);
+                    const done = i <= currentIndex;
+                    return (
+                      <div class="flex-grow flex flex-col gap-xs items-start">
+                        <div class="w-full flex items-center">
+                          <span
+                            class={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${done ? "bg-ink text-on-dark" : "border border-hairline-strong text-muted"}`}
+                          >
+                            {done ? "✓" : ""}
+                          </span>
+                          {i < STEP_ORDER.length - 1 && (
+                            <span class={`flex-grow h-0.5 mx-xs ${i < currentIndex ? "bg-ink" : "bg-hairline"}`} />
+                          )}
+                        </div>
+                        <span class={`text-xs capitalize ${done ? "text-ink font-bold" : "text-muted"}`}>{step}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <a href={`/account/orders/${trackedOrder.id}`} class="mt-md inline-block text-sm font-bold text-primary hover:underline">
+                  Details →
+                </a>
+              </>
+            ) : (
+              <EmptyState class="mt-md" title="No active orders" message="Orders you place will show up here while they're in progress." />
+            )}
+          </Card>
+
+          <Card>
+            <h2 class="text-sm font-bold text-ink">Spend this year</h2>
+            <div class="mt-sm">
+              {spendRows.length > 0 ? (
+                <ChartCanvas
+                  id="account-dashboard-spend"
+                  type="line"
+                  height={140}
+                  data={{
+                    labels: spendRows.map((r) => r.day),
+                    datasets: [
+                      {
+                        label: "Spend",
+                        data: spendRows.map((r) => Number(r.revenue)),
+                        borderColor: CHART_COLORS.ink,
+                        backgroundColor: "rgba(17,17,17,0.06)",
+                        fill: true,
+                      },
+                    ],
+                  }}
+                  options={{ plugins: { legend: { display: false } } }}
+                />
+              ) : (
+                <EmptyState class="mt-sm" title="No orders yet this year" />
+              )}
+            </div>
+          </Card>
+        </div>
+
+        <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-lg items-start">
+          <Card>
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-bold text-ink">Recent orders</h2>
+              <a href="/account/orders" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
+                All orders
+              </a>
+            </div>
+            <div class="mt-sm divide-y divide-hairline">
+              {recentOrders.length > 0 ? (
+                recentOrders.map((o) => (
+                  <div class="py-sm flex items-center gap-md">
+                    <a href={`/account/orders/${o.id}`} class="text-sm font-bold text-ink hover:text-primary">
+                      {o.id.slice(0, 8)}
+                    </a>
+                    <span class="text-xs text-muted">{new Date(o.created_at).toLocaleDateString()}</span>
+                    <span class="text-sm text-body">{formatCurrency(o.total)}</span>
+                    <span class="ml-auto">
+                      <OrderStatusBadge status={o.status} />
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <EmptyState class="my-sm" title="No orders yet" message="Your orders will appear here once you check out." />
+              )}
             </div>
           </Card>
 
           <Card>
             <div class="flex items-center justify-between">
-              <h2 class="text-lg font-bold text-ink">Order history</h2>
-              <a href="/account/orders" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
-                View all
+              <h2 class="text-sm font-bold text-ink">Support tickets</h2>
+              <a href="/account/support" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
+                New ticket
               </a>
             </div>
-            <div class="mt-md">
-              <CustomerTimeline orders={orders} accountCreatedAt={profile?.created_at ?? new Date().toISOString()} />
-            </div>
-          </Card>
-
-          <Card>
-            <div class="flex items-center justify-between flex-wrap gap-md">
-              <h2 class="text-lg font-bold text-ink">My analytics</h2>
-              <DateRangeFilter current={range.preset} url={url} pathname="/account" />
-            </div>
-            <p class="mt-xs text-xs text-muted">{range.label}</p>
-
-            <div class="mt-md grid grid-cols-1 gap-lg">
-              <div>
-                <h3 class="text-sm font-bold text-ink">Spend over time</h3>
-                <div class="mt-sm">
-                  {
-                    spendRows.length > 0 ? (
-                      <ChartCanvas
-                        id="account-spend-trend"
-                        type="line"
-                        height={260}
-                        data={{
-                          labels: spendRows.map((r) => r.day),
-                          datasets: [
-                            {
-                              label: "Spend",
-                              data: spendRows.map((r) => Number(r.revenue)),
-                              borderColor: CHART_COLORS.ink,
-                              backgroundColor: "rgba(17,17,17,0.06)",
-                              fill: true,
-                            },
-                          ],
-                        }}
-                        options={{ plugins: { legend: { display: false } } }}
-                      />
-                    ) : (
-                      <EmptyState title="No orders in this range" message="Try another date range." />
-                    )
-                  }
-                </div>
-              </div>
-
-              <div>
-                <h3 class="text-sm font-bold text-ink">My orders by status</h3>
-                <div class="mt-sm">
-                  {
-                    statusRows.length > 0 ? (
-                      <ChartCanvas
-                        id="account-orders-status"
-                        type="bar"
-                        height={260}
-                        data={{
-                          labels: statusRows.map((r) => r.status),
-                          datasets: [
-                            {
-                              label: "Orders",
-                              data: statusRows.map((r) => Number(r.order_count)),
-                              backgroundColor: statusRows.map((r) => statusColors[r.status] ?? CHART_COLORS.mute),
-                            },
-                          ],
-                        }}
-                        options={{ plugins: { legend: { display: false } } }}
-                      />
-                    ) : (
-                      <EmptyState title="No orders in this range" message="Try another date range." />
-                    )
-                  }
-                </div>
-              </div>
-
-              <div>
-                <h3 class="text-sm font-bold text-ink">My top purchased products</h3>
-                <div class="mt-sm">
-                  {
-                    productRows.length > 0 ? (
-                      <ChartCanvas
-                        id="account-top-products"
-                        type="bar"
-                        height={260}
-                        data={{
-                          labels: productRows.map((r) => r.name),
-                          datasets: [
-                            {
-                              label: "Units",
-                              data: productRows.map((r) => Number(r.units_sold)),
-                              backgroundColor: CHART_COLORS.ink,
-                            },
-                          ],
-                        }}
-                        options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
-                      />
-                    ) : (
-                      <EmptyState title="No purchases in this range" message="Try another date range." />
-                    )
-                  }
-                </div>
-              </div>
+            <div class="mt-sm divide-y divide-hairline">
+              {recentTickets.length > 0 ? (
+                recentTickets.map((t) => (
+                  <a href={`/account/support/${t.id}`} class="py-sm flex items-center gap-md">
+                    <span class="flex-grow min-w-0 text-sm text-ink truncate">{t.subject}</span>
+                    <Badge tone={statusTone[t.status as TicketStatus]}>{statusLabel[t.status as TicketStatus]}</Badge>
+                  </a>
+                ))
+              ) : (
+                <EmptyState class="my-sm" title="No tickets yet" />
+              )}
             </div>
           </Card>
         </div>
-
-        <Card class="h-fit">
-          <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders placed</p>
-          <p class="mt-xs text-3xl font-bold text-ink">{metrics?.order_count ?? 0}</p>
-          <p class="mt-md text-xs uppercase tracking-[0.5px] text-muted">Last order</p>
-          <p class="mt-xs text-lg font-bold text-ink">
-            {metrics?.last_order_at ? new Date(metrics.last_order_at).toLocaleDateString() : "—"}
-          </p>
-        </Card>
       </main>
+
+      <script>
+        import { getCart } from "../../lib/cart";
+        const el = document.querySelector<HTMLParagraphElement>("#dashboard-cart-count");
+        if (el) {
+          const render = () => {
+            el.textContent = String(getCart().reduce((sum, i) => sum + i.quantity, 0));
+          };
+          render();
+          window.addEventListener("cart-updated", render);
+        }
+      </script>
     ) : (
       <AppShell active="account">
         <Card class="max-w-lg">

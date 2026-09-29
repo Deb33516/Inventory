@@ -1,10 +1,18 @@
 ---
+// Renders the localStorage cart as a product/qty/total table, matching the
+// Claude Design canvas's Cart artboard proportions (project/PageCart.dc.html)
+// as closely as a client-rendered, no-server-data component can — no stock
+// pill here (cart items are plain localStorage records with no live DB
+// link back to current inventory), no GST line (place_order() computes tax
+// server-side today with no rate exposed to the client — see checkout.astro
+// for the fuller note). Subtotal is the only real number shown pre-checkout.
 ---
 
 <div id="cart-summary">
-  <ul id="cart-items" class="space-y-sm"></ul>
+  <div id="cart-items" class="divide-y divide-hairline"></div>
   <p id="cart-empty" class="hidden text-sm text-muted py-xl text-center">Your cart is empty.</p>
-  <div class="mt-md pt-md border-t border-hairline flex justify-end">
+  <div class="mt-md pt-md border-t border-hairline flex justify-between items-baseline">
+    <span class="text-sm text-muted">Subtotal (prices before any tax computed at checkout)</span>
     <p class="text-2xl font-bold text-ink">Subtotal: <span id="cart-total">—</span></p>
   </div>
 </div>
@@ -12,7 +20,7 @@
 <script>
   import { getCart, updateCartQuantity, removeFromCart } from "../../lib/cart";
 
-  const itemsEl = document.querySelector<HTMLUListElement>("#cart-items")!;
+  const itemsEl = document.querySelector<HTMLDivElement>("#cart-items")!;
   const emptyEl = document.querySelector<HTMLParagraphElement>("#cart-empty")!;
   const totalEl = document.querySelector<HTMLSpanElement>("#cart-total")!;
 
@@ -29,12 +37,13 @@
     for (const item of items) {
       total += item.price * item.quantity;
 
-      const li = document.createElement("li");
-      li.className = "flex items-center justify-between gap-md border-b border-hairline pb-sm";
+      const row = document.createElement("div");
+      row.className = "py-sm flex items-center gap-md";
 
       const info = document.createElement("div");
+      info.className = "flex-grow min-w-0";
       const title = document.createElement("p");
-      title.className = "font-bold text-ink text-sm";
+      title.className = "font-bold text-ink text-sm truncate";
       title.textContent = item.name;
       const meta = document.createElement("p");
       meta.className = "text-xs text-muted";
@@ -43,17 +52,16 @@
       info.appendChild(meta);
 
       const controls = document.createElement("div");
-      controls.className = "flex items-center gap-sm";
+      controls.className = "flex items-center gap-md shrink-0";
 
       const stepper = document.createElement("div");
-      stepper.className = "flex items-center rounded-full border border-hairline overflow-hidden";
+      stepper.className = "flex items-center h-9 border border-hairline-strong";
 
       const decrementBtn = document.createElement("button");
       decrementBtn.type = "button";
       decrementBtn.textContent = "−";
       decrementBtn.setAttribute("aria-label", `Decrease quantity of ${item.name}`);
-      decrementBtn.className =
-        "h-10 w-8 text-ink font-bold hover:bg-surface-soft active:scale-95 transition-[background-color,transform] duration-150";
+      decrementBtn.className = "w-8 h-full text-ink font-bold hover:bg-surface-soft";
       decrementBtn.addEventListener("click", () => {
         updateCartQuantity(item.productId, item.quantity - 1);
         render();
@@ -64,14 +72,13 @@
       qtyLabel.textContent = String(item.quantity);
       qtyLabel.setAttribute("aria-live", "polite");
       qtyLabel.setAttribute("aria-label", `Quantity: ${item.quantity}`);
-      qtyLabel.className = "h-10 w-10 flex items-center justify-center text-sm text-ink border-x border-hairline";
+      qtyLabel.className = "w-8 text-center text-sm font-bold text-ink";
 
       const incrementBtn = document.createElement("button");
       incrementBtn.type = "button";
       incrementBtn.textContent = "+";
       incrementBtn.setAttribute("aria-label", `Increase quantity of ${item.name}`);
-      incrementBtn.className =
-        "h-10 w-8 text-ink font-bold hover:bg-surface-soft active:scale-95 transition-[background-color,transform] duration-150";
+      incrementBtn.className = "w-8 h-full text-ink font-bold hover:bg-surface-soft";
       incrementBtn.addEventListener("click", () => {
         updateCartQuantity(item.productId, item.quantity + 1);
         render();
@@ -81,6 +88,10 @@
       stepper.appendChild(decrementBtn);
       stepper.appendChild(qtyLabel);
       stepper.appendChild(incrementBtn);
+
+      const lineTotal = document.createElement("span");
+      lineTotal.className = "w-24 text-right text-sm font-bold text-ink";
+      lineTotal.textContent = formatCurrency(item.price * item.quantity);
 
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
@@ -94,10 +105,11 @@
       });
 
       controls.appendChild(stepper);
+      controls.appendChild(lineTotal);
       controls.appendChild(removeBtn);
-      li.appendChild(info);
-      li.appendChild(controls);
-      itemsEl.appendChild(li);
+      row.appendChild(info);
+      row.appendChild(controls);
+      itemsEl.appendChild(row);
     }
 
     totalEl.textContent = formatCurrency(total);

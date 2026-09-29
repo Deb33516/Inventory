@@ -1,152 +1,224 @@
 ---
+// Matches the Claude Design canvas's Inventory Staff artboard
+// (project/Staff.dc.html, board "Staff warehouse tasks", page id "staff")
+// as closely as technically possible. Four design sections have no backing
+// data model yet and are rendered as honest, non-fabricated empty/deferred
+// states rather than invented numbers — see the inline notes below and the
+// implementation report for the full real-vs-deferred breakdown.
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import KpiCard from "../../components/dashboard/KpiCard.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
+import Button from "../../components/ui/Button.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
 import AppShell from "../../components/layout/AppShell.astro";
 import { CHART_COLORS } from "../../lib/chartTheme";
+import { staffSidebarNav, STAFF_ICONS } from "../../lib/staffNav";
 
-const url = Astro.url;
-const range = resolveDashboardRange(url.searchParams.get("range"));
+const userId = Astro.locals.user!.id;
 
-const { count: totalActive } = await Astro.locals.supabase
-  .from("products")
-  .select("id", { count: "exact", head: true })
-  .eq("is_active", true);
-
+// --- Real: low stock (existing calc, unchanged from the prior dashboard) ---
 const { data: inventoryRows } = await Astro.locals.supabase
   .from("inventory")
   .select("quantity_on_hand, reorder_level, products!inner(is_active)")
   .eq("products.is_active", true);
 
 const rows = inventoryRows ?? [];
-const lowStockCount = rows.filter(
-  (r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level
-).length;
-const outOfStockCount = rows.filter((r) => r.quantity_on_hand <= 0).length;
+const lowStockCount = rows.filter((r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level).length;
 
-const [{ data: inventoryValueRow }, { data: movementSummary }, { data: topProducts }] = await Promise.all([
-  Astro.locals.supabase.from("inventory_value_summary").select("inventory_value").maybeSingle(),
-  Astro.locals.supabase.rpc("dashboard_inventory_movement_summary", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
-]);
+// --- Real: my open support tickets ---
+const { data: myTickets } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("status")
+  .eq("assigned_to", userId);
+const openTicketCount = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
 
-const inventoryValue = Number(inventoryValueRow?.inventory_value ?? 0);
-const movementRows = movementSummary ?? [];
-const productRows = topProducts ?? [];
+// --- Real: stock movements, last 7 days, bucketed by IST calendar day into
+// in (positive quantity_delta) vs out (negative) — the design shows this
+// exact shape, but the existing dashboard_inventory_movement_summary RPC
+// only totals by movement_type over a range, not per day, so the raw rows
+// are fetched (same RLS-covered table already used by /inventory/movements)
+// and bucketed here rather than adding a new RPC/migration for this alone.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+function istDayKey(iso: string) {
+  return new Date(new Date(iso).getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
 
-const formatCurrency = (value: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const range = resolveDashboardRange("7d");
+const { data: movementRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("quantity_delta, created_at")
+  .gte("created_at", range.from!)
+  .lt("created_at", range.to!);
 
-const movementColors: Record<string, string> = {
-  restock: CHART_COLORS.success,
-  sale: CHART_COLORS.ink,
-  adjustment: CHART_COLORS.mute,
-  damaged: CHART_COLORS.error,
-  return: CHART_COLORS.warning,
-};
+const days = Array.from({ length: 7 }, (_, i) => {
+  const t = new Date(new Date(range.from!).getTime() + i * DAY_MS);
+  return {
+    key: istDayKey(t.toISOString()),
+    label: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "Asia/Kolkata" }).format(t),
+  };
+});
+
+const inByDay = new Map(days.map((d) => [d.key, 0]));
+const outByDay = new Map(days.map((d) => [d.key, 0]));
+for (const m of movementRows ?? []) {
+  const key = istDayKey(m.created_at);
+  if (m.quantity_delta > 0) inByDay.set(key, (inByDay.get(key) ?? 0) + m.quantity_delta);
+  else if (m.quantity_delta < 0) outByDay.set(key, (outByDay.get(key) ?? 0) + Math.abs(m.quantity_delta));
+}
+const totalIn = [...inByDay.values()].reduce((a, b) => a + b, 0);
+const totalOut = [...outByDay.values()].reduce((a, b) => a + b, 0);
+const hasMovementData = totalIn > 0 || totalOut > 0;
 ---
 
-<BaseLayout title="Inventory dashboard">
-  <AppShell active="dashboard">
-    <div class="flex items-center justify-between flex-wrap gap-md">
-      <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
-      <nav aria-label="Inventory sections" class="flex items-center gap-lg text-sm overflow-x-auto">
-        <a href="/inventory/stock" class="text-primary font-bold hover:underline whitespace-nowrap">Stock</a>
-        <a href="/inventory/movements" class="text-primary font-bold hover:underline whitespace-nowrap">Movements</a>
-        <a href="/inventory/suppliers" class="text-primary font-bold hover:underline whitespace-nowrap">Suppliers</a>
-        <a href="/inventory/products" class="text-primary font-bold hover:underline whitespace-nowrap">Products</a>
-        <a href="/inventory/categories" class="text-primary font-bold hover:underline whitespace-nowrap">Categories</a>
-      </nav>
+<BaseLayout title="Warehouse tasks — Inventory">
+  <AppShell
+    active="/inventory"
+    sidebarNav={staffSidebarNav(openTicketCount)}
+    sidebarBadge="INVENTORY"
+    breadcrumb={["Dashboard", "Warehouse tasks"]}
+    topbarSearch={{ placeholder: "Find product, SKU or bin…" }}
+    topbarActions={[{ label: "Report an issue", href: "/inventory/tickets" }]}
+    showNotifications
+  >
+    <Fragment slot="sidebar-widget">
+      <div class="mx-xs mb-md p-md rounded-xl bg-surface-soft border border-hairline">
+        <p class="text-xs text-muted">Shift</p>
+        <p class="mt-xxs text-sm font-bold text-ink">Not available yet</p>
+        <p class="mt-xxs text-xs text-muted">Shift scheduling isn't tracked in this system yet.</p>
+      </div>
+    </Fragment>
+
+    <div class="flex items-end justify-between flex-wrap gap-md">
+      <div>
+        <h1 class="text-2xl font-bold text-ink">Warehouse tasks</h1>
+        <p class="mt-xxs text-sm text-muted">{lowStockCount} product{lowStockCount === 1 ? "" : "s"} low on stock</p>
+      </div>
     </div>
 
-    <div class="mt-lg grid grid-cols-1 md:grid-cols-4 gap-lg">
-      <Card>
-        <p class="text-xs uppercase tracking-[0.5px] text-muted">Active products</p>
-        <p class="mt-xs text-3xl font-bold text-ink">{totalActive ?? 0}</p>
-      </Card>
-      <a href="/inventory/stock?status=low" class="block">
-        <Card class="hover:border-ink transition-colors">
-          <p class="text-xs uppercase tracking-[0.5px] text-muted">Low stock</p>
-          <p class="mt-xs text-3xl font-bold text-warning">{lowStockCount}</p>
-        </Card>
-      </a>
-      <a href="/inventory/stock?status=out" class="block">
-        <Card class="hover:border-ink transition-colors">
-          <p class="text-xs uppercase tracking-[0.5px] text-muted">Out of stock</p>
-          <p class="mt-xs text-3xl font-bold text-error">{outOfStockCount}</p>
-        </Card>
-      </a>
-      <Card>
-        <p class="text-xs uppercase tracking-[0.5px] text-muted">Inventory value</p>
-        <p class="mt-xs text-3xl font-bold text-ink">{formatCurrency(inventoryValue)}</p>
-        <p class="mt-xs text-xs text-muted">at retail price · current</p>
-      </Card>
+    <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-lg">
+      <KpiCard label="Restocks to receive" value="—" sublabel="Not tracked yet" icon={STAFF_ICONS.inbox} />
+      <KpiCard
+        label="Low stock"
+        value={String(lowStockCount)}
+        tone="warning"
+        href="/inventory/stock?status=low"
+        sublabel="View low stock"
+        icon={STAFF_ICONS.alert}
+      />
+      <KpiCard label="Damage to record" value="—" sublabel="Not tracked yet" icon={STAFF_ICONS.box} />
+      <KpiCard
+        label="My open tickets"
+        value={String(openTicketCount)}
+        href={openTicketCount > 0 ? "/inventory/tickets" : undefined}
+        sublabel={openTicketCount > 0 ? "View my tickets" : "No open tickets"}
+        icon={STAFF_ICONS.support}
+      />
     </div>
 
-    <div class="mt-xl flex items-center justify-between flex-wrap gap-md">
-      <h2 class="text-lg font-bold text-ink">Movement analytics</h2>
-      <DateRangeFilter current={range.preset} url={url} pathname="/inventory" />
-    </div>
-    <p class="mt-xs text-xs text-muted">{range.label}</p>
-
-    <div class="mt-md grid grid-cols-1 lg:grid-cols-2 gap-lg">
-      <Card>
-        <h3 class="text-sm font-bold text-ink">Movements by type</h3>
-        <div class="mt-sm">
-          {
-            movementRows.length > 0 ? (
-              <ChartCanvas
-                id="inventory-movements"
-                type="bar"
-                data={{
-                  labels: movementRows.map((r) => r.movement_type),
-                  datasets: [
-                    {
-                      label: "Units",
-                      data: movementRows.map((r) => Number(r.total_quantity)),
-                      backgroundColor: movementRows.map((r) => movementColors[r.movement_type] ?? CHART_COLORS.mute),
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No inventory movements in this range" message="Try another date range." />
-            )
-          }
+    <div class="mt-lg flex flex-col lg:flex-row gap-lg items-start">
+      <section class="w-full lg:w-[740px] shrink-0 bg-canvas border border-hairline rounded-xl shadow-sm">
+        <div class="flex items-center justify-between px-lg pt-lg pb-sm">
+          <h2 class="text-sm font-bold text-ink">My task queue</h2>
         </div>
-      </Card>
-
-      <Card>
-        <h3 class="text-sm font-bold text-ink">Top moving products (units)</h3>
-        <div class="mt-sm">
-          {
-            productRows.length > 0 ? (
-              <ChartCanvas
-                id="inventory-top-products"
-                type="bar"
-                data={{
-                  labels: productRows.map((r) => r.name),
-                  datasets: [
-                    {
-                      label: "Units sold",
-                      data: productRows.map((r) => Number(r.units_sold)),
-                      backgroundColor: CHART_COLORS.ink,
-                    },
-                  ],
-                }}
-                options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No product sales in this range" message="Try another date range." />
-            )
-          }
+        <div class="grid grid-cols-[100px_1fr_80px] sm:grid-cols-[120px_1fr_64px_80px] gap-sm px-lg h-9 items-center bg-surface-soft border-t border-b border-hairline text-xs font-bold text-muted uppercase tracking-[0.5px]">
+          <span>Task</span>
+          <span>Details</span>
+          <span class="hidden sm:inline">Due</span>
+          <span></span>
         </div>
-      </Card>
+        <EmptyState
+          class="m-lg"
+          title="No task queue yet"
+          message="Receiving, adjustments and damage are handled directly on their own pages until a unified queue exists."
+        />
+        <div class="flex flex-wrap gap-sm px-lg pb-lg">
+          <Button href="/inventory/stock" variant="secondary">Receiving</Button>
+          <Button href="/inventory/stock" variant="secondary">Stock adjustments</Button>
+          <Button href="/inventory/products" variant="secondary">Product lookup</Button>
+        </div>
+      </section>
+
+      <div class="flex-grow w-full flex flex-col gap-lg">
+        <Card>
+          <h2 class="text-sm font-bold text-ink">Scan to look up or receive</h2>
+          <p class="mt-xxs text-xs text-muted">Product barcode, SKU or name</p>
+          <label class="mt-md h-14 box-border px-md border-2 border-primary rounded-lg bg-surface-soft flex items-center gap-md text-muted">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M7 12h10" />
+            </svg>
+            <input
+              id="staff-lookup-input"
+              type="text"
+              aria-label="Scan barcode or type SKU"
+              placeholder="Scan barcode or type SKU"
+              class="border-0 outline-none bg-transparent text-base flex-grow text-ink"
+            />
+          </label>
+          <div class="mt-md">
+            <p class="text-xs font-bold text-muted">Recent scans</p>
+            <EmptyState class="mt-sm" title="No recent scans yet" message="Scan history isn't tracked in this system yet." />
+          </div>
+        </Card>
+
+        <Card>
+          <div class="flex items-start justify-between">
+            <div>
+              <h2 class="text-sm font-bold text-ink">Stock movements this week</h2>
+              <p class="mt-xxs text-xs text-muted">Units received vs sold · last 7 days</p>
+            </div>
+            <div class="flex flex-col gap-xxs text-xs text-muted">
+              <span class="flex items-center gap-xs"><span class="w-2 h-2 rounded-sm" style={`background:${CHART_COLORS.ink}`}></span>In {totalIn}</span>
+              <span class="flex items-center gap-xs"><span class="w-2 h-2 rounded-sm" style={`background:${CHART_COLORS.mute}`}></span>Out {totalOut}</span>
+            </div>
+          </div>
+          <div class="mt-sm">
+            {
+              hasMovementData ? (
+                <ChartCanvas
+                  id="staff-weekly-movements"
+                  type="bar"
+                  height={226}
+                  data={{
+                    labels: days.map((d) => d.label),
+                    datasets: [
+                      { label: "In", data: days.map((d) => inByDay.get(d.key) ?? 0), backgroundColor: CHART_COLORS.ink },
+                      { label: "Out", data: days.map((d) => outByDay.get(d.key) ?? 0), backgroundColor: CHART_COLORS.mute },
+                    ],
+                  }}
+                  options={{ plugins: { legend: { display: false } } }}
+                />
+              ) : (
+                <EmptyState title="No movements in the last 7 days" />
+              )
+            }
+          </div>
+        </Card>
+      </div>
     </div>
   </AppShell>
 </BaseLayout>
+
+<script>
+  // /inventory/stock has real, working ?search= filtering today;
+  // /inventory/products does not (confirmed by reading its source — it
+  // only handles ?created=/?updated=), so both search entry points here
+  // route to stock rather than silently doing nothing on products.
+  const input = document.querySelector<HTMLInputElement>("#staff-lookup-input");
+  input?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const value = input.value.trim();
+    if (!value) return;
+    window.location.href = `/inventory/stock?search=${encodeURIComponent(value)}`;
+  });
+
+  const topbarSearch = document.querySelector<HTMLInputElement>('input[aria-label="Search"]');
+  topbarSearch?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const value = topbarSearch.value.trim();
+    if (!value) return;
+    window.location.href = `/inventory/stock?search=${encodeURIComponent(value)}`;
+  });
+</script>

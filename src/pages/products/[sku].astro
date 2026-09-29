@@ -1,14 +1,33 @@
 ---
+// Matches the Claude Design canvas's Customer Product Detail artboard
+// (project/PageCustProductDetail.dc.html, imported by
+// CustProductDetail.dc.html). The design's Specifications grid (wattage,
+// size, colour temperature, warranty, pack size) has no backing columns —
+// products only has sku/name/description/price/category/image_url —
+// omitted entirely rather than fabricated; the real fields (SKU, category,
+// price) already appear elsewhere on this page.
+//
+// No stock badge / out-of-stock gating here (or anywhere customer-facing):
+// `inventory` RLS (0005_inventory.sql, inventory_select_staff) only grants
+// SELECT to sales_staff/inventory_staff/admin/super_admin — a customer or
+// anonymous visitor gets zero rows back, not an error, so this was
+// silently hiding "Add to cart" for every real shopper until caught by the
+// e2e suite. Showing customers their own live stock would need a new,
+// narrowly-scoped RLS policy (or a public-safe view exposing only
+// quantity_on_hand) — a real schema/RLS change, not made without your
+// sign-off, so this page stays as it was: Add to cart is always shown,
+// and place_order() remains the actual stock enforcement point.
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import AddToCartButton from "../../components/cart/AddToCartButton.astro";
 import PublicHeader from "../../components/layout/PublicHeader.astro";
+import ProductCard from "../../components/catalog/ProductCard.astro";
 
 const { sku } = Astro.params;
 
 const { data: product } = await Astro.locals.supabase
   .from("products")
-  .select("id, sku, name, description, price, image_url, categories(name)")
+  .select("id, sku, name, description, price, image_url, category_id, categories(name)")
   .eq("sku", sku)
   .eq("is_active", true)
   .maybeSingle();
@@ -16,6 +35,17 @@ const { data: product } = await Astro.locals.supabase
 if (!product) {
   Astro.response.status = 404;
 }
+
+const { data: relatedProducts } =
+  product && product.category_id
+    ? await Astro.locals.supabase
+        .from("products")
+        .select("id, sku, name, price, image_url, categories(name)")
+        .eq("category_id", product.category_id)
+        .eq("is_active", true)
+        .neq("id", product.id)
+        .limit(4)
+    : { data: null };
 
 const formattedPrice = product
   ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(product.price)
@@ -50,18 +80,75 @@ const formattedPrice = product
             {product.description && (
               <p class="mt-lg text-sm font-light text-body leading-relaxed">{product.description}</p>
             )}
-            <AddToCartButton
-              productId={product.id}
-              sku={product.sku}
-              name={product.name}
-              price={product.price}
-              class="mt-lg max-w-xs"
-            />
+            <div class="mt-lg flex flex-col sm:flex-row gap-sm max-w-md">
+              <AddToCartButton
+                productId={product.id}
+                sku={product.sku}
+                name={product.name}
+                price={product.price}
+                showStepper
+                class="flex-grow"
+              />
+              <a
+                id="buy-now-btn"
+                href="/checkout"
+                data-product-id={product.id}
+                data-sku={product.sku}
+                data-name={product.name}
+                data-price={product.price}
+                class="h-10 px-md inline-flex items-center justify-center border border-hairline-strong text-sm font-bold text-ink hover:border-ink"
+              >
+                Buy now
+              </a>
+            </div>
           </div>
         </div>
       ) : (
         <EmptyState class="mt-lg" title="Product not found" message="This product may be unavailable or no longer exists." />
       )
     }
+
+    {
+      relatedProducts && relatedProducts.length > 0 && (
+        <div class="mt-xxl">
+          <h2 class="text-lg font-bold text-ink mb-md">You may also need</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
+            {relatedProducts.map((r) => (
+              <ProductCard
+                productId={r.id}
+                sku={r.sku}
+                name={r.name}
+                price={r.price}
+                imageUrl={r.image_url}
+                categoryName={r.categories?.name}
+              />
+            ))}
+          </div>
+        </div>
+      )
+    }
   </main>
 </BaseLayout>
+
+<script>
+  import { addToCart } from "../../lib/cart";
+
+  const buyNowBtn = document.querySelector<HTMLAnchorElement>("#buy-now-btn");
+  buyNowBtn?.addEventListener("click", () => {
+    const productId = buyNowBtn.dataset.productId!;
+    const qtyEl = document.getElementById(`qty-${productId}`);
+    const quantity = Number(qtyEl?.dataset.qty ?? "1");
+
+    addToCart(
+      {
+        productId,
+        sku: buyNowBtn.dataset.sku!,
+        name: buyNowBtn.dataset.name!,
+        price: Number(buyNowBtn.dataset.price),
+      },
+      quantity
+    );
+    window.dispatchEvent(new CustomEvent("cart-updated"));
+    // Navigation to /checkout proceeds via the anchor's own href.
+  });
+</script>
