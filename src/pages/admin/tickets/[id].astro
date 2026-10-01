@@ -1,0 +1,955 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Ticket Detail
+// screen (project/AdminTicketDetail.dc.html -> NavSidebar role="admin"
+// active="Support tickets" + the shared NavTop.astro (section="Manage"
+// parent="Support tickets" page=<real ticket id, sliced>) + PageAdminTicket
+// -> this is the dedicated ADMIN ticket-detail artboard (thread + composer
+// on the left, Details/Status/Assignee/"Customer's other tickets" cards on
+// the right, header quick-actions "Mark resolved"/"Close ticket"). No
+// markup reused from Customer Support Ticket or Inventory Staff Support
+// Ticket (a genuinely different split-pane artboard, PageTickets.dc.html) —
+// this file owns its own full markup/CSS, same convention as every other
+// screen in this project.
+//
+// ROUTE: /admin/tickets/[id] (new this turn). /admin/tickets' rows now link
+// here (see that file's own updated header comment).
+//
+// SCHEMA REALITY vs THE DESIGN — support_tickets has exactly nine real
+// columns (id, created_by, assigned_to, subject, description, status,
+// resolution, created_at, updated_at, confirmed live). No
+// support_ticket_messages/attachments/category/order_id/SLA/assignment-
+// history/internal-notes table exists anywhere in this schema. Every
+// fabricated element the design shows for TK-1191 (a multi-turn customer/
+// staff/internal-note conversation, "Order issue" category, a related
+// order SO-10482, an assignee-reassignment dropdown, a company name +
+// "C-2041" customer code) was checked against the real schema and handled
+// as follows — never invented:
+//  - Conversation thread: replaced with the two pieces of real text this
+//    ticket actually has — the original report (ticket.description,
+//    always present) and, once set, the resolution notes
+//    (ticket.resolution) — same "real opening description + real
+//    resolution only when it exists" precedent already used on Inventory
+//    Staff's own ticket detail page. An honest banner discloses that no
+//    real message thread exists. The design's composer is reproduced
+//    visually (textarea + Attach + Send, same layout) but fully disabled
+//    with explanatory titles — never pretends a reply/attachment write
+//    path exists. The design's dual "Reply to customer"/"Internal note"
+//    tabs were dropped rather than reproduced-and-disabled: neither a
+//    message table nor an internal-notes table exists, so implying two
+//    distinct real capabilities would itself be a fabrication.
+//  - Category ("Order issue") and "Related order" (SO-10482): both fully
+//    omitted from the Details card — support_tickets has no category or
+//    order_id column at all, not even an untracked-but-real concept (unlike
+//    e.g. a physical bin location), so there is nothing honest to display
+//    even as "—". Same "wholly nonexistent concept -> full omission"
+//    precedent already used for Category on Admin Products/Product Info.
+//  - Company name ("Meera Traders") + customer code ("C-2041"): customers
+//    has no company/name/code column (confirmed against
+//    0002_profiles_customers.sql — id, profile_id, billing_address,
+//    shipping_address, notes, marketing_opt_in only). The requester is
+//    shown by their real profiles.full_name only, with the same real
+//    Customer vs "Internal · {name}" distinction already used on the
+//    ticket queue, never a fabricated company/code.
+//  - Assignment control: inspected updateSupportTicket (src/actions/
+//    index.ts) before building anything — it only ever writes
+//    status/resolution, never assigned_to, even though
+//    support_tickets_update_admin's RLS would technically permit admin to
+//    write assigned_to via a raw table update. No Action/RPC exists that
+//    does so. Per your explicit fallback ("display the real assignee, omit
+//    or disable the assignment control honestly"), the Assignee card is
+//    real but non-interactive — shows the real assignee name + role or
+//    "Unassigned", with an honest disabled-control affordance and a title
+//    explaining why, matching the same disabled-control convention used
+//    for the "+ Category" facet on the ticket queue. No STOP was needed —
+//    your own instructions supply this exact honest fallback.
+//  - "Customer's other tickets": real and functional — other real
+//    support_tickets rows sharing this ticket's real created_by, each
+//    linking to this same new /admin/tickets/[id] route (a real link to a
+//    screen that now exists, not a forward reference to an unbuilt one).
+//
+// FUNCTIONALITY — the one real mutation path: reuses updateSupportTicket
+// exactly as shipped (status + resolution only). The Status card's real
+// <select> (all 5 real ticket_status values) + resolution textarea + Save
+// button submit it directly. The header's "Mark resolved"/"Close ticket"
+// quick-actions are not a second system — they set the same select's value
+// and submit the same one form/action (hidden once their target status is
+// already current, so there's no redundant no-op button). Same
+// submit/redirect-with-?updated=1/banner pattern already used on the
+// Inventory Staff ticket page, reproduced here (not copy-pasted — this
+// file's markup/CSS is entirely its own).
+//
+// PRESERVED UNCHANGED: support_tickets schema/RLS, Customer Support,
+// Customer Support Ticket, Inventory Staff Support (its own
+// updateSupportTicket usage untouched), every other already-approved Admin
+// screen. Admin Team/Reports/Settings not implemented.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+const { id } = Astro.params;
+const url = Astro.url;
+const updated = url.searchParams.get("updated");
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+// --- Real ticket (support_tickets_select_admin — unscoped, admin/super_admin see every ticket) ---
+const { data: ticket } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("id, subject, description, status, resolution, created_by, assigned_to, created_at, updated_at")
+  .eq("id", id)
+  .maybeSingle();
+
+if (!ticket) {
+  Astro.response.status = 404;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  waiting: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+const STATUS_TONE: Record<string, "outline" | "info" | "warn" | "success" | "muted"> = {
+  open: "outline",
+  in_progress: "info",
+  waiting: "warn",
+  resolved: "success",
+  closed: "muted",
+};
+const ALL_STATUSES = ["open", "in_progress", "waiting", "resolved", "closed"] as const;
+const ROLE_LABEL: Record<string, string> = {
+  customer: "Customer",
+  sales_staff: "Sales staff",
+  inventory_staff: "Inventory staff",
+  admin: "Admin",
+  super_admin: "Super admin",
+};
+
+// --- Real requester/assignee profiles ---
+const relevantProfileIds = ticket ? [...new Set([ticket.created_by, ticket.assigned_to].filter((v): v is string => Boolean(v)))] : [];
+const { data: profileRows } =
+  relevantProfileIds.length > 0 ? await Astro.locals.supabase.from("profiles").select("id, full_name, role").in("id", relevantProfileIds) : { data: [] };
+const profileById = new Map((profileRows ?? []).map((p) => [p.id, { name: p.full_name ?? "Unnamed", role: p.role as string }]));
+
+const creator = ticket ? profileById.get(ticket.created_by) : undefined;
+const isInternalCreator = creator ? creator.role !== "customer" : false;
+const requesterName = creator?.name ?? "—";
+const requesterRoleLabel = creator ? (ROLE_LABEL[creator.role] ?? creator.role) : "—";
+const assigneeProfile = ticket?.assigned_to ? profileById.get(ticket.assigned_to) : undefined;
+
+// --- Real "other tickets from this requester" (support_tickets_select_admin — unscoped) ---
+const { data: otherTicketRows } = ticket
+  ? await Astro.locals.supabase
+      .from("support_tickets")
+      .select("id, subject, status, updated_at")
+      .eq("created_by", ticket.created_by)
+      .neq("id", ticket.id)
+      .order("updated_at", { ascending: false })
+      .limit(5)
+  : { data: [] };
+const otherTickets = otherTicketRows ?? [];
+
+function initials(name: string): string {
+  const parts = name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase());
+  return parts.length > 0 ? parts.join("") : "—";
+}
+function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+---
+
+<BaseLayout title={ticket ? `${ticket.subject} — Support` : "Ticket not found — Support"}>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Support tickets" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Manage" parent="Support tickets" page={ticket ? ticket.id.slice(0, 8) : "Not found"} />
+
+      <main id="main-content" class="tkd__main">
+        {
+          ticket ? (
+            <Fragment>
+              <a href="/admin/tickets" class="tkd__back">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+                Support tickets
+              </a>
+
+              {updated && (
+                <p class="tkd__banner" role="status">
+                  Ticket updated.
+                </p>
+              )}
+
+              <div class="tkd__title-row">
+                <div class="tkd__title-col">
+                  <div class="tkd__title-top">
+                    <h1>{ticket.subject}</h1>
+                    <span class={`tk__pill tk__pill--${STATUS_TONE[ticket.status] ?? "muted"}`}>{STATUS_LABEL[ticket.status] ?? ticket.status}</span>
+                  </div>
+                  <span class="tkd__meta">
+                    {ticket.id.slice(0, 8)} · {isInternalCreator ? `Internal · ${requesterName}` : requesterName} · opened {fmtDateTime(ticket.created_at as string)}
+                  </span>
+                </div>
+                <div class="tkd__quick-actions">
+                  {ticket.status !== "resolved" && ticket.status !== "closed" && (
+                    <button type="button" id="tkd-quick-resolve" class="tk__btn">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+                      Mark resolved
+                    </button>
+                  )}
+                  {ticket.status !== "closed" && (
+                    <button type="button" id="tkd-quick-close" class="tk__btn">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                      Close ticket
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div class="tkd__body">
+                <section aria-label="Ticket thread" class="tkd__thread-panel">
+                  <div class="tkd__thread-scroll">
+                    <article class="tkd__msg">
+                      <span class="tkd__avatar">{initials(requesterName)}</span>
+                      <div class="tkd__msg-body">
+                        <div class="tkd__msg-head">
+                          <span class="tkd__msg-name">{requesterName}</span>
+                          <span class="tkd__msg-role">{isInternalCreator ? `Internal · ${requesterRoleLabel}` : "Customer"}</span>
+                          <span class="tkd__msg-time">{fmtDateTime(ticket.created_at as string)}</span>
+                        </div>
+                        <p class="tkd__msg-text">{ticket.description}</p>
+                      </div>
+                    </article>
+                    {ticket.resolution && (
+                      <article class="tkd__msg tkd__msg--resolution">
+                        <span class="tkd__avatar tkd__avatar--resolution">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                        </span>
+                        <div class="tkd__msg-body">
+                          <div class="tkd__msg-head">
+                            <span class="tkd__msg-name">Resolution notes</span>
+                            <span class="tkd__msg-time">{fmtDateTime(ticket.updated_at as string)}</span>
+                          </div>
+                          <p class="tkd__msg-text">{ticket.resolution}</p>
+                        </div>
+                      </article>
+                    )}
+                  </div>
+                  <div class="tkd__thread-banner">There’s no message thread in this system yet — Status on the right is the real way to update this ticket.</div>
+                  <div class="tkd__composer" aria-disabled="true">
+                    <textarea disabled placeholder="Replying isn’t available in this system yet" />
+                    <div class="tkd__composer-actions">
+                      <button type="button" class="tk__btn" disabled title="Attachments aren’t available in this system yet">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5" /></svg>
+                        Attach
+                      </button>
+                      <div class="tkd__spacer" />
+                      <button type="button" class="tk__btn tk__btn--primary" disabled title="Replying isn’t available in this system yet">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12 20 4l-6 16-3-7z" /></svg>
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="tkd__side">
+                  <section aria-label="Details" class="tkd__card">
+                    <h2>Details</h2>
+                    <div class="tkd__requester-row">
+                      <span class="tkd__avatar">{initials(requesterName)}</span>
+                      <span class="tkd__requester-col">
+                        <span class="tkd__requester-name">{requesterName}</span>
+                        <span class="tkd__requester-role">{isInternalCreator ? `Internal · ${requesterRoleLabel}` : "Customer"}</span>
+                      </span>
+                    </div>
+                    <div class="tkd__kv">
+                      <span>Created</span>
+                      <span>{fmtDateTime(ticket.created_at as string)}</span>
+                    </div>
+                    <div class="tkd__kv">
+                      <span>Updated</span>
+                      <span>{fmtDateTime(ticket.updated_at as string)}</span>
+                    </div>
+                  </section>
+
+                  <section aria-label="Status" class="tkd__card">
+                    <h2>Status</h2>
+                    <form id="tkd-update-form" class="tkd__update-form">
+                      <input type="hidden" name="ticketId" value={ticket.id} />
+                      <select id="tkd-status" name="status" aria-label="Status">
+                        {ALL_STATUSES.map((s) => (
+                          <option value={s} selected={ticket.status === s}>{STATUS_LABEL[s]}</option>
+                        ))}
+                      </select>
+                      <textarea id="tkd-resolution" name="resolution" class="tkd__resolution" aria-label="Resolution notes" placeholder="Resolution notes (visible to the requester)">{ticket.resolution ?? ""}</textarea>
+                      <p id="tkd-form-message" class="tkd__form-message" role="status" />
+                      <button type="submit" class="tk__btn tk__btn--primary">Save</button>
+                    </form>
+                  </section>
+
+                  <section aria-label="Assignee" class="tkd__card">
+                    <h2>Assignee</h2>
+                    <div class="tkd__assignee-row" title="Assigning tickets isn’t available in this system yet">
+                      {assigneeProfile ? (
+                        <Fragment>
+                          <span class="tkd__avatar">{initials(assigneeProfile.name)}</span>
+                          <span class="tkd__requester-col">
+                            <span class="tkd__requester-name">{assigneeProfile.name}</span>
+                            <span class="tkd__requester-role">{ROLE_LABEL[assigneeProfile.role] ?? assigneeProfile.role}</span>
+                          </span>
+                        </Fragment>
+                      ) : (
+                        <span class="tkd__muted">Unassigned</span>
+                      )}
+                    </div>
+                    <span class="tkd__hint">Assigning tickets isn’t available in this system yet.</span>
+                  </section>
+
+                  <section aria-label="Requester's other tickets" class="tkd__card">
+                    <h2>{isInternalCreator ? "Other tickets from this requester" : "Customer’s other tickets"}</h2>
+                    {otherTickets.length > 0 ? (
+                      otherTickets.map((o) => (
+                        <a href={`/admin/tickets/${o.id}`} class="tkd__other-row">
+                          <span class="tkd__other-subject">{o.subject}</span>
+                          <span class={`tk__pill tk__pill--${STATUS_TONE[o.status as string] ?? "muted"}`}>{STATUS_LABEL[o.status as string] ?? o.status}</span>
+                        </a>
+                      ))
+                    ) : (
+                      <p class="tkd__muted tkd__muted--block">No other tickets from this requester.</p>
+                    )}
+                  </section>
+                </div>
+              </div>
+            </Fragment>
+          ) : (
+            <div class="tkd__empty">
+              <p class="tkd__empty-title">Ticket not found</p>
+              <p class="tkd__empty-body">It may have been removed, or the link may be wrong.</p>
+              <a href="/admin/tickets" class="tk__btn">Back to Support tickets</a>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .tkd__main {
+    flex-grow: 1;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (max-width: 640px) {
+    .tkd__main {
+      padding: 16px;
+    }
+  }
+
+  .tkd__back {
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+  }
+  .tkd__banner {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-success-fg);
+  }
+
+  .tkd__title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .tkd__title-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .tkd__title-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .tkd__title-top h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    overflow-wrap: anywhere;
+  }
+  .tkd__meta {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .tkd__quick-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .tk__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .tk__btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .tk__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+
+  .tk__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tk__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .tk__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .tk__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .tk__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .tk__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+
+  .tkd__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+  }
+  @media (min-width: 1050px) {
+    .tkd__body {
+      flex-direction: row;
+      align-items: flex-start;
+    }
+  }
+
+  .tkd__thread-panel {
+    flex-grow: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .tkd__thread-scroll {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--sd-shell);
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .tkd__msg {
+    box-sizing: border-box;
+    padding: 12px 14px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    display: flex;
+    gap: 12px;
+  }
+  .tkd__msg--resolution {
+    background: var(--sd-success-bg);
+    border-color: transparent;
+  }
+  .tkd__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tkd__avatar--resolution {
+    background: var(--sd-card);
+    color: var(--sd-success-fg);
+  }
+  .tkd__msg-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tkd__msg-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tkd__msg-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .tkd__msg-role {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .tkd__msg-time {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .tkd__msg-text {
+    margin: 0;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--sd-fg);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .tkd__thread-banner {
+    box-sizing: border-box;
+    padding: 0 16px;
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    background: var(--sd-muted);
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .tkd__composer {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .tkd__composer textarea {
+    height: 56px;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    resize: none;
+  }
+  .tkd__composer textarea:disabled {
+    color: var(--sd-muted-fg);
+    cursor: not-allowed;
+  }
+  .tkd__composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tkd__spacer {
+    flex-grow: 1;
+  }
+
+  .tkd__side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1050px) {
+    .tkd__side {
+      width: 320px;
+      flex-shrink: 0;
+    }
+  }
+  .tkd__card {
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .tkd__card h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .tkd__requester-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tkd__requester-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .tkd__requester-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tkd__requester-role {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .tkd__kv {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+  }
+  .tkd__kv span:first-child {
+    color: var(--sd-muted-fg);
+  }
+  .tkd__kv span:last-child {
+    color: var(--sd-fg2);
+  }
+
+  .tkd__update-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .tkd__update-form select {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .tkd__resolution {
+    height: 72px;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+    resize: vertical;
+  }
+  .tkd__form-message {
+    margin: 0;
+    font-size: 12px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+  .tkd__update-form .tk__btn--primary {
+    align-self: flex-end;
+  }
+
+  .tkd__assignee-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    cursor: not-allowed;
+  }
+  .tkd__hint {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--sd-muted-fg);
+  }
+  .tkd__muted {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .tkd__muted--block {
+    margin: 0;
+  }
+
+  .tkd__other-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 0;
+    border-top: 1px solid var(--sd-border);
+    text-decoration: none;
+    color: var(--sd-fg);
+  }
+  .tkd__other-row:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .tkd__other-subject {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tkd__empty {
+    padding: 48px 24px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .tkd__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .tkd__empty-body {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const form = document.querySelector<HTMLFormElement>("#tkd-update-form");
+  const statusSelect = document.querySelector<HTMLSelectElement>("#tkd-status");
+  const messageEl = document.querySelector<HTMLParagraphElement>("#tkd-form-message");
+
+  async function submitUpdate() {
+    if (!form || !messageEl) return;
+    const submitBtn = form.querySelector<HTMLButtonElement>("button[type=submit]");
+    if (submitBtn) submitBtn.disabled = true;
+    messageEl.textContent = "";
+    const { error } = await actions.updateSupportTicket(new FormData(form));
+    if (error) {
+      if (submitBtn) submitBtn.disabled = false;
+      messageEl.textContent = error.message;
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("updated", "1");
+    window.location.href = url.toString();
+  }
+
+  form?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitUpdate();
+  });
+
+  document.getElementById("tkd-quick-resolve")?.addEventListener("click", () => {
+    if (statusSelect) statusSelect.value = "resolved";
+    submitUpdate();
+  });
+  document.getElementById("tkd-quick-close")?.addEventListener("click", () => {
+    if (statusSelect) statusSelect.value = "closed";
+    submitUpdate();
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

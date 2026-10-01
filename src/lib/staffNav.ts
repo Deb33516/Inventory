@@ -15,12 +15,13 @@ export const STAFF_ICONS = {
   box: "M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9",
 };
 
-// Receiving and Stock adjustments both point at /inventory/stock — the
-// design's separate queue pages for each don't exist yet (out of scope,
-// per the approved plan); the real actions they'd lead to already live on
-// that page, per product. openTicketCount is the caller's real, live count
-// of tickets assigned to them that aren't resolved/closed — never a
-// fabricated number; the badge is omitted entirely when it's 0.
+// Receiving and Stock adjustments now have their own real, approved screens
+// (/inventory/receiving, /inventory/adjustments) — both links were left
+// pointing at the old /inventory/stock placeholder when each screen shipped
+// and are corrected here (same fix pattern, applied again). openTicketCount
+// is the caller's real, live count of tickets assigned to them that aren't
+// resolved/closed — never a fabricated number; the badge is omitted
+// entirely when it's 0.
 export function staffSidebarNav(openTicketCount: number): SidebarNavGroup[] {
   return [
     {
@@ -29,8 +30,8 @@ export function staffSidebarNav(openTicketCount: number): SidebarNavGroup[] {
     {
       heading: "Inventory",
       items: [
-        { label: "Receiving", href: "/inventory/stock", icon: STAFF_ICONS.inbox },
-        { label: "Stock adjustments", href: "/inventory/stock", icon: STAFF_ICONS.sliders },
+        { label: "Receiving", href: "/inventory/receiving", icon: STAFF_ICONS.inbox },
+        { label: "Stock adjustments", href: "/inventory/adjustments", icon: STAFF_ICONS.sliders },
         { label: "Product lookup", href: "/inventory/products", icon: STAFF_ICONS.search },
       ],
     },

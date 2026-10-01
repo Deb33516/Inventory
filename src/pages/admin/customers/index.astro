@@ -1,0 +1,1015 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Customers screen
+// (project/AdminCustomers.dc.html -> NavSidebar role="admin" + NavTop +
+// PageCustomers role="admin") — reuses the approved Admin shell
+// (NavSidebar.astro role="admin", unchanged) and, per the artboard's own
+// composition, the plain shared NavTop.astro (NOT AdminNavTop.astro) —
+// unlike Admin.dc.html (Dashboard), AdminCustomers.dc.html imports the
+// exact same "NavTop" component Sales/Inventory Staff screens already use
+// (section="Sales" page="Customers"), confirming only the Dashboard itself
+// has its own distinct inline header; every other Admin screen reuses the
+// plain NavTop. Admin Dashboard itself is untouched this turn.
+//
+// SCHEMA REALITY vs THE DESIGN — this is the central finding of this
+// screen: PageCustomers.dc.html's role="admin" branch is built around a
+// B2B dealer-network model (companies/accounts, segments like Dealer/
+// Retail/Contractor, per-account "owner" sales-rep assignment, account
+// codes, tags, lifetime revenue in ₹ lakh). This schema has NONE of that —
+// customers here are individual people (Supabase Auth signups via
+// handle_new_user()), not company accounts. There is no companies table,
+// no segment/account-code/tag column anywhere, and orders.placed_by
+// records which STAFF member placed an order, not which customer "owns"
+// which rep. Per your explicit no-fabrication rules, every one of those
+// B2B-only elements is omitted below, not invented — which is also why
+// this page ends up sharing most of its real column set with the already-
+// approved /crm/customers ("Contacts") screen: both are drawing on the
+// exact same real, individual-customer data, just with admin-appropriate
+// framing/stats where a genuine admin-specific real metric exists.
+// /crm/customers itself is NOT reused or linked to from here (that would
+// land an admin on a Sales-badged screen — the same "wrong role's shell"
+// class of bug already found and fixed on Inventory Staff's ticket
+// screens) — this is a new, separate, self-contained page.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: customer name (profiles.full_name), phone (profiles.phone),
+//    email (customer_contact_email() RPC — same real staff-only lookup
+//    /crm/customers and the account pages already use), last order date
+//    and all-time order count (customer_metrics, unchanged), real name
+//    search + New/Returning classification filter + name/spend/recent
+//    sort + pagination (same real query pattern already proven on
+//    /crm/customers), a real inline preview panel (phone/email/shipping
+//    address/lifetime spend/order count/first+last order date/3 most
+//    recent real orders) for whichever customer is selected via a real
+//    ?preview= query param — no separate customer-detail route exists or
+//    is being added (the design itself has no separate detail screen
+//    either — PageCustomers.dc.html's preview panel IS the full "detail"
+//    experience; "Customer Detail" isn't one of the 13 named Admin
+//    screens for this project either).
+//  - Stat strip — the design's own admin stats ("Accounts", "Revenue ·
+//    September", "Ordered this quarter", "No order in 90 days") are
+//    already store-wide, real-shaped concepts, not B2B-specific, so all
+//    four are reproduced for real: total customer count; store-wide
+//    revenue this calendar month (same real dashboard_revenue_trend RPC +
+//    IST month-boundary technique Admin Dashboard already uses, labeled
+//    "Revenue this month" — store-wide, not personal); distinct customers
+//    with a real order in the current IST calendar quarter; customers
+//    with no real order in 90+ real days (customer_metrics.last_order_at
+//    null or older — identical logic already proven on /crm/customers).
+//  - "Company"/"Segment"/"City"/"Owner" columns, account-manager initials,
+//    "Dealer"/"Active"/"C-2041" preview badges, "Tags"
+//    (Wholesale/Lighting/Key account), "Open account" preview button: no
+//    backing anywhere in this schema (no company/segment/account-code/
+//    tag/account-manager-assignment concept exists) — all omitted
+//    entirely, never invented.
+//  - "Orders this year" column header: shown as "Orders" — customer_
+//    metrics.order_count is all-time, not calendar-year-scoped (same
+//    honest relabel already used on /crm/customers).
+//  - Header "Import"/"New customer" buttons and per-row "..." actions
+//    menu: no real bulk-import, no real "admin creates a customer"
+//    capability (customers only ever arrive via their own real signup),
+//    no real per-customer admin action (delete/deactivate/reassign/tag)
+//    exists — all omitted rather than shown as dead controls, per your
+//    explicit "do not invent deletion/deactivation/tagging/bulk import"
+//    instruction.
+//  - Preview panel's "New order"/per-row "New order" button: intentionally
+//    NOT reused from /crm/customers here. Admin's own New Order screen
+//    isn't built yet this turn, and the only real order-creation route
+//    that exists (/sales/orders/new) is Sales-badged — sending an admin
+//    there would be the exact shell-mismatch problem noted above. Kept
+//    only the real "Call" action (a plain tel: link, shown only when a
+//    phone number exists) since it invents nothing and needs no
+//    destination screen.
+//  - "View" grid/list toggle: no view-mode capability — omitted (same
+//    precedent as every other staff/admin table screen).
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { OrderStatus } from "../../../lib/types";
+
+const PAGE_SIZE = 10;
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const type = url.searchParams.get("type") ?? "";
+const sort = url.searchParams.get("sort") ?? "name";
+const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+const previewParam = url.searchParams.get("preview") ?? "";
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+// --- Real filtered/sorted/paginated customer list (same pattern already proven on /crm/customers) ---
+let profileQuery = Astro.locals.supabase.from("profiles").select("id, full_name, phone, created_at").eq("role", "customer");
+if (search) profileQuery = profileQuery.ilike("full_name", `%${search}%`);
+const { data: profiles } = await profileQuery;
+
+const { data: metricsRows } = await Astro.locals.supabase
+  .from("customer_metrics")
+  .select("profile_id, order_count, lifetime_spend, first_order_at, last_order_at");
+const metricsByProfile = new Map((metricsRows ?? []).map((m) => [m.profile_id, m]));
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
+};
+const formatDate = (value: string | null) => (value ? new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
+const formatYear = (value: string | null) => (value ? new Date(value).getFullYear() : "—");
+
+let customers = (profiles ?? []).map((p) => {
+  const m = metricsByProfile.get(p.id);
+  const orderCount = m?.order_count ?? 0;
+  return {
+    id: p.id,
+    fullName: p.full_name ?? "Unnamed customer",
+    phone: p.phone ?? null,
+    createdAt: p.created_at,
+    orderCount,
+    lifetimeSpend: m?.lifetime_spend ?? 0,
+    firstOrderAt: m?.first_order_at ?? null,
+    lastOrderAt: m?.last_order_at ?? null,
+    classification: orderCount <= 1 ? "new" : "returning",
+  };
+});
+
+if (type) customers = customers.filter((c) => c.classification === type);
+
+type CustomerRow = (typeof customers)[number];
+const sortFns: Record<string, (a: CustomerRow, b: CustomerRow) => number> = {
+  name: (a, b) => a.fullName.localeCompare(b.fullName),
+  spend: (a, b) => b.lifetimeSpend - a.lifetimeSpend,
+  recent: (a, b) => (b.lastOrderAt ?? "").localeCompare(a.lastOrderAt ?? ""),
+};
+customers.sort(sortFns[sort] ?? sortFns.name);
+
+const totalFiltered = customers.length;
+const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
+const pageItems = customers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+// Real per-row email — same real customer_contact_email() RPC already used elsewhere.
+const emailByCustomerId = new Map<string, string | null>(
+  await Promise.all(
+    pageItems.map(async (c) => {
+      const { data } = await Astro.locals.supabase.rpc("customer_contact_email", { p_profile_id: c.id });
+      return [c.id, data ?? null] as const;
+    })
+  )
+);
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/admin/customers?${qs}` : "/admin/customers";
+}
+
+// --- Real, store-wide stat strip (independent of the current search/filter/page) ---
+// Same IST-anchoring technique dashboardRange.ts/Admin Dashboard already
+// use, generalized to month + quarter boundaries.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+function istBoundsUtc(year: number, month0: number, monthSpan: number): { from: Date; to: Date } {
+  const fromUtcMs = Date.UTC(year, month0, 1) - IST_OFFSET_MS;
+  const toUtcMs = Date.UTC(year, month0 + monthSpan, 1) - IST_OFFSET_MS;
+  return { from: new Date(fromUtcMs), to: new Date(toUtcMs) };
+}
+const nowIst = new Date(Date.now() + IST_OFFSET_MS);
+const curYear = nowIst.getUTCFullYear();
+const curMonth0 = nowIst.getUTCMonth();
+const thisMonth = istBoundsUtc(curYear, curMonth0, 1);
+const quarterStartMonth0 = Math.floor(curMonth0 / 3) * 3;
+const thisQuarter = istBoundsUtc(curYear, quarterStartMonth0, 3);
+const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+const { data: mtdRevenueRows } = await Astro.locals.supabase.rpc("dashboard_revenue_trend", {
+  p_from: thisMonth.from.toISOString(),
+  p_to: thisMonth.to.toISOString(),
+});
+const revenueThisMonth = ((mtdRevenueRows ?? []) as { revenue: number }[]).reduce((sum, r) => sum + Number(r.revenue), 0);
+
+const { data: quarterOrderRows } = await Astro.locals.supabase
+  .from("orders")
+  .select("customer_id")
+  .gte("created_at", thisQuarter.from.toISOString())
+  .lt("created_at", thisQuarter.to.toISOString());
+const orderedThisQuarterCount = new Set((quarterOrderRows ?? []).map((o) => o.customer_id)).size;
+
+const { data: allCustomerProfiles } = await Astro.locals.supabase.from("profiles").select("id").eq("role", "customer");
+const realTotalCustomers = allCustomerProfiles?.length ?? 0;
+
+const noOrderIn90Count = (metricsRows ?? []).filter(
+  (m) => m.last_order_at === null || new Date(m.last_order_at) < ninetyDaysAgo
+).length;
+
+const stats = [
+  { label: "Customers", value: String(realTotalCustomers), note: "" },
+  { label: "Revenue this month", value: formatCompact(revenueThisMonth), note: "store-wide" },
+  { label: "Ordered this quarter", value: String(orderedThisQuarterCount), note: realTotalCustomers > 0 ? `${Math.round((orderedThisQuarterCount / realTotalCustomers) * 100)}% of customers` : "" },
+  { label: "No order in 90+ days", value: String(noOrderIn90Count), note: "" },
+];
+
+// --- Real preview panel for the selected customer (default: first row shown) ---
+const previewId = previewParam || pageItems[0]?.id || "";
+let previewData: {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  lifetimeSpend: number;
+  orderCount: number;
+  firstOrderAt: string | null;
+  lastOrderAt: string | null;
+  recentOrders: { id: string; status: string; total: number; created_at: string }[];
+} | null = null;
+
+if (previewId) {
+  const rowMatch = pageItems.find((c) => c.id === previewId);
+  const { data: previewProfile } = await Astro.locals.supabase
+    .from("profiles")
+    .select("id, full_name, phone, created_at")
+    .eq("id", previewId)
+    .eq("role", "customer")
+    .maybeSingle();
+
+  if (previewProfile) {
+    const { data: previewCustomer } = await Astro.locals.supabase
+      .from("customers")
+      .select("shipping_address")
+      .eq("profile_id", previewId)
+      .maybeSingle();
+    const { data: previewMetrics } = await Astro.locals.supabase
+      .from("customer_metrics")
+      .select("order_count, lifetime_spend, first_order_at, last_order_at")
+      .eq("profile_id", previewId)
+      .maybeSingle();
+    const previewEmail = rowMatch ? (emailByCustomerId.get(previewId) ?? null) : (await Astro.locals.supabase.rpc("customer_contact_email", { p_profile_id: previewId })).data;
+    const { data: recentOrders } = await Astro.locals.supabase
+      .from("orders")
+      .select("id, status, total, created_at")
+      .eq("customer_id", previewId)
+      .order("created_at", { ascending: false })
+      .limit(3);
+
+    previewData = {
+      id: previewProfile.id,
+      fullName: previewProfile.full_name ?? "Unnamed customer",
+      phone: previewProfile.phone ?? null,
+      email: previewEmail ?? null,
+      address: (previewCustomer?.shipping_address as { formatted?: string } | null)?.formatted ?? null,
+      lifetimeSpend: previewMetrics?.lifetime_spend ?? 0,
+      orderCount: previewMetrics?.order_count ?? 0,
+      firstOrderAt: previewMetrics?.first_order_at ?? null,
+      lastOrderAt: previewMetrics?.last_order_at ?? null,
+      recentOrders: recentOrders ?? [],
+    };
+  }
+}
+
+const previewInitials = previewData
+  ? previewData.fullName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]!.toUpperCase())
+      .join("")
+  : "";
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+---
+
+<BaseLayout title="Customers — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Customers" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Sales" page="Customers" searchAction="/admin/customers" searchName="search" searchValue={search} searchPlaceholder="Filter by name…" />
+
+      <main id="main-content" class="adc__main">
+        <div class="adc__header">
+          <div class="adc__heading-col">
+            <h1>Customers</h1>
+            <span class="adc__meta">All customers · {totalFiltered} customer{totalFiltered === 1 ? "" : "s"}</span>
+          </div>
+        </div>
+
+        <div class="adc__stats">
+          {stats.map((s) => (
+            <div class="adc__stat-card">
+              <span class="adc__stat-label">{s.label}</span>
+              <div class="adc__stat-body">
+                <span class="adc__stat-value">{s.value}</span>
+                {s.note && <span class="adc__stat-note">{s.note}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div class="adc__toolbar">
+          <form method="get" class="adc__filter-form">
+            <input type="text" name="search" value={search} placeholder="Filter by name…" class="adc__filter-input" />
+            <select name="sort" class="adc__sort-select">
+              <option value="name" selected={sort === "name"}>Name</option>
+              <option value="spend" selected={sort === "spend"}>Lifetime spend</option>
+              <option value="recent" selected={sort === "recent"}>Most recent order</option>
+            </select>
+            {type && <input type="hidden" name="type" value={type} />}
+            <button type="submit" class="adc__filter-apply">Apply</button>
+          </form>
+          <a href={buildUrl({ type: undefined, page: undefined })} class={`adc__facet ${!type ? "is-active" : ""}`}>All</a>
+          <a href={buildUrl({ type: "new", page: undefined })} class={`adc__facet ${type === "new" ? "is-active" : ""}`}>New</a>
+          <a href={buildUrl({ type: "returning", page: undefined })} class={`adc__facet ${type === "returning" ? "is-active" : ""}`}>Returning</a>
+        </div>
+
+        <div class="adc__body">
+          <div class="adc__table-panel">
+            {pageItems.length > 0 ? (
+              <Fragment>
+                <div class="adc__grid adc__grid-head">
+                  <span>Name</span>
+                  <span>Phone</span>
+                  <span>Email</span>
+                  <span>Last order</span>
+                  <span class="adc__col-right">Orders</span>
+                </div>
+                {pageItems.map((c) => (
+                  <div class={`adc__grid adc__row ${c.id === previewId ? "is-selected" : ""}`}>
+                    <a href={buildUrl({ preview: c.id })} class="adc__name-cell">{c.fullName}</a>
+                    <span class="adc__muted-cell">{c.phone ?? "—"}</span>
+                    <span class="adc__muted-cell adc__ellipsis">{emailByCustomerId.get(c.id) ?? "—"}</span>
+                    <span class="adc__muted-cell">{formatDate(c.lastOrderAt)}</span>
+                    <span class="adc__col-right">{c.orderCount}</span>
+                  </div>
+                ))}
+                <div class="adc__panel-footer">
+                  <span class="adc__panel-footer-count">Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalFiltered)} of {totalFiltered} customers</span>
+                  <span class="adc__panel-footer-page">Page {page} of {totalPages}</span>
+                  <div class="adc__pager">
+                    <a href={page > 1 ? buildUrl({ page: String(page - 1) }) : undefined} aria-disabled={page <= 1} class="adc__pager-btn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                    </a>
+                    <a href={page < totalPages ? buildUrl({ page: String(page + 1) }) : undefined} aria-disabled={page >= totalPages} class="adc__pager-btn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+                    </a>
+                  </div>
+                </div>
+              </Fragment>
+            ) : (
+              <div class="adc__empty">
+                <p class="adc__empty-title">No customers found</p>
+                <p class="adc__empty-body">Try a different search or filter.</p>
+              </div>
+            )}
+          </div>
+
+          {previewData && (
+            <aside aria-label="Customer preview" class="adc__preview">
+              <div class="adc__preview-head">
+                <span class="adc__preview-avatar">{previewInitials}</span>
+                <div class="adc__preview-identity">
+                  <span class="adc__preview-name">{previewData.fullName}</span>
+                  <span class="adc__preview-sub">Customer since {formatYear(previewData.firstOrderAt)}</span>
+                </div>
+              </div>
+
+              <div class="adc__preview-section">
+                <span class="adc__preview-label">Contact</span>
+                <span class="adc__preview-row">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"></path></svg>
+                  {previewData.phone ?? "No phone on file"}
+                </span>
+                <span class="adc__preview-row">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18v12H3zM3 7l9 6 9-6"></path></svg>
+                  {previewData.email ?? "No email on file"}
+                </span>
+                {previewData.address && (
+                  <span class="adc__preview-row">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11zM10 10a2 2 0 1 0 4 0a2 2 0 1 0-4 0"></path></svg>
+                    {previewData.address}
+                  </span>
+                )}
+              </div>
+
+              <div class="adc__preview-section">
+                <div class="adc__preview-metric-head">
+                  <span class="adc__preview-label">Lifetime spend</span>
+                </div>
+                <span class="adc__preview-metric-value">{formatCompact(previewData.lifetimeSpend)}</span>
+                <span class="adc__preview-metric-sub">{previewData.orderCount} order{previewData.orderCount === 1 ? "" : "s"} · last order {formatDate(previewData.lastOrderAt)}</span>
+              </div>
+
+              {previewData.recentOrders.length > 0 && (
+                <div class="adc__preview-section">
+                  <span class="adc__preview-label">Recent orders</span>
+                  {previewData.recentOrders.map((o) => (
+                    <span class="adc__preview-order">
+                      <span class="adc__preview-order-id">{o.id.slice(0, 8)}</span>
+                      <span class="adc__preview-order-date">{formatDate(o.created_at)}</span>
+                      <span class="adc__preview-order-total">{formatCompact(o.total)}</span>
+                      <span class={`adc__pill adc__pill--${STATUS_TONE[o.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[o.status as OrderStatus] ?? o.status}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {previewData.phone && (
+                <div class="adc__preview-actions">
+                  <a href={`tel:${previewData.phone}`} class="adc__preview-secondary-btn">Call</a>
+                </div>
+              )}
+            </aside>
+          )}
+        </div>
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .adc__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .adc__main {
+      padding: 16px;
+    }
+  }
+
+  .adc__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .adc__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .adc__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .adc__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adc__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .adc__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .adc__stats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .adc__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .adc__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .adc__stat-body {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .adc__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .adc__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adc__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .adc__filter-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .adc__filter-input {
+    width: 220px;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+  }
+  .adc__sort-select {
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+  }
+  .adc__filter-apply {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    cursor: pointer;
+  }
+  .adc__facet {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+  }
+  .adc__facet.is-active {
+    border-style: solid;
+    background: var(--sd-muted);
+  }
+
+  .adc__body {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (max-width: 1100px) {
+    .adc__body {
+      flex-direction: column;
+    }
+  }
+
+  .adc__table-panel {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .adc__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 130px minmax(0, 1fr) 90px 80px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 660px;
+  }
+  .adc__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .adc__row {
+    height: 50px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .adc__row.is-selected {
+    background: var(--sd-muted);
+    box-shadow: inset 2px 0 0 var(--sd-primary);
+  }
+  .adc__name-cell {
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adc__muted-cell {
+    color: var(--sd-fg2);
+    font-size: 13px;
+  }
+  .adc__ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adc__col-right {
+    text-align: right;
+    color: var(--sd-fg2);
+  }
+  .adc__panel-footer {
+    min-width: 660px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .adc__panel-footer-count {
+    flex-grow: 1;
+  }
+  .adc__panel-footer-page {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .adc__pager {
+    display: flex;
+    gap: 4px;
+  }
+  .adc__pager-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+  .adc__pager-btn[aria-disabled="true"] {
+    pointer-events: none;
+    opacity: 0.4;
+  }
+
+  .adc__empty {
+    padding: 48px 24px;
+    text-align: center;
+  }
+  .adc__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .adc__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adc__preview {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  @media (min-width: 1100px) {
+    .adc__preview {
+      width: 300px;
+      flex-shrink: 0;
+    }
+  }
+  .adc__preview-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .adc__preview-avatar {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .adc__preview-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .adc__preview-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .adc__preview-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .adc__preview-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--sd-border);
+  }
+  .adc__preview-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .adc__preview-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--sd-fg2);
+  }
+  .adc__preview-metric-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .adc__preview-metric-value {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .adc__preview-metric-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .adc__preview-order {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-fg);
+    font-size: 13px;
+  }
+  .adc__preview-order-id {
+    font-weight: 500;
+    width: 72px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adc__preview-order-date {
+    color: var(--sd-muted-fg);
+    width: 44px;
+    flex-shrink: 0;
+  }
+  .adc__preview-order-total {
+    flex-grow: 1;
+    text-align: right;
+    font-weight: 500;
+  }
+  .adc__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .adc__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .adc__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .adc__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .adc__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .adc__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .adc__preview-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+  }
+  .adc__preview-secondary-btn {
+    flex: 1;
+    height: 34px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

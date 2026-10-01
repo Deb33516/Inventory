@@ -1,24 +1,47 @@
 ---
-// Matches the Claude Design canvas's Customer Support artboard
-// (project/PageCustSupport.dc.html, imported by CustSupport.dc.html).
-// Reuses the existing support_tickets table/RLS (support_tickets_select_
-// own_customer, support_tickets_insert_own) and createSupportTicket action
-// unchanged — this is the first customer-facing UI over that real module.
+// Literal recreation of the Claude Design canvas's Customer Support
+// artboard (project/PageCustSupport.dc.html, imported by
+// CustSupport.dc.html) — the supplied design is the visual source of
+// truth, not the app's existing DESIGN.md component system. Reuses the
+// same --cp-* token system and NavCustomer header already approved on My
+// Orders/Order Details/Cart/Checkout/Shop/Product Details/Customer
+// Portal. Card/Input/Textarea/Button/Badge/EmptyState are NOT reused
+// (their visual output doesn't match this artboard) — this page builds
+// its own markup over the same real, unchanged support_tickets table/RLS
+// (support_tickets_select_own_customer, support_tickets_insert_own) and
+// createSupportTicket action. This is only the ticket list + creation
+// screen — /account/support/[id] (ticket detail) is untouched, its own
+// future turn, same as My Orders before Order Details.
 //
-// Deviations from the design, all because the backend doesn't have the
-// field: no Category selector (no `category` column), no Related order
-// picker (no order-linking column on support_tickets — see [id].astro for
-// the fuller note), no photo attachments (no storage/attachment table).
-// The form only ever sends Subject + Description, matching the action's
-// actual input schema.
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Real ticket list (id, subject, status — full real 5-value
+//    ticket_status enum, matches the design's own example statuses
+//    exactly), real "Updated {date}", real tab counts (All/Open/
+//    Resolved, unchanged filter logic), real links to the existing
+//    ticket detail route, real ticket creation via createSupportTicket
+//    (subject + description — the action's actual input schema), real
+//    "?subject=" prefill (used by Order Details' "Raise a support
+//    ticket" link).
+//  - "Support desk online · Mon–Sat 9:00–19:00" badge: no support-desk-
+//    hours data anywhere — omitted.
+//  - "Tickets raised by Meera Traders" subtitle: no business-name
+//    concept — omitted.
+//  - Category selector, Related order picker, Photos upload: none of
+//    these have any backing column (support_tickets has no category,
+//    no order_id, and there's no storage/attachment table) — omitted
+//    entirely rather than shown as decorative/disabled controls, same
+//    call already made in this file before this pass. The form only
+//    ever sends Subject + Description, matching the action's real input
+//    schema.
+//  - "How support works" 3rd step ("Add follow-ups while it is open —
+//    reply with more details or photos until resolved"): support_tickets
+//    has no messages/replies table, so a customer cannot actually add a
+//    follow-up after creation — this step describes a capability that
+//    doesn't exist, so the existing, accurate 2-step copy is kept
+//    instead ("we update the ticket's status" / "the resolution is shown
+//    on the ticket").
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import Input from "../../../components/ui/Input.astro";
-import Textarea from "../../../components/ui/Textarea.astro";
-import Button from "../../../components/ui/Button.astro";
-import Badge from "../../../components/ui/Badge.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import PublicHeader from "../../../components/layout/PublicHeader.astro";
+import NavCustomer from "../../../components/customer/NavCustomer.astro";
 import type { TicketStatus } from "../../../lib/types";
 
 const userId = Astro.locals.user!.id;
@@ -42,103 +65,585 @@ const visibleTickets =
       ? tickets.filter((t) => ["resolved", "closed"].includes(t.status))
       : tickets;
 
-const statusTone: Record<TicketStatus, "success" | "warning" | "error" | "neutral"> = {
-  open: "neutral",
-  in_progress: "warning",
-  waiting: "warning",
+const STATUS_TONE: Record<TicketStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  open: "outline",
+  in_progress: "info",
+  waiting: "warn",
   resolved: "success",
-  closed: "neutral",
+  closed: "muted",
 };
-const statusLabel: Record<TicketStatus, string> = {
+const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
-  in_progress: "In progress",
+  in_progress: "In Progress",
   waiting: "Waiting",
   resolved: "Resolved",
   closed: "Closed",
 };
+
+const tabs = [
+  { key: "all", label: "All", count: tickets.length },
+  { key: "open", label: "Open", count: openCount },
+  { key: "resolved", label: "Resolved", count: resolvedCount },
+];
 ---
 
 <BaseLayout title="Support — Inventory">
-  <PublicHeader backHref="/account" backLabel="Account" />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Support</h1>
-    <p class="mt-xs text-sm text-muted">Raise a ticket and follow our replies in one place.</p>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-    <div class="mt-lg grid grid-cols-1 lg:grid-cols-[440px_1fr] gap-lg items-start">
-      <div class="space-y-lg">
-        <Card>
-          <div class="flex items-center justify-between flex-wrap gap-sm">
-            <h2 class="text-sm font-bold text-ink">My tickets</h2>
-            <div class="flex gap-xxs text-xs">
-              <a href="/account/support?filter=all" class={`px-sm py-xxs rounded-md ${filter === "all" ? "bg-surface-soft font-bold text-ink" : "text-muted"}`}>
-                All {tickets.length}
-              </a>
-              <a href="/account/support?filter=open" class={`px-sm py-xxs rounded-md ${filter === "open" ? "bg-surface-soft font-bold text-ink" : "text-muted"}`}>
-                Open {openCount}
-              </a>
-              <a href="/account/support?filter=resolved" class={`px-sm py-xxs rounded-md ${filter === "resolved" ? "bg-surface-soft font-bold text-ink" : "text-muted"}`}>
-                Resolved {resolvedCount}
-              </a>
-            </div>
-          </div>
+    <NavCustomer active="Support" />
 
-          <div class="mt-sm divide-y divide-hairline">
-            {
-              visibleTickets.length > 0 ? (
-                visibleTickets.map((t) => (
-                  <a href={`/account/support/${t.id}`} class="flex items-center gap-md py-sm">
-                    <div class="flex-grow min-w-0">
-                      <p class="text-sm font-bold text-ink truncate">{t.subject}</p>
-                      <p class="text-xs text-muted">Updated {new Date(t.updated_at).toLocaleDateString()}</p>
-                    </div>
-                    <Badge tone={statusTone[t.status as TicketStatus]}>{statusLabel[t.status as TicketStatus]}</Badge>
-                  </a>
-                ))
-              ) : (
-                <EmptyState class="my-sm" title="No tickets yet" message="Create one using the form." />
-              )
-            }
-          </div>
-        </Card>
-
-        <Card>
-          <h2 class="text-sm font-bold text-ink">How support works</h2>
-          <div class="mt-md space-y-md">
-            <div class="flex gap-sm">
-              <span class="w-6 h-6 rounded-full bg-surface-soft text-xs font-bold text-muted flex items-center justify-center shrink-0">1</span>
-              <div>
-                <p class="text-sm font-bold text-ink">We reply within the ticket</p>
-                <p class="text-xs text-muted">Our team updates the ticket's status as they work on it.</p>
-              </div>
-            </div>
-            <div class="flex gap-sm">
-              <span class="w-6 h-6 rounded-full bg-surface-soft text-xs font-bold text-muted flex items-center justify-center shrink-0">2</span>
-              <div>
-                <p class="text-sm font-bold text-ink">See the resolution here</p>
-                <p class="text-xs text-muted">Once resolved, the outcome is shown on the ticket.</p>
-              </div>
-            </div>
-          </div>
-        </Card>
+    <main id="main-content" class="cp__main">
+      <div class="sup__header">
+        <h1>Support</h1>
+        <span class="sup__meta">Raise a ticket and follow our replies in one place</span>
       </div>
 
-      <Card>
-        <h2 class="text-sm font-bold text-ink">Create a support ticket</h2>
-        <p class="mt-xxs text-xs text-muted">Tell us what went wrong.</p>
+      <div class="sup__layout">
+        <div class="sup__side">
+          <section aria-label="My tickets" class="sup__card">
+            <div class="sup__card-head">
+              <h2>My tickets</h2>
+              <div role="tablist" aria-label="Ticket filter" class="sup__tabs">
+                {
+                  tabs.map((t) => (
+                    <a href={`/account/support?filter=${t.key}`} role="tab" aria-selected={filter === t.key} class={filter === t.key ? "is-active" : ""}>
+                      {t.label} <span class="sup__tab-count">{t.count}</span>
+                    </a>
+                  ))
+                }
+              </div>
+            </div>
 
-        <form id="create-ticket-form" class="mt-lg space-y-md">
-          <Input label="Subject" name="subject" value={prefillSubject} placeholder="Short summary of the issue" required />
-          <Textarea label="Message" name="description" placeholder="Describe the problem…" rows={6} required />
-          <p id="form-message" class="text-sm" role="status" />
-          <Button type="submit" variant="primary">Submit ticket</Button>
+            {
+              visibleTickets.length > 0 ? (
+                <div class="sup__ticket-list">
+                  {visibleTickets.map((t) => (
+                    <a href={`/account/support/${t.id}`} class="sup__ticket-row">
+                      <span class="sup__ticket-body">
+                        <span class="sup__ticket-top">
+                          <span class="sup__ticket-id">{t.id.slice(0, 8)}</span>
+                          <span class={`sup__pill sup__pill--${STATUS_TONE[t.status as TicketStatus] ?? "muted"}`}>
+                            {STATUS_LABEL[t.status as TicketStatus] ?? t.status}
+                          </span>
+                        </span>
+                        <span class="sup__ticket-title">{t.subject}</span>
+                        <span class="sup__ticket-meta">Updated {new Date(t.updated_at).toLocaleDateString()}</span>
+                      </span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="sup__ticket-chevron"><path d="m9 18 6-6-6-6"></path></svg>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <p class="sup__empty">No tickets yet. Create one using the form.</p>
+              )
+            }
+          </section>
+
+          <section aria-label="How support works" class="sup__card">
+            <h2>How support works</h2>
+            <div class="sup__steps">
+              <div class="sup__step">
+                <span class="sup__step-num">1</span>
+                <span class="sup__step-body">
+                  <span class="sup__step-title">We reply within the ticket</span>
+                  <span class="sup__step-text">Our team updates the ticket's status as they work on it.</span>
+                </span>
+              </div>
+              <div class="sup__step">
+                <span class="sup__step-num">2</span>
+                <span class="sup__step-body">
+                  <span class="sup__step-title">See the resolution here</span>
+                  <span class="sup__step-text">Once resolved, the outcome is shown on the ticket.</span>
+                </span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <form aria-label="Create a support ticket" id="create-ticket-form" class="sup__form">
+          <div class="sup__form-head">
+            <h2>Create a support ticket</h2>
+            <span>Tell us what went wrong.</span>
+          </div>
+
+          <label class="sup__field">
+            <span>Subject</span>
+            <input type="text" name="subject" value={prefillSubject} placeholder="Short summary of the issue" required />
+          </label>
+
+          <label class="sup__field">
+            <span>Message</span>
+            <textarea name="description" rows="6" placeholder="Describe the problem…" required></textarea>
+          </label>
+
+          <div class="sup__form-footer">
+            <span class="sup__form-note">You will find the ticket and our replies under My tickets.</span>
+            <button type="reset" class="sup__cancel-btn">Cancel</button>
+            <button type="submit" class="sup__submit-btn">Submit ticket</button>
+          </div>
+          <p id="form-message" class="sup__form-message" role="status" />
         </form>
-      </Card>
-    </div>
-  </main>
+      </div>
+    </main>
+  </div>
 </BaseLayout>
 
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-warn-bg: #fef3e2;
+    --cp-warn-fg: #9a3412;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-success-bg: #ecfdf3;
+    --cp-success-fg: #15803d;
+    --cp-error-fg: #b91c1c;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-warn-bg: #2e1f0e;
+    --cp-warn-fg: #fdba74;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-success-bg: #0f2a1c;
+    --cp-success-fg: #4ade80;
+    --cp-error-fg: #f87171;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+
+  .sup__header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sup__header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .sup__meta {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+
+  .sup__layout {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1100px) {
+    .sup__layout {
+      flex-direction: row;
+    }
+  }
+
+  .sup__side {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .sup__side {
+      width: 500px;
+      flex-shrink: 0;
+    }
+  }
+
+  .sup__card {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sup__card h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sup__card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .sup__tabs {
+    display: inline-flex;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    gap: 2px;
+  }
+  .sup__tabs a {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .sup__tabs a.is-active {
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    box-shadow: var(--cp-shadow);
+  }
+  .sup__tab-count {
+    color: var(--cp-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .sup__tabs a.is-active .sup__tab-count {
+    color: var(--cp-muted-fg);
+  }
+
+  .sup__ticket-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .sup__ticket-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 0;
+    border-top: 1px solid var(--cp-border);
+    text-decoration: none;
+    color: var(--cp-fg);
+  }
+  .sup__ticket-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sup__ticket-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sup__ticket-id {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cp-muted-fg);
+  }
+  .sup__ticket-title {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sup__ticket-meta {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .sup__ticket-chevron {
+    flex-shrink: 0;
+    color: var(--cp-muted-fg);
+  }
+  .sup__empty {
+    margin: 0;
+    padding: 24px 0;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+    text-align: center;
+  }
+
+  .sup__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .sup__pill--outline {
+    border: 1px solid var(--cp-input);
+    color: var(--cp-fg);
+  }
+  .sup__pill--warn {
+    background: var(--cp-warn-bg);
+    color: var(--cp-warn-fg);
+  }
+  .sup__pill--info {
+    background: var(--cp-info-bg);
+    color: var(--cp-info-fg);
+  }
+  .sup__pill--success {
+    background: var(--cp-success-bg);
+    color: var(--cp-success-fg);
+  }
+  .sup__pill--muted {
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+  }
+
+  .sup__steps {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sup__step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .sup__step-num {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--cp-muted);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sup__step-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sup__step-title {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .sup__step-text {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .sup__form {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 24px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .sup__form-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sup__form-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sup__form-head span {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .sup__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sup__field span {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .sup__field input,
+  .sup__field textarea {
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--cp-fg);
+  }
+  .sup__field input {
+    height: 36px;
+  }
+  .sup__field textarea {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    line-height: 1.5;
+    resize: none;
+  }
+  .sup__form-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 16px;
+    border-top: 1px solid var(--cp-border);
+    flex-wrap: wrap;
+  }
+  .sup__form-note {
+    flex-grow: 1;
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .sup__cancel-btn {
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .sup__submit-btn {
+    height: 36px;
+    padding: 0 16px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .sup__submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .sup__form-message {
+    margin: 0;
+    min-height: 16px;
+    font-size: 13px;
+    color: var(--cp-error-fg);
+  }
+</style>
+
 <script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
   import { actions } from "astro:actions";
 
   const form = document.querySelector<HTMLFormElement>("#create-ticket-form")!;
@@ -149,14 +654,12 @@ const statusLabel: Record<TicketStatus, string> = {
     event.preventDefault();
     button.disabled = true;
     messageEl.textContent = "";
-    messageEl.classList.remove("text-error", "text-success");
 
     const { data, error } = await actions.createSupportTicket(new FormData(form));
 
     if (error) {
       button.disabled = false;
       messageEl.textContent = error.message;
-      messageEl.classList.add("text-error");
       return;
     }
 

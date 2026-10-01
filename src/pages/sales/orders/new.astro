@@ -1,31 +1,1111 @@
 ---
+// Literal recreation of the Claude Design canvas's Sales New Order screen
+// (project/SalesNewOrder.dc.html -> NavSidebar + NavTop + PageNewOrder
+// with role="sales") — the supplied design is the visual source of truth,
+// not the app's existing DESIGN.md/AppShell component system. Reuses the
+// same --sd-* token system + NavSidebar.astro/NavTop.astro already
+// established by the approved Sales screens. OrderForm.astro (the old
+// Tailwind-styled component) is NOT reused (its visual output doesn't
+// match this artboard) — this page builds fresh markup over the exact
+// same real, unmodified `placeOrder` Action (same input shape: customerId/
+// items/shippingAddress/paymentMethod/notes — same `place_order()` RPC,
+// same authorization, same validation, same success redirect target).
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: customer list (profiles where role="customer", the same set
+//    already approved on Contacts), real product list (active products,
+//    real SKU/name/price), real per-product stock (inventory.
+//    quantity_on_hand/reorder_level — sales_staff already has real RLS
+//    read access via inventory_select_staff, same tone convention already
+//    approved on the Sales Dashboard's stock panel: 0 = out, <=
+//    reorder_level = low, else in stock), real client-side search-to-add
+//    for both customer and product (filters the exact real lists already
+//    fetched — no new capability, no fabricated matches), real qty
+//    steppers/remove per line, real Subtotal (computed from real
+//    quantity × real price), real Tax/Shipping shown honestly as ₹0.00
+//    (place_order() hardcodes both to 0 — no invented 18% GST or dealer
+//    discount), real Total, real required Shipping address field (the
+//    design has no field for this, but place_order() genuinely requires
+//    one — added because the backend requires it, not fabricated), real
+//    Payment method select (the same 4 real PaymentMethod values/labels
+//    already used on Checkout), real optional Notes, real "Place order"
+//    submit calling the exact same `actions.placeOrder()` the old
+//    OrderForm called, with the exact same success redirect
+//    (`/sales/orders/{id}?created=1`) and the exact same error-message
+//    surfacing. Real "Cancel" link back to /sales/orders.
+//  - Order-steps tracker (Customer/Items/Delivery/Review) and the
+//    "Draft · autosaved 2 min ago" subtitle: no draft/autosave/multi-step
+//    concept exists anywhere in the schema — order creation is a single
+//    atomic RPC call, not a saved draft workflow. Omitted; subtitle
+//    replaced with a plain, honest description.
+//  - Customer card's "Dealer pricing · 8% off list price", "Last order
+//    SO-10493 · 27 Sep · ₹58,900 · Mumbai", and "Reorder those items":
+//    no per-customer pricing tier exists, and "Reorder" is explicitly
+//    disallowed project-wide — all omitted.
+//  - "Discount" column + per-line discount input, "Dealer discount (8%)"
+//    summary row, admin-only "Price override" toggle, and "Discount above
+//    10% needs admin approval" banner: no per-order-line discount field
+//    exists anywhere in the schema, and no such approval action_type
+//    exists in approval_action_type — all omitted entirely (the admin
+//    toggle was already gated out of the sales branch in the design
+//    itself; the discount column/summary row and the sales-only approval
+//    banner needed explicit removal).
+//  - "GST (18%)" summary row: real tax is always ₹0 (place_order() fixes
+//    tax at 0 — see checkout's own established precedent) — shown as a
+//    real, honestly-labelled "Tax" line instead of an invented percentage.
+//  - Stock pill's "will backorder" text and the footer's "LED panel 18W
+//    will backorder and ship after 3 Oct" note: no backorder/ETA capacity
+//    exists — the real stock pill stays (see above), but only the real
+//    quantity, never a fabricated backorder promise or date.
+//  - "Delivery date" picker: no delivery-date field exists on `orders` —
+//    omitted; replaced with the real required "Shipping address" field
+//    the backend actually needs (see above).
+//  - "Save as draft" button: no draft capability — omitted.
+//  - Bottom dashed "Add item" button: redundant with the real product
+//    search-to-add already at the top of the Items panel (same real
+//    capability) — omitted rather than duplicated.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import OrderForm from "../../../components/orders/OrderForm.astro";
-import AppShell from "../../../components/layout/AppShell.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
 
-const { data: customers } = await Astro.locals.supabase
+const { data: customerRows } = await Astro.locals.supabase
   .from("profiles")
   .select("id, full_name")
   .eq("role", "customer")
   .order("full_name");
 
-const customerOptions = (customers ?? []).map((c) => ({ value: c.id, label: c.full_name ?? "Unnamed customer" }));
+const customers = (customerRows ?? []).map((c) => ({ id: c.id, name: c.full_name ?? "Unnamed customer" }));
 
-const { data: products } = await Astro.locals.supabase
+const { data: productRows } = await Astro.locals.supabase
   .from("products")
-  .select("id, sku, name, price")
+  .select("id, sku, name, price, inventory(quantity_on_hand, reorder_level)")
   .eq("is_active", true)
   .order("name");
+
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+
+const products = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? null;
+  const reorderLevel = inv?.reorder_level ?? null;
+  const stockTone = qty === null ? null : qty === 0 ? "out" : reorderLevel !== null && qty <= reorderLevel ? "low" : "in";
+  return { id: p.id, sku: p.sku, name: p.name, price: p.price, qty, stockTone };
+});
 ---
 
 <BaseLayout title="New order — Sales">
-  <AppShell active="sales" backHref="/sales/orders" backLabel="Orders">
-    <Card class="max-w-2xl">
-      <h1 class="text-2xl font-bold text-ink">New order</h1>
-      <div class="mt-lg">
-        <OrderForm customers={customerOptions} products={products ?? []} />
-      </div>
-    </Card>
-  </AppShell>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Orders" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Selling" parent="Orders" page="New order" />
+
+      <main id="main-content" class="no__main">
+        <div class="no__header">
+          <h1>New order</h1>
+          <span class="no__subtitle">Create an order on behalf of a customer</span>
+        </div>
+
+        <form id="new-order-form" class="no__body">
+          <div class="no__left">
+            <section class="no__card">
+              <span class="no__card-title">Customer</span>
+              <button type="button" id="customer-trigger" class="no__customer-btn" aria-haspopup="listbox" aria-expanded="false">
+                <span id="customer-avatar" class="no__avatar">?</span>
+                <span id="customer-label" class="no__customer-label">Select a customer</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <div id="customer-panel" class="no__picker-panel" hidden>
+                <input type="search" id="customer-search" class="no__picker-search" placeholder="Search customers by name…" aria-label="Search customers" />
+                <div id="customer-results" class="no__picker-results" role="listbox" aria-label="Customers"></div>
+              </div>
+              <input type="hidden" id="customer-id-input" name="customerId" required />
+            </section>
+
+            <section class="no__card no__items-card">
+              <div class="no__items-head">
+                <span class="no__card-title">Items</span>
+                <span id="items-summary" class="no__items-count">0 lines · 0 units</span>
+              </div>
+              <div class="no__product-search-wrap">
+                <input type="search" id="product-search" class="no__product-search" placeholder="Search products by name or SKU…" aria-label="Search products" autocomplete="off" />
+                <div id="product-results" class="no__picker-results no__product-results" role="listbox" aria-label="Products" hidden></div>
+              </div>
+              <div class="no__grid no__grid-head">
+                <span>Product</span><span>Qty</span><span class="no__col-right">Unit price</span><span class="no__col-right">Line total</span><span></span>
+              </div>
+              <div id="line-items"></div>
+              <p id="no-items-empty" class="no__empty-note">No items added yet.</p>
+            </section>
+          </div>
+
+          <div class="no__right">
+            <section class="no__card no__summary-card">
+              <span class="no__card-title">Order summary</span>
+              <dl class="no__dl">
+                <div class="no__dl-row"><dt>Items</dt><dd id="summary-items">0 lines · 0 units</dd></div>
+                <div class="no__dl-row"><dt>Subtotal</dt><dd id="summary-subtotal">₹0.00</dd></div>
+                <div class="no__dl-row"><dt>Tax</dt><dd>₹0.00</dd></div>
+                <div class="no__dl-row"><dt>Shipping</dt><dd>₹0.00</dd></div>
+              </dl>
+              <div class="no__divider"></div>
+              <div class="no__dl-row no__dl-total"><dt>Total</dt><dd id="summary-total">₹0.00</dd></div>
+
+              <div class="no__field-col">
+                <label for="shipping-address" class="no__field-label">Shipping address</label>
+                <input type="text" id="shipping-address" name="shippingAddress" class="no__input" required />
+              </div>
+
+              <div class="no__field-col">
+                <label for="payment-method" class="no__field-label">Payment</label>
+                <select id="payment-method" name="paymentMethod" class="no__input" required>
+                  <option value="upi">UPI</option>
+                  <option value="card">Card</option>
+                  <option value="bank_transfer">Net banking</option>
+                  <option value="cash">Cash on delivery</option>
+                </select>
+              </div>
+
+              <div class="no__field-col">
+                <label for="order-notes" class="no__field-label">Notes</label>
+                <textarea id="order-notes" name="notes" class="no__textarea" placeholder="Delivery instructions…"></textarea>
+              </div>
+
+              <p id="form-message" class="no__status-message" role="status"></p>
+
+              <div class="no__actions-col">
+                <button type="submit" id="place-order-btn" class="no__btn no__btn--primary" disabled>
+                  <span id="place-order-label">Place order</span>
+                </button>
+                <a href="/sales/orders" class="no__btn no__btn--ghost">Cancel</a>
+              </div>
+            </section>
+          </div>
+        </form>
+      </main>
+    </div>
+  </div>
+
+  <div id="no-data" hidden data-customers={JSON.stringify(customers)} data-products={JSON.stringify(products)}></div>
 </BaseLayout>
+
+<style is:global>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .no__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .no__main {
+      padding: 16px;
+    }
+  }
+  .no__header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .no__header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .no__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .no__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .no__body {
+      flex-direction: row;
+    }
+  }
+  .no__left {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .no__right {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1000px) {
+    .no__right {
+      width: 360px;
+      flex-shrink: 0;
+    }
+  }
+
+  .no__card {
+    box-sizing: border-box;
+    padding: 16px 18px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .no__card-title {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .no__customer-btn {
+    height: 52px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .no__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .no__customer-label {
+    flex-grow: 1;
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .no__picker-panel {
+    position: relative;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .no__picker-search {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 0;
+    border-bottom: 1px solid var(--sd-border);
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    outline: 0;
+  }
+  .no__picker-results {
+    max-height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .no__picker-row {
+    height: 40px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    color: var(--sd-fg);
+  }
+  .no__picker-row:hover {
+    background: var(--sd-muted);
+  }
+  .no__picker-empty {
+    padding: 12px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .no__items-card {
+    gap: 0;
+    padding: 16px 16px 8px;
+  }
+  .no__items-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 12px;
+  }
+  .no__items-count {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .no__product-search-wrap {
+    position: relative;
+    margin-bottom: 12px;
+  }
+  .no__product-search {
+    width: 100%;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    outline: 0;
+  }
+  .no__product-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    max-height: 260px;
+  }
+  .no__picker-row-sub {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex-grow: 1;
+  }
+  .no__picker-row-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .no__picker-row-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .no__stock-pill {
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .no__stock-pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .no__stock-pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .no__stock-pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+
+  .no__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 106px 96px 96px 30px;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 0;
+    min-width: 500px;
+  }
+  .no__grid-head {
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    background: var(--sd-shell);
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  #line-items {
+    overflow-x: auto;
+  }
+  .no__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 106px 96px 96px 30px;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+    min-width: 500px;
+  }
+  .no__col-right {
+    text-align: right;
+  }
+  .no__stepper {
+    display: inline-flex;
+    align-items: center;
+    width: 106px;
+    height: 32px;
+    box-sizing: border-box;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .no__stepper button {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 16px;
+    color: var(--sd-fg2);
+    cursor: pointer;
+  }
+  .no__stepper input {
+    width: 44px;
+    height: 30px;
+    box-sizing: border-box;
+    border: 0;
+    border-left: 1px solid var(--sd-input);
+    border-right: 1px solid var(--sd-input);
+    background: transparent;
+    text-align: center;
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .no__remove-btn {
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .no__empty-note {
+    margin: 0;
+    padding: 24px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .no__summary-card {
+    position: sticky;
+    top: 0;
+  }
+  .no__dl {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .no__dl-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .no__dl-row dt {
+    color: var(--sd-muted-fg);
+  }
+  .no__dl-row dd {
+    margin: 0;
+  }
+  .no__divider {
+    height: 1px;
+    background: var(--sd-border);
+    margin: 4px 0;
+  }
+  .no__dl-total {
+    align-items: baseline;
+  }
+  .no__dl-total dt {
+    font-weight: 600;
+    color: var(--sd-fg);
+  }
+  .no__dl-total dd {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .no__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .no__field-label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .no__input {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .no__textarea {
+    height: 64px;
+    box-sizing: border-box;
+    resize: none;
+    padding: 8px 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .no__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+  .no__actions-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .no__btn {
+    height: 38px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .no__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .no__btn--primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .no__btn--ghost {
+    border: 0;
+    background: transparent;
+    color: var(--sd-fg2);
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  interface Customer {
+    id: string;
+    name: string;
+  }
+  interface Product {
+    id: string;
+    sku: string;
+    name: string;
+    price: number;
+    qty: number | null;
+    stockTone: "in" | "low" | "out" | null;
+  }
+  interface LineItem {
+    productId: string;
+    sku: string;
+    name: string;
+    price: number;
+    quantity: number;
+  }
+
+  const dataEl = document.getElementById("no-data") as HTMLElement;
+  const customers = JSON.parse(dataEl.dataset.customers!) as Customer[];
+  const products = JSON.parse(dataEl.dataset.products!) as Product[];
+
+  const lineItems: LineItem[] = [];
+  let selectedCustomerId: string | null = null;
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+  const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+  // --- Customer picker ---
+  const customerTrigger = document.querySelector<HTMLButtonElement>("#customer-trigger")!;
+  const customerPanel = document.querySelector<HTMLDivElement>("#customer-panel")!;
+  const customerSearch = document.querySelector<HTMLInputElement>("#customer-search")!;
+  const customerResults = document.querySelector<HTMLDivElement>("#customer-results")!;
+  const customerIdInput = document.querySelector<HTMLInputElement>("#customer-id-input")!;
+  const customerAvatar = document.querySelector<HTMLSpanElement>("#customer-avatar")!;
+  const customerLabel = document.querySelector<HTMLSpanElement>("#customer-label")!;
+
+  function initialsOf(name: string): string {
+    return (
+      name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0]!.toUpperCase())
+        .join("") || "?"
+    );
+  }
+
+  function renderCustomerResults(filter: string) {
+    const needle = filter.trim().toLowerCase();
+    const matches = needle ? customers.filter((c) => c.name.toLowerCase().includes(needle)) : customers;
+    customerResults.innerHTML = "";
+    if (matches.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "no__picker-empty";
+      empty.textContent = "No customers found.";
+      customerResults.appendChild(empty);
+      return;
+    }
+    matches.forEach((c) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "no__picker-row";
+      row.setAttribute("role", "option");
+      row.textContent = c.name;
+      row.addEventListener("click", () => {
+        selectedCustomerId = c.id;
+        customerIdInput.value = c.id;
+        customerAvatar.textContent = initialsOf(c.name);
+        customerLabel.textContent = c.name;
+        closeCustomerPanel();
+        updateSubmitState();
+      });
+      customerResults.appendChild(row);
+    });
+  }
+
+  function openCustomerPanel() {
+    customerPanel.hidden = false;
+    customerTrigger.setAttribute("aria-expanded", "true");
+    renderCustomerResults(customerSearch.value);
+    customerSearch.focus();
+  }
+  function closeCustomerPanel() {
+    customerPanel.hidden = true;
+    customerTrigger.setAttribute("aria-expanded", "false");
+  }
+  customerTrigger.addEventListener("click", () => {
+    customerPanel.hidden ? openCustomerPanel() : closeCustomerPanel();
+  });
+  customerSearch.addEventListener("input", () => renderCustomerResults(customerSearch.value));
+  document.addEventListener("click", (e) => {
+    if (!customerPanel.hidden && !customerPanel.contains(e.target as Node) && e.target !== customerTrigger && !customerTrigger.contains(e.target as Node)) {
+      closeCustomerPanel();
+    }
+  });
+
+  // --- Product search-to-add ---
+  const productSearch = document.querySelector<HTMLInputElement>("#product-search")!;
+  const productResults = document.querySelector<HTMLDivElement>("#product-results")!;
+  const lineItemsEl = document.querySelector<HTMLDivElement>("#line-items")!;
+  const noItemsEmpty = document.querySelector<HTMLParagraphElement>("#no-items-empty")!;
+
+  function renderProductResults(filter: string) {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) {
+      productResults.hidden = true;
+      productResults.innerHTML = "";
+      return;
+    }
+    const matches = products.filter((p) => p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle)).slice(0, 20);
+    productResults.innerHTML = "";
+    if (matches.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "no__picker-empty";
+      empty.textContent = "No products found.";
+      productResults.appendChild(empty);
+    } else {
+      matches.forEach((p) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "no__picker-row";
+        row.setAttribute("role", "option");
+
+        const sub = document.createElement("span");
+        sub.className = "no__picker-row-sub";
+        const nameEl = document.createElement("span");
+        nameEl.className = "no__picker-row-name";
+        nameEl.textContent = p.name;
+        const metaEl = document.createElement("span");
+        metaEl.className = "no__picker-row-meta";
+        metaEl.append(`${p.sku} · ${formatCurrency(p.price)}`);
+        if (p.stockTone) {
+          const pill = document.createElement("span");
+          pill.className = `no__stock-pill no__stock-pill--${p.stockTone}`;
+          pill.textContent = p.stockTone === "out" ? STOCK_LABEL.out : `${STOCK_LABEL[p.stockTone]} ${p.qty}`;
+          metaEl.appendChild(pill);
+        }
+        sub.appendChild(nameEl);
+        sub.appendChild(metaEl);
+        row.appendChild(sub);
+
+        row.addEventListener("click", () => {
+          addOrIncrementItem(p);
+          productSearch.value = "";
+          productResults.hidden = true;
+          productSearch.focus();
+        });
+        productResults.appendChild(row);
+      });
+    }
+    productResults.hidden = false;
+  }
+  productSearch.addEventListener("input", () => renderProductResults(productSearch.value));
+  document.addEventListener("click", (e) => {
+    if (!productResults.hidden && !productResults.contains(e.target as Node) && e.target !== productSearch) {
+      productResults.hidden = true;
+    }
+  });
+
+  function addOrIncrementItem(p: Product) {
+    const existing = lineItems.find((i) => i.productId === p.id);
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      lineItems.push({ productId: p.id, sku: p.sku, name: p.name, price: p.price, quantity: 1 });
+    }
+    renderLineItems();
+  }
+
+  function renderLineItems() {
+    lineItemsEl.innerHTML = "";
+    noItemsEmpty.hidden = lineItems.length > 0;
+
+    lineItems.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = "no__row";
+
+      const nameCell = document.createElement("span");
+      nameCell.textContent = item.name;
+      nameCell.style.fontWeight = "500";
+      row.appendChild(nameCell);
+
+      const stepper = document.createElement("div");
+      stepper.className = "no__stepper";
+      const decBtn = document.createElement("button");
+      decBtn.type = "button";
+      decBtn.textContent = "–";
+      decBtn.setAttribute("aria-label", `Decrease quantity of ${item.name}`);
+      const qtyInput = document.createElement("input");
+      qtyInput.type = "text";
+      qtyInput.inputMode = "numeric";
+      qtyInput.value = String(item.quantity);
+      qtyInput.setAttribute("aria-label", `Quantity of ${item.name}`);
+      const incBtn = document.createElement("button");
+      incBtn.type = "button";
+      incBtn.textContent = "+";
+      incBtn.setAttribute("aria-label", `Increase quantity of ${item.name}`);
+
+      decBtn.addEventListener("click", () => {
+        if (item.quantity > 1) {
+          item.quantity -= 1;
+          renderLineItems();
+        }
+      });
+      incBtn.addEventListener("click", () => {
+        item.quantity += 1;
+        renderLineItems();
+      });
+      qtyInput.addEventListener("change", () => {
+        const n = parseInt(qtyInput.value, 10);
+        item.quantity = Number.isFinite(n) && n > 0 ? n : 1;
+        renderLineItems();
+      });
+
+      stepper.append(decBtn, qtyInput, incBtn);
+      row.appendChild(stepper);
+
+      const priceCell = document.createElement("span");
+      priceCell.className = "no__col-right";
+      priceCell.textContent = formatCurrency(item.price);
+      row.appendChild(priceCell);
+
+      const totalCell = document.createElement("span");
+      totalCell.className = "no__col-right";
+      totalCell.style.fontWeight = "500";
+      totalCell.textContent = formatCurrency(item.price * item.quantity);
+      row.appendChild(totalCell);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "no__remove-btn";
+      removeBtn.setAttribute("aria-label", `Remove ${item.name}`);
+      removeBtn.innerHTML =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg>';
+      removeBtn.addEventListener("click", () => {
+        lineItems.splice(index, 1);
+        renderLineItems();
+      });
+      row.appendChild(removeBtn);
+
+      lineItemsEl.appendChild(row);
+    });
+
+    updateSummary();
+    updateSubmitState();
+  }
+
+  const itemsSummaryEl = document.querySelector<HTMLSpanElement>("#items-summary")!;
+  const summaryItemsEl = document.querySelector<HTMLElement>("#summary-items")!;
+  const summarySubtotalEl = document.querySelector<HTMLElement>("#summary-subtotal")!;
+  const summaryTotalEl = document.querySelector<HTMLElement>("#summary-total")!;
+  const placeOrderLabel = document.querySelector<HTMLSpanElement>("#place-order-label")!;
+
+  function updateSummary() {
+    const lineCount = lineItems.length;
+    const unitCount = lineItems.reduce((sum, i) => sum + i.quantity, 0);
+    const subtotal = lineItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    const summaryText = `${lineCount} line${lineCount === 1 ? "" : "s"} · ${unitCount} unit${unitCount === 1 ? "" : "s"}`;
+
+    itemsSummaryEl.textContent = summaryText;
+    summaryItemsEl.textContent = summaryText;
+    summarySubtotalEl.textContent = formatCurrency(subtotal);
+    summaryTotalEl.textContent = formatCurrency(subtotal);
+    placeOrderLabel.textContent = lineCount > 0 ? `Place order · ${formatCurrency(subtotal)}` : "Place order";
+  }
+
+  // --- Submit ---
+  const form = document.querySelector<HTMLFormElement>("#new-order-form")!;
+  const submitBtn = document.querySelector<HTMLButtonElement>("#place-order-btn")!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const shippingAddressInput = document.querySelector<HTMLInputElement>("#shipping-address")!;
+
+  function updateSubmitState() {
+    submitBtn.disabled = lineItems.length === 0 || !selectedCustomerId;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    messageEl.textContent = "";
+
+    if (!selectedCustomerId) {
+      messageEl.textContent = "Select a customer.";
+      return;
+    }
+    if (lineItems.length === 0) {
+      messageEl.textContent = "Add at least one item.";
+      return;
+    }
+    if (!shippingAddressInput.value.trim()) {
+      messageEl.textContent = "Enter a shipping address.";
+      return;
+    }
+
+    const paymentMethod = (document.querySelector<HTMLSelectElement>("#payment-method")!.value) as "card" | "upi" | "cash" | "bank_transfer";
+    const notes = document.querySelector<HTMLTextAreaElement>("#order-notes")!.value;
+
+    submitBtn.disabled = true;
+
+    const { data, error } = await actions.placeOrder({
+      customerId: selectedCustomerId,
+      items: lineItems.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+      shippingAddress: shippingAddressInput.value.trim(),
+      paymentMethod,
+      notes: notes || undefined,
+    });
+
+    if (error) {
+      submitBtn.disabled = false;
+      messageEl.textContent = error.message;
+      return;
+    }
+
+    window.location.href = `/sales/orders/${data!.order.id}?created=1`;
+  });
+
+  renderLineItems();
+
+  // --- Theme + sidebar chrome (same pattern as every other Sales screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

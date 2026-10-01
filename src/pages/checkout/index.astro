@@ -1,23 +1,53 @@
 ---
-// Matches the Claude Design canvas's Checkout artboard
-// (project/PageCheckout.dc.html, imported by CustCheckout.dc.html). The
-// design's separate "Delivery date" picker and "Payment" method cards with
-// icons are simplified to the existing real fields (a shipping-address
-// text field, a payment-method select) — there's no delivery-slot data
-// model to pick a real date/window from. No GST/tax line in the summary:
-// place_order() computes `tax` server-side (defaulting to 0, no rate
-// logic implemented anywhere in this schema/RPC) — showing a guessed
-// percentage here would be a fabricated financial figure, so the summary
-// only ever shows the real cart subtotal pre-checkout; the authoritative
-// total (from the order row) is what's shown after the order is placed.
+// Literal recreation of the Claude Design canvas's Checkout artboard
+// (project/PageCheckout.dc.html, imported by CustCheckout.dc.html) — the
+// supplied design is the visual source of truth, not the app's existing
+// DESIGN.md component system. Reuses the same --cp-* token system and
+// NavCustomer header already approved on Customer Portal/Shop/Product
+// Details/Cart. CartSummary.astro/Card/Input/Select/Textarea/Button are
+// NOT reused (their visual output doesn't match this artboard) — this page
+// builds its own markup, wired to the same real, unmodified order-creation
+// action (astro:actions placeOrder) and cart logic (src/lib/cart.ts).
+//
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Real cart contents/names/SKUs/prices/quantities/subtotal (client-
+//    rendered from localStorage, same as Cart), real shippingAddress input
+//    (existing single required text field — the design's "saved address
+//    card" implies a saved-address profile system that doesn't exist, so
+//    this stays a real editable field, styled to the design's card
+//    proportions, not a fabricated saved Meera Traders/account record),
+//    real paymentMethod selection (the design's 4 payment options map
+//    1:1 onto the app's actual PaymentMethod enum: UPI→upi, Card→card,
+//    Net banking→bank_transfer, Cash on delivery→cash — genuinely real,
+//    not fabricated), real notes field (existing optional field), real
+//    placeOrder() action call, real success redirect to the order's real
+//    detail page, real error handling.
+//  - Step tracker (Cart ✓ · Delivery ✓ · Payment (current) · Confirm):
+//    omitted. The real checkout flow is a single-page form submit, not a
+//    multi-step wizard — showing a 4-step progress indicator would imply
+//    separate steps/states that don't exist, which is a UI-truthfulness
+//    call in the same spirit as the no-fabrication rules even though it's
+//    not a data value per se.
+//  - Header subtitle "Meera Traders · Account C-2041 · 2 items": no
+//    business/account-number concept in the schema — replaced with a real
+//    live item count only.
+//  - Delivery-date picker + "Earliest available date. Free delivery on
+//    this order.": no delivery-slot data model and no delivery-charge
+//    model anywhere in the schema — omitted entirely rather than shown as
+//    a static, non-functional claim.
+//  - "Your reference for this order: MT-122": no such reference-number
+//    system — omitted.
+//  - GST 18% line and "Delivery: Free" line in the summary: no tax engine
+//    anywhere in this app (place_order() defaults tax to 0, no rate
+//    logic) and no delivery-charge model — omitted, same call already
+//    made on Cart. Total = real Subtotal only.
+//  - "Paying by UPI. You will get an order confirmation by email and SMS.":
+//    the "Paying by {method}" half is real/dynamic (reflects the actual
+//    selected radio); the email/SMS confirmation claim is fabricated (no
+//    order-notification system exists per CLAUDE.md's deferred-items
+//    list) — dropped.
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import Card from "../../components/ui/Card.astro";
-import Input from "../../components/ui/Input.astro";
-import Select from "../../components/ui/Select.astro";
-import Textarea from "../../components/ui/Textarea.astro";
-import Button from "../../components/ui/Button.astro";
-import CartSummary from "../../components/cart/CartSummary.astro";
-import PublicHeader from "../../components/layout/PublicHeader.astro";
+import NavCustomer from "../../components/customer/NavCustomer.astro";
 
 // Middleware guarantees a customer is present for every /checkout/* route
 // (staff/admin are redirected to their own dashboard before reaching here).
@@ -26,78 +56,642 @@ const userId = user!.id;
 ---
 
 <BaseLayout title="Checkout — Inventory">
-  <PublicHeader backHref="/cart" backLabel="Cart" />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1100px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">Checkout</h1>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-    <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-lg items-start">
-      <div class="space-y-lg">
-        <Card>
-          <h2 class="text-sm font-bold text-ink">Delivery</h2>
-          <p class="mt-xxs text-xs text-muted">Where should we deliver?</p>
-          <form id="checkout-form" class="mt-md space-y-md" data-user-id={userId}>
-            <Input label="Shipping address" name="shippingAddress" required />
-            <Select
-              label="Payment method"
-              name="paymentMethod"
-              options={[
-                { value: "card", label: "Card" },
-                { value: "upi", label: "UPI" },
-                { value: "cash", label: "Cash" },
-                { value: "bank_transfer", label: "Bank transfer" },
-              ]}
-              required
-            />
-            <Textarea label="Notes (optional)" name="notes" />
-            <p id="form-message" class="text-sm" role="status" />
-            <Button type="submit" variant="primary" class="w-full">
-              Place order
-            </Button>
-          </form>
-        </Card>
+    <NavCustomer active="Shop" />
+
+    <main id="main-content" class="cp__main">
+      <div class="co__header">
+        <div class="co__heading-col">
+          <h1>Checkout</h1>
+          <span id="co-item-count" class="co__meta"></span>
+        </div>
       </div>
 
-      <Card>
-        <h2 class="text-sm font-bold text-ink">Order summary</h2>
-        <div class="mt-md">
-          <CartSummary />
+      <form id="checkout-form" data-user-id={userId} class="co__layout">
+        <div class="co__form-col">
+          <section class="co__card">
+            <div class="co__card-head">
+              <h2>Delivery</h2>
+              <span>Where should we deliver?</span>
+            </div>
+            <div class="co__field">
+              <label for="shippingAddress">Shipping address</label>
+              <input type="text" id="shippingAddress" name="shippingAddress" required placeholder="Address, city, PIN code" />
+            </div>
+          </section>
+
+          <section class="co__card">
+            <div class="co__card-head">
+              <h2>Payment method</h2>
+              <span>You pay the full amount when you place the order, or on delivery.</span>
+            </div>
+            <div role="radiogroup" aria-label="Payment method" class="co__pay-grid">
+              <label class="co__pay-option" data-pay-option>
+                <input type="radio" name="paymentMethod" value="upi" checked />
+                <span class="co__pay-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10v18H7zM11 18h2"></path></svg></span>
+                <span class="co__pay-body">
+                  <span class="co__pay-label">UPI</span>
+                  <span class="co__pay-sub">Pay from any UPI app</span>
+                </span>
+              </label>
+              <label class="co__pay-option" data-pay-option>
+                <input type="radio" name="paymentMethod" value="card" />
+                <span class="co__pay-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18v12H3zM3 10h18M7 15h4"></path></svg></span>
+                <span class="co__pay-body">
+                  <span class="co__pay-label">Card</span>
+                  <span class="co__pay-sub">Pay with your bank card</span>
+                </span>
+              </label>
+              <label class="co__pay-option" data-pay-option>
+                <input type="radio" name="paymentMethod" value="bank_transfer" />
+                <span class="co__pay-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10 12 4l9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 20h18"></path></svg></span>
+                <span class="co__pay-body">
+                  <span class="co__pay-label">Net banking</span>
+                  <span class="co__pay-sub">Pay from your bank account</span>
+                </span>
+              </label>
+              <label class="co__pay-option" data-pay-option>
+                <input type="radio" name="paymentMethod" value="cash" />
+                <span class="co__pay-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v10H3zM12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M6 10v4M18 10v4"></path></svg></span>
+                <span class="co__pay-body">
+                  <span class="co__pay-label">Cash on delivery</span>
+                  <span class="co__pay-sub">Pay when the goods arrive</span>
+                </span>
+              </label>
+            </div>
+          </section>
+
+          <section class="co__card">
+            <label for="order-notes" class="co__notes-label">Notes for this order <span class="co__optional">optional</span></label>
+            <textarea id="order-notes" name="notes" rows="3" class="co__notes"></textarea>
+          </section>
         </div>
-      </Card>
-    </div>
-  </main>
+
+        <aside class="co__summary" aria-label="Order summary">
+          <div class="co__summary-head">
+            <h2>Order summary</h2>
+            <a href="/cart">Edit cart</a>
+          </div>
+          <div id="co-summary-items" class="co__summary-items"></div>
+          <p id="co-empty" class="co__empty hidden">Your cart is empty. <a href="/products">Continue shopping</a></p>
+          <div class="co__divider"></div>
+          <div class="co__summary-row">
+            <span>Subtotal</span>
+            <strong id="co-subtotal">—</strong>
+          </div>
+          <div class="co__divider"></div>
+          <div class="co__summary-total">
+            <span>Total</span>
+            <span id="co-total">—</span>
+          </div>
+          <p id="form-message" class="co__form-message" role="status"></p>
+          <button type="submit" id="co-place-btn" class="co__place-btn">
+            <span id="co-place-label">Place order</span>
+          </button>
+          <span id="co-pay-note" class="co__pay-note"></span>
+        </aside>
+      </form>
+    </main>
+  </div>
 </BaseLayout>
 
+<style is:global>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-error-fg: #b91c1c;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-error-fg: #f87171;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+
+  .co__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .co__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .co__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .co__meta {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+
+  .co__layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .co__layout {
+      flex-direction: row;
+    }
+  }
+
+  .co__form-col {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .co__card {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .co__card-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .co__card-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .co__card-head span {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .co__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .co__field label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .co__field input {
+    height: 40px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--cp-fg);
+  }
+
+  .co__pay-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  @media (min-width: 600px) {
+    .co__pay-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .co__pay-option {
+    box-sizing: border-box;
+    min-height: 68px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .co__pay-option:has(input:checked) {
+    border: 2px solid var(--cp-primary);
+    background: var(--cp-muted);
+  }
+  .co__pay-option input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--cp-primary);
+    flex-shrink: 0;
+  }
+  .co__pay-icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .co__pay-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .co__pay-label {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .co__pay-sub {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+
+  .co__notes-label {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .co__optional {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--cp-muted-fg);
+  }
+  .co__notes {
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--cp-fg);
+    resize: none;
+  }
+
+  .co__summary {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  @media (min-width: 1000px) {
+    .co__summary {
+      width: 380px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 20px;
+    }
+  }
+  .co__summary-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .co__summary-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .co__summary-head a {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-accent);
+    text-decoration: none;
+  }
+  .co__summary-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .co__summary-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .co__summary-item-thumb {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .co__summary-item-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .co__summary-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .co__summary-item-meta {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .co__summary-item-total {
+    font-size: 14px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .co__empty {
+    margin: 0;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .co__empty a {
+    color: var(--cp-accent);
+  }
+  .co__empty.hidden {
+    display: none;
+  }
+  .co__divider {
+    height: 1px;
+    background: var(--cp-border);
+  }
+  .co__summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+  }
+  .co__summary-row span {
+    color: var(--cp-fg2);
+  }
+  .co__summary-row strong {
+    color: var(--cp-fg);
+    font-weight: 500;
+  }
+  .co__summary-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .co__summary-total span:first-child {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .co__summary-total span:last-child {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .co__form-message {
+    margin: 0;
+    min-height: 16px;
+    font-size: 13px;
+    color: var(--cp-error-fg);
+  }
+  .co__place-btn {
+    height: 40px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .co__place-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .co__pay-note {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+    line-height: 1.5;
+  }
+</style>
+
 <script>
-  // Not using `define:vars` here: it forces this script to be inlined as
-  // a plain non-module tag, and a static `import` is a SyntaxError outside
-  // a module context — confirmed against this project's own compiled
-  // production output. Server-rendered values that used to be injected via
-  // define:vars are instead read off the form's dataset, so this stays a
-  // normal, properly bundled module script with both "astro:actions" and
-  // the local cart module resolved correctly by Vite.
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
   import { actions } from "astro:actions";
   import { getCart, clearCart } from "../../lib/cart";
 
-  const form = document.querySelector("#checkout-form");
-  const messageEl = document.querySelector("#form-message");
-  const userId = form.dataset.userId;
+  const form = document.querySelector<HTMLFormElement>("#checkout-form")!;
+  const userId = form.dataset.userId!;
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const placeBtn = document.querySelector<HTMLButtonElement>("#co-place-btn")!;
+  const placeLabelEl = document.querySelector<HTMLSpanElement>("#co-place-label")!;
+  const itemsEl = document.querySelector<HTMLDivElement>("#co-summary-items")!;
+  const emptyEl = document.querySelector<HTMLParagraphElement>("#co-empty")!;
+  const subtotalEl = document.querySelector<HTMLElement>("#co-subtotal")!;
+  const totalEl = document.querySelector<HTMLSpanElement>("#co-total")!;
+  const itemCountEl = document.querySelector<HTMLSpanElement>("#co-item-count")!;
+  const payNoteEl = document.querySelector<HTMLSpanElement>("#co-pay-note")!;
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+  const PAY_LABELS: Record<string, string> = {
+    upi: "UPI",
+    card: "Card",
+    bank_transfer: "Net banking",
+    cash: "Cash on delivery",
+  };
+
+  function renderSummary() {
+    const items = getCart();
+    const itemCount = items.reduce((sum, i) => sum + i.quantity, 0);
+    const isEmpty = items.length === 0;
+
+    itemsEl.innerHTML = "";
+    emptyEl.classList.toggle("hidden", !isEmpty);
+
+    let subtotal = 0;
+    for (const item of items) {
+      const lineTotal = item.price * item.quantity;
+      subtotal += lineTotal;
+
+      const row = document.createElement("div");
+      row.className = "co__summary-item";
+
+      const thumb = document.createElement("span");
+      thumb.className = "co__summary-item-thumb";
+      thumb.innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"></path></svg>';
+
+      const body = document.createElement("span");
+      body.className = "co__summary-item-body";
+      const nameEl = document.createElement("span");
+      nameEl.className = "co__summary-item-name";
+      nameEl.textContent = item.name;
+      const metaEl = document.createElement("span");
+      metaEl.className = "co__summary-item-meta";
+      metaEl.textContent = `${item.quantity} × ${formatCurrency(item.price)} · ${item.sku}`;
+      body.append(nameEl, metaEl);
+
+      const totalItemEl = document.createElement("span");
+      totalItemEl.className = "co__summary-item-total";
+      totalItemEl.textContent = formatCurrency(lineTotal);
+
+      row.append(thumb, body, totalItemEl);
+      itemsEl.appendChild(row);
+    }
+
+    itemCountEl.textContent = isEmpty ? "" : `${itemCount} item${itemCount === 1 ? "" : "s"}`;
+    subtotalEl.textContent = formatCurrency(subtotal);
+    totalEl.textContent = formatCurrency(subtotal);
+    placeLabelEl.textContent = `Place order · ${formatCurrency(subtotal)}`;
+    placeBtn.disabled = isEmpty;
+  }
+
+  function renderPayNote() {
+    const selected = form.querySelector<HTMLInputElement>('input[name="paymentMethod"]:checked');
+    const label = selected ? PAY_LABELS[selected.value] : "";
+    payNoteEl.textContent = label ? `Paying by ${label}.` : "";
+  }
+
+  renderSummary();
+  renderPayNote();
+  window.addEventListener("cart-updated", renderSummary);
+  form.querySelectorAll('input[name="paymentMethod"]').forEach((input) => {
+    input.addEventListener("change", renderPayNote);
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     messageEl.textContent = "";
-    messageEl.classList.remove("text-error", "text-success");
 
     const cart = getCart();
     if (cart.length === 0) {
       messageEl.textContent = "Your cart is empty.";
-      messageEl.classList.add("text-error");
       return;
     }
 
     const formData = new FormData(form);
-    const button = form.querySelector("button[type=submit]");
-    button.disabled = true;
+    placeBtn.disabled = true;
 
     const { data, error } = await actions.placeOrder({
       customerId: userId,
@@ -108,9 +702,8 @@ const userId = user!.id;
     });
 
     if (error) {
-      button.disabled = false;
+      placeBtn.disabled = false;
       messageEl.textContent = error.message;
-      messageEl.classList.add("text-error");
       return;
     }
 

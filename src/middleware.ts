@@ -5,8 +5,13 @@ import { ROLE_GATED_PREFIXES, ROLE_DASHBOARD, CUSTOMER_ONLY_PREFIXES } from "./l
 
 // /cart is deliberately NOT protected — it's a pure localStorage read
 // with no DB call, browsable while signed out (like any real cart).
-// /checkout is protected since it actually calls place_order().
-const PROTECTED_PREFIXES = ["/account", "/inventory", "/crm", "/checkout", "/sales", "/admin"];
+// /checkout is protected since it actually calls place_order(). /super is
+// Super Admin's own application area (routing/shell foundation only for
+// now, no pages yet — see roles.ts's APP_SECTIONS/ROLE_DASHBOARD and
+// NavSidebar.astro's SUPER_NAV) — listed here explicitly since this array
+// isn't derived from APP_SECTIONS, so an unauthenticated visitor still
+// gets redirected to /login?redirect=/super instead of falling through.
+const PROTECTED_PREFIXES = ["/account", "/inventory", "/crm", "/checkout", "/sales", "/admin", "/super"];
 
 function matchesPrefix(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(prefix + "/");

@@ -1,79 +1,700 @@
 ---
+// Literal recreation of the Claude Design canvas's Inventory Staff Product
+// Lookup screen (project/StaffLookup.dc.html -> NavSidebar role="staff" +
+// NavTop + PageProducts.dc.html role="staff") — the same shared --sd-*
+// token shell (NavSidebar.astro role="inventory" / NavTop.astro) already
+// established by Receiving/Stock Adjustments, not the old AppShell/
+// DESIGN.md CRUD page this route used to serve (see ROUTE REUSE below).
+//
+// ROUTE REUSE: this file replaces the pre-existing /inventory/products (an
+// old AppShell-based product CRUD list — "New product"/"Edit" links, no
+// dark mode) that staffSidebarNav()/NavSidebar.astro's "Product lookup"
+// item already pointed at before this screen existed for real. The old
+// create/edit forms (new.astro, [id].astro) are left completely untouched
+// — inventory_staff genuinely retains products_insert_staff/
+// products_update_staff RLS, so that capability still exists — but per
+// your explicit instruction this screen itself is pure lookup, so nothing
+// here links to them any more (see PERMISSION DECISION below).
+//
+// PERMISSION DECISION: read-only, by omission, not disabled buttons — no
+// checkboxes, no "..." row-actions menu, no "New product", product name
+// is plain text (never a link to the edit form) — matching the design's
+// own isStaff branch of PageProducts.dc.html exactly (canCreate/showCheck/
+// showDots/the isAdmin-only <a> around the product name are all
+// isAdmin-only; isStaff never takes any of them).
+//
+// Nearly identical precedent: /sales/products (same shared
+// PageProducts.dc.html artboard, role="sales") already established the
+// honest-omission calls for this exact schema — reused verbatim here where
+// staff's own design branch agrees with sales':
+//  - "Available" (on hand − reserved): no reservation/hold concept exists
+//    anywhere in this schema — omitted, not computed against a fabricated
+//    "reserved" number (same as /sales/products).
+//  - "Next restock": omitted (the design's own isStaff branch never shows
+//    it either — sales-only column).
+//  - "View" grid/list toggle: no view-mode capability — omitted (same as
+//    /sales/products).
+//  - Footer pagination ("Page 1 of 380"): this product catalog is small
+//    and every sibling staff/sales screen already made the same call —
+//    real "{N} of {M} products" honest count instead of fake page
+//    controls (same precedent as /sales/products and /account/orders).
+//  - "Scan barcode" button: no barcode capability anywhere in this
+//    project — omitted (same reasoning as Receiving's "Scan item").
+//  - "Manage categories": isAdmin-only in the design, not staff — matches
+//    the artboard exactly, not a deviation.
+//
+// Staff-specific (differs from /sales/products):
+//  - Big full-width lookup search bar (design's own isStaff branch, vs
+//    sales' compact toolbar search) — a real GET-form search over
+//    name/SKU. Placeholder text adjusted from the design's literal
+//    "…name, SKU or bin…" to "…name or SKU…" since bin search isn't a
+//    real capability (see Location · bin below) — never claim a
+//    capability that isn't real. Same reasoning applied to the subtitle
+//    ("its bin" dropped from "Find a product, its bin, current stock and
+//    supplier").
+//  - "Location · bin" column: no warehouse/bin/location field exists
+//    anywhere in this schema (same as Stock Adjustments' own Location/Bin
+//    cells) — column kept (matches the design's grid shape) but every row
+//    shows an honest "—".
+//  - "Supplier" column + "+ Supplier" filter: real, derived the same way
+//    Stock Adjustments' own "Reference" column already is — the supplier
+//    of each product's most recent 'restock' movement (the only place a
+//    supplier is ever actually recorded against a product in this
+//    schema). "—" for a product with no restock history. The "+ Supplier"
+//    filter facets over this same real derived value.
+//  - "+ Status" filter: real, same in/low/out computation used everywhere
+//    else in this project, styled as a compact dashed-pill <select> —
+//    same real pattern already established by Stock Adjustments' own
+//    "+ Type" filter.
+//  - "Request restock" row action (shown only when status !== in stock,
+//    matching the design's own canRestock rule exactly): a real link to
+//    the existing, approved /inventory/receiving screen — the actual
+//    place a restock gets recorded. Does not pre-select the product;
+//    Receiving has no product-preselect query param and is out of scope
+//    to modify this turn (same disclosed limitation already established
+//    on /sales/products' own "Add to order" link).
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Badge from "../../../components/ui/Badge.astro";
-import Button from "../../../components/ui/Button.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import AppShell from "../../../components/layout/AppShell.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
 
-const created = Astro.url.searchParams.get("created");
-const updated = Astro.url.searchParams.get("updated");
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const category = url.searchParams.get("category") ?? "";
+const status = url.searchParams.get("status") ?? "";
+const supplier = url.searchParams.get("supplier") ?? "";
 
-const { data: products } = await Astro.locals.supabase
+const userId = Astro.locals.user!.id;
+
+// Real open-ticket count for the shared sidebar's "Support tickets" badge
+// — identical query already used on every other Inventory Staff screen.
+const { data: myTickets } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("status")
+  .eq("assigned_to", userId);
+const openTicketCount = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+
+// Real active products + category + current stock (products_select_staff /
+// inventory_select_staff — same RLS every other Inventory Staff screen
+// already relies on).
+const { data: productRows } = await Astro.locals.supabase
   .from("products")
-  .select("id, sku, name, price, is_active, categories(name)")
+  .select("id, sku, name, category_id, categories(name), inventory(quantity_on_hand, reorder_level)")
+  .eq("is_active", true)
+  .order("name");
+
+// Real "most recent restock supplier" per product — same derivation
+// technique already used for Stock Adjustments' "Reference" column: the
+// only place a supplier is ever actually attached to a product in this
+// schema is a 'restock' inventory_movements row (suppliers_all_inventory_staff
+// RLS already grants this read).
+const { data: restockRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("product_id, created_at, suppliers(name)")
+  .eq("movement_type", "restock")
+  .not("supplier_id", "is", null)
   .order("created_at", { ascending: false });
+
+const supplierByProduct = new Map<string, string>();
+for (const r of restockRows ?? []) {
+  if (supplierByProduct.has(r.product_id as string)) continue;
+  const name = (r.suppliers as unknown as { name: string } | null)?.name;
+  if (name) supplierByProduct.set(r.product_id as string, name);
+}
+
+function categoryOf(row: { categories: unknown }): { name: string } | null {
+  return row.categories as unknown as { name: string } | null;
+}
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+
+const allProducts = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+  return {
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    categoryId: p.category_id as string | null,
+    categoryName: categoryOf(p)?.name ?? "Uncategorised",
+    qty,
+    stockTone,
+    supplier: supplierByProduct.get(p.id) ?? null,
+  };
+});
+
+const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+// Real category tabs (counts over the full real active-product set,
+// unaffected by search/status/supplier — same convention as /sales/products).
+const categoryCounts = new Map<string, { name: string; count: number }>();
+for (const p of allProducts) {
+  if (!p.categoryId) continue;
+  const existing = categoryCounts.get(p.categoryId);
+  if (existing) existing.count += 1;
+  else categoryCounts.set(p.categoryId, { name: p.categoryName, count: 1 });
+}
+const categoryTabs = [...categoryCounts.entries()]
+  .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+const STATUS_OPTIONS = [
+  { value: "", label: "All statuses" },
+  { value: "in", label: "In stock" },
+  { value: "low", label: "Low stock" },
+  { value: "out", label: "Out of stock" },
+];
+
+const supplierOptions = [...new Set(allProducts.map((p) => p.supplier).filter((s): s is string => !!s))].sort((a, b) =>
+  a.localeCompare(b)
+);
+
+const filtered = allProducts.filter((p) => {
+  if (category && p.categoryId !== category) return false;
+  if (status && p.stockTone !== status) return false;
+  if (supplier && p.supplier !== supplier) return false;
+  if (!search) return true;
+  const needle = search.toLowerCase();
+  return p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle);
+});
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/inventory/products?${qs}` : "/inventory/products";
+}
 ---
 
-<BaseLayout title="Manage products — Inventory">
-  <AppShell active="inventory">
-    <div class="flex items-center justify-between flex-wrap gap-md">
-      <h1 class="text-2xl font-bold text-ink">Products</h1>
-      <div class="flex items-center gap-lg text-sm">
-        <a href="/inventory/categories" class="text-ink hover:text-primary font-bold">Categories</a>
-        <Button href="/inventory/products/new" variant="primary">New product</Button>
-      </div>
+<BaseLayout title="Product lookup — Inventory">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Product lookup" role="inventory" ticketBadgeCount={openTicketCount} />
     </div>
 
-    {created && (
-      <p class="mt-md text-sm text-success" role="status">
-        Product created.
-      </p>
-    )}
-    {updated && (
-      <p class="mt-md text-sm text-success" role="status">
-        Product updated.
-      </p>
-    )}
+    <div class="sd__panel">
+      <NavTop section="Inventory" page="Product lookup" />
 
-    {
-      products && products.length > 0 ? (
-        <div class="mt-lg overflow-x-auto">
-          <table class="w-full text-sm border-collapse">
-            <thead>
-              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
-                <th class="py-xs pr-md">SKU</th>
-                <th class="py-xs pr-md">Name</th>
-                <th class="py-xs pr-md">Category</th>
-                <th class="py-xs pr-md">Price</th>
-                <th class="py-xs pr-md">Status</th>
-                <th class="py-xs" />
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((p) => (
-                <tr class="border-b border-hairline">
-                  <td class="py-sm pr-md text-body">{p.sku}</td>
-                  <td class="py-sm pr-md text-ink font-bold">{p.name}</td>
-                  <td class="py-sm pr-md text-body">{p.categories?.name ?? "—"}</td>
-                  <td class="py-sm pr-md text-body">{p.price}</td>
-                  <td class="py-sm pr-md">
-                    <Badge tone={p.is_active ? "success" : "neutral"}>
-                      {p.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                  </td>
-                  <td class="py-sm">
-                    <a href={`/inventory/products/${p.id}`} class="text-primary font-bold">
-                      Edit
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <main id="main-content" class="pl__main">
+        <div class="pl__header">
+          <h1>Product lookup</h1>
+          <span class="pl__subtitle">Find a product, its current stock and supplier</span>
         </div>
-      ) : (
-        <EmptyState class="mt-lg" title="No products yet" message="Create your first product to get started." />
-      )
-    }
-  </AppShell>
+
+        <form method="get" action="/inventory/products" class="pl__search-bar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4" /></svg>
+          <input type="search" name="search" value={search} aria-label="Search products" placeholder="Search by product name or SKU…" />
+          <input type="hidden" name="category" value={category} />
+          <input type="hidden" name="status" value={status} />
+          <input type="hidden" name="supplier" value={supplier} />
+        </form>
+
+        <div class="pl__toolbar">
+          <div role="tablist" aria-label="Category" class="pl__tabs">
+            <a href={buildUrl({ category: undefined })} role="tab" aria-selected={!category} class={!category ? "is-active" : ""}>
+              All <span class="pl__tab-count">{allProducts.length}</span>
+            </a>
+            {categoryTabs.map((t) => (
+              <a href={buildUrl({ category: t.id })} role="tab" aria-selected={category === t.id} class={category === t.id ? "is-active" : ""}>
+                {t.name} <span class="pl__tab-count">{t.count}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div class="pl__toolbar">
+          <select id="pl-status-filter" class="pl__facet-select" aria-label="Filter by status">
+            {STATUS_OPTIONS.map((o) => (
+              <option value={buildUrl({ status: o.value || undefined })} selected={status === o.value}>
+                {o.value ? o.label : "+ Status"}
+              </option>
+            ))}
+          </select>
+          <select id="pl-supplier-filter" class="pl__facet-select" aria-label="Filter by supplier">
+            <option value={buildUrl({ supplier: undefined })} selected={!supplier}>+ Supplier</option>
+            {supplierOptions.map((s) => (
+              <option value={buildUrl({ supplier: s })} selected={supplier === s}>{s}</option>
+            ))}
+          </select>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="pl__panel">
+              <div class="pl__grid pl__grid-head">
+                <span>Product</span>
+                <span>Category</span>
+                <span>Location · bin</span>
+                <span class="pl__col-right">On hand</span>
+                <span>Supplier</span>
+                <span>Status</span>
+                <span></span>
+              </div>
+              {filtered.map((p) => (
+                <div class="pl__grid pl__row">
+                  <div class="pl__product-cell">
+                    <span class="pl__product-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9" /></svg>
+                    </span>
+                    <span class="pl__product-name-col">
+                      <span class="pl__product-name">{p.name}</span>
+                      <span class="pl__product-sku">{p.sku}</span>
+                    </span>
+                  </div>
+                  <span class="pl__muted-cell">{p.categoryName}</span>
+                  <span class="pl__muted-cell">—</span>
+                  <span class="pl__col-right pl__on-hand">{p.qty}</span>
+                  <span class="pl__muted-cell">{p.supplier ?? "—"}</span>
+                  <span>
+                    <span class={`pl__pill pl__pill--${p.stockTone}`}>{STOCK_LABEL[p.stockTone]}</span>
+                  </span>
+                  <span>
+                    {p.stockTone !== "in" && (
+                      <a href="/inventory/receiving" class="pl__restock-link">Request restock</a>
+                    )}
+                  </span>
+                </div>
+              ))}
+              <div class="pl__panel-footer">{filtered.length} of {allProducts.length} product{allProducts.length === 1 ? "" : "s"}</div>
+            </div>
+          ) : (
+            <div class="pl__empty">
+              <p class="pl__empty-title">No products found</p>
+              <p class="pl__empty-body">Try a different search or filter.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
 </BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .pl__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .pl__main {
+      padding: 16px;
+    }
+  }
+
+  .pl__header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pl__header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .pl__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .pl__search-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 48px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border: 1px solid var(--sd-input);
+    border-radius: 10px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    color: var(--sd-muted-fg);
+  }
+  .pl__search-bar input[type="search"] {
+    flex-grow: 1;
+    height: 44px;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 16px;
+    color: var(--sd-fg);
+    outline: 0;
+  }
+
+  .pl__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .pl__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    max-width: 100%;
+  }
+  .pl__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .pl__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .pl__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .pl__tabs a.is-active .pl__tab-count {
+    color: var(--sd-muted-fg);
+  }
+
+  .pl__facet-select {
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .pl__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .pl__grid {
+    display: grid;
+    grid-template-columns: minmax(200px, 1.8fr) 100px 150px 80px 130px 110px 140px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 920px;
+  }
+  .pl__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .pl__row {
+    height: 58px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .pl__product-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .pl__product-icon {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pl__product-name-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .pl__product-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pl__product-sku {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .pl__col-right {
+    text-align: right;
+  }
+  .pl__muted-cell {
+    color: var(--sd-fg2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pl__on-hand {
+    font-weight: 500;
+  }
+  .pl__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .pl__pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .pl__pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .pl__pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .pl__restock-link {
+    height: 30px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pl__panel-footer {
+    min-width: 920px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .pl__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .pl__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .pl__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  // Status/Supplier filters — each <option>'s value is already the full
+  // real, server-built target URL (see buildUrl() in the frontmatter),
+  // same real pattern already established by Stock Adjustments' "+ Type"
+  // filter — this just navigates to whatever was picked.
+  document.getElementById("pl-status-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+  document.getElementById("pl-supplier-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Sales/staff screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

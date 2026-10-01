@@ -1,0 +1,1527 @@
+---
+// Literal recreation of the Claude Design canvas's Inventory Staff Stock
+// Adjustments screen (project/StaffAdjust.dc.html -> NavSidebar role="staff"
+// + NavTop + PageAdjust) — the same shared --sd-* shell (NavSidebar.astro
+// role="inventory" / NavTop.astro) already established by Receiving, not
+// AppShell/DESIGN.md.
+//
+// Real vs deferred/fabricated, per the no-fabrication rules:
+//  - Real: active products + real category name + real quantity_on_hand
+//    (same inventory_select_staff RLS already used elsewhere), real
+//    client-side search-to-select for products (same pattern as Receiving/
+//    New Order). "Damaged" vs the other four reason chips (Lost/Found/
+//    Expired/Count correction) maps exactly onto the two real movement
+//    types record_inventory_movement() actually supports for this screen —
+//    'damaged' (forced negative, reason required) and 'adjustment' (any
+//    signed non-zero delta, reason required) — matching the design's own
+//    stated split ("Damaged saves this as a damage record"), not an
+//    invented mapping. Quantity stepper/signed input, live "current -> new
+//    qty" preview, and Cancel/Submit both real. "Submit adjustment" calls
+//    the exact same, unmodified `recordInventoryMovement` action/RPC the
+//    existing Restock/Damage/Adjust pages already use. Real "My
+//    adjustments" / "Stock movements" tabs (adjustment-type movements I
+//    performed vs every movement of every type, store-wide — both real
+//    slices of the same inventory_movements table, same
+//    inventory_movements_select_staff RLS, which already grants
+//    inventory_staff unscoped read access, not just their own rows), real
+//    pagination (same count:"exact"/range() pattern already used by
+//    /inventory/movements), real 7-day window (reuses dashboardRange.ts's
+//    "7d" preset, the same helper/convention every other dashboard in this
+//    project uses — avoids re-deriving the IST bucketing bug class).
+//    "Balance" column: real current quantity_on_hand shown only for the
+//    single most-recent movement of each product in the visible page (the
+//    one case where "balance right after this movement" is exactly equal
+//    to live on-hand stock, zero approximation) — "—" for every older row
+//    of that same product, rather than approximating a historical
+//    point-in-time balance the schema doesn't store snapshots for.
+//  - "Location: Main warehouse" / "Bin: A-02-6": no warehouse/bin/location
+//    field exists anywhere in this schema — the design's 3-cell grid shape
+//    is kept, but both cells show an honest "—" instead of inventing a
+//    single fixed warehouse or a bin code (per your explicit "preserve
+//    structure, use an honest — " instruction).
+//  - "Adjustments over 10 units need admin approval. This one posts right
+//    away.": genuinely no approval workflow exists for inventory
+//    adjustments — CLAUDE.md documents this as a *deliberate, permanent*
+//    Phase 9 design decision ("`inventory_adjustment` stays unreachable by
+//    design... gating routine stock corrections behind super_admin review
+//    would break the real-time correction workflow"), not a gap to fill.
+//    Per your instruction not to fabricate an approval workflow the
+//    backend doesn't support, this banner is omitted entirely (not even as
+//    a "deferred" placeholder, since no such workflow is ever coming).
+//  - "Add photo" (required for Damaged): no file/attachment/storage
+//    capability exists anywhere in this project — omitted entirely, same
+//    reasoning already applied to Receiving's "Add photos".
+//  - "Pending approval" stat card: fabricated (see the approval-workflow
+//    note above) — replaced with a real third stat, "Low stock" (the exact
+//    same store-wide definition already used on Warehouse Tasks' own KPI:
+//    quantity_on_hand > 0 and <= reorder_level), which is genuinely useful
+//    context on this exact screen and reuses an already-established real
+//    metric rather than fabricating a new one.
+//  - Header "Scan item" button and category pill's "pcs" unit suffix:
+//    "Scan item" omitted — the real product field below is already a plain
+//    text input a scanned barcode types into just as well (same reasoning
+//    New Order already used to omit a redundant duplicate "add" button).
+//    "pcs" omitted — no unit-of-measure field exists on products.
+//  - "+ Type" filter (compact select next to "Last 7 days · all products"):
+//    real, filters the same feed query by movement_type — only the 5 real
+//    enum values (restock/sale/adjustment/damaged/return) are offered, no
+//    invented categories. "Reference" column (replacing "Reason" in the
+//    displayed table): real for 'restock' only (the supplier name, via
+//    supplier_id — the only movement type record_inventory_movement() ever
+//    attaches a meaningful cross-reference to); "—" for every other type,
+//    including 'sale'/'return' (which carry a reference_order_id but no
+//    human-friendly order number exists anywhere in this project, same
+//    reasoning already applied to Support Tickets' own reference column) —
+//    never a raw UUID, never an invented "RS-"/"SO-"/"ADJ-"/"TK-" code.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import { resolveDashboardRange } from "../../../lib/dashboardRange";
+
+const updated = Astro.url.searchParams.get("updated");
+const userId = Astro.locals.user!.id;
+const PAGE_SIZE = 9;
+
+const tab = Astro.url.searchParams.get("tab") === "mine" ? "mine" : "all";
+const page = Math.max(1, parseInt(Astro.url.searchParams.get("page") ?? "1", 10) || 1);
+const MOVEMENT_TYPES = ["restock", "sale", "adjustment", "damaged", "return"] as const;
+const rawTypeFilter = Astro.url.searchParams.get("type") ?? "";
+const typeFilter = (MOVEMENT_TYPES as readonly string[]).includes(rawTypeFilter) ? rawTypeFilter : "";
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(Astro.url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/inventory/adjustments?${qs}` : "/inventory/adjustments";
+}
+
+// Real open-ticket count for the shared sidebar's "Support tickets" badge.
+const { data: myTickets } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("status")
+  .eq("assigned_to", userId);
+const openTicketCount = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+
+// Real active products + current stock + category, for the product picker
+// and the store-wide "Low stock" stat (same definition as Warehouse Tasks).
+const { data: productRows } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, categories(name), inventory(quantity_on_hand, reorder_level)")
+  .eq("is_active", true)
+  .order("name");
+
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+function categoryOf(row: { categories: unknown }): string | null {
+  return (row.categories as unknown as { name: string } | null)?.name ?? null;
+}
+
+const products = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+  return { id: p.id, sku: p.sku, name: p.name, category: categoryOf(p), qty, stockTone };
+});
+const lowStockCount = (productRows ?? []).filter((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  return qty > 0 && qty <= reorderLevel;
+}).length;
+
+// Real 7-day window — reuses the exact same shared helper/IST convention
+// every other dashboard in this project already uses.
+const range = resolveDashboardRange("7d");
+
+// Real "this week, performed by me" stats — Adjustments and Damaged are
+// tracked separately (matching the design's own separate stat cards).
+async function sumMine(movementType: "adjustment" | "damaged") {
+  const { data } = await Astro.locals.supabase
+    .from("inventory_movements")
+    .select("quantity_delta")
+    .eq("performed_by", userId)
+    .eq("movement_type", movementType)
+    .gte("created_at", range.from!)
+    .lt("created_at", range.to!);
+  const rows = data ?? [];
+  return { count: rows.length, units: rows.reduce((sum, r) => sum + Math.abs(r.quantity_delta as number), 0) };
+}
+const myAdjustments = await sumMine("adjustment");
+const myDamaged = await sumMine("damaged");
+
+// Real tab counts (both computed regardless of which tab is active, for
+// the tab labels themselves) — "My adjustments" = adjustment-type
+// movements I performed; "Stock movements" = every movement of every type,
+// store-wide (inventory_movements_select_staff already grants inventory_staff
+// unscoped read access, not just their own rows) — both scoped to the same
+// real 7-day window shown next to the feed.
+const { count: mineCount } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("id", { count: "exact", head: true })
+  .eq("performed_by", userId)
+  .eq("movement_type", "adjustment")
+  .gte("created_at", range.from!)
+  .lt("created_at", range.to!);
+
+const { count: allCount } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("id", { count: "exact", head: true })
+  .gte("created_at", range.from!)
+  .lt("created_at", range.to!);
+
+// Real feed for whichever tab is active, paginated the same way
+// /inventory/movements already does. supplier_id/suppliers(name) added
+// solely to back the real "Reference" column below (restock movements are
+// the only type with a real, meaningful reference value — see that
+// column's own note).
+let feedQuery = Astro.locals.supabase
+  .from("inventory_movements")
+  .select("id, movement_type, quantity_delta, created_at, product_id, supplier_id, products(sku, name), suppliers(name)", { count: "exact" })
+  .gte("created_at", range.from!)
+  .lt("created_at", range.to!);
+
+if (tab === "mine") {
+  feedQuery = feedQuery.eq("performed_by", userId).eq("movement_type", "adjustment");
+}
+if (typeFilter) {
+  feedQuery = feedQuery.eq("movement_type", typeFilter);
+}
+
+const from = (page - 1) * PAGE_SIZE;
+const to = from + PAGE_SIZE - 1;
+const { data: feedRows, count: feedCount } = await feedQuery.order("created_at", { ascending: false }).range(from, to);
+const totalPages = feedCount ? Math.ceil(feedCount / PAGE_SIZE) : 1;
+
+const TYPE_LABEL: Record<string, string> = {
+  restock: "Received",
+  sale: "Sold",
+  adjustment: "Adjusted",
+  damaged: "Damaged",
+  return: "Returned",
+};
+const TYPE_TONE: Record<string, string> = {
+  restock: "success",
+  sale: "neutral",
+  adjustment: "info",
+  damaged: "danger",
+  return: "info",
+};
+const TYPE_FILTER_OPTIONS = [{ value: "", label: "All types" }, ...MOVEMENT_TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] }))];
+
+// Real "reference" per row — record_inventory_movement() only ever sets a
+// meaningful cross-reference for 'restock' (supplier_id); 'sale'/'return'
+// carry a reference_order_id but this project has no human-friendly order
+// number (same reasoning already applied to Support Tickets' reference
+// column), and 'adjustment'/'damaged' carry no reference field at all — so
+// every one of those shows an honest "—" rather than a raw UUID or an
+// invented code (no "RS-"/"SO-"/"ADJ-"/"TK-" scheme exists anywhere in this
+// schema). Compact date format (drops the year — this feed is always a
+// 7-day window, so the year is never ambiguous) purely for the tighter
+// row density asked for here; the underlying created_at value is unchanged.
+const dateFormatter = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+const seenProduct = new Set<string>();
+const feed = (feedRows ?? []).map((r) => {
+  const product = r.products as unknown as { sku: string; name: string } | null;
+  const supplier = r.suppliers as unknown as { name: string } | null;
+  const productId = r.product_id as string;
+  const isLatestForProduct = !seenProduct.has(productId);
+  seenProduct.add(productId);
+  const liveProduct = products.find((p) => p.id === productId);
+  return {
+    id: r.id as string,
+    when: dateFormatter.format(new Date(r.created_at as string)),
+    productName: product?.name ?? "—",
+    sku: product?.sku ?? "",
+    type: r.movement_type as string,
+    typeLabel: TYPE_LABEL[r.movement_type as string] ?? r.movement_type,
+    typeTone: TYPE_TONE[r.movement_type as string] ?? "neutral",
+    reference: r.movement_type === "restock" && supplier?.name ? supplier.name : "—",
+    change: r.quantity_delta as number,
+    balance: isLatestForProduct && liveProduct ? String(liveProduct.qty) : "—",
+  };
+});
+---
+
+<BaseLayout title="Stock adjustments — Inventory">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Stock adjustments" role="inventory" ticketBadgeCount={openTicketCount} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Inventory" page="Stock adjustments" />
+
+      <main id="main-content" class="adj__main">
+        <div class="adj__header">
+          <h1>Stock adjustments</h1>
+          <span class="adj__subtitle">Correct on-hand stock · every change is logged under your name and shows in stock movements</span>
+        </div>
+
+        {
+          updated && (
+            <p class="adj__banner" role="status">
+              Adjustment recorded.
+            </p>
+          )
+        }
+
+        <div class="adj__body">
+          <section aria-label="New adjustment" class="adj__form-card">
+            <div class="adj__form-head">
+              <h2>New adjustment</h2>
+              <span class="adj__form-head-sub">Search the item, then record what changed.</span>
+            </div>
+
+            <div class="adj__field-col">
+              <label for="adj-product-search">Product</label>
+              <div class="adj__product-search-wrap">
+                <input type="search" id="adj-product-search" class="adj__product-search" placeholder="Search by name or SKU…" aria-label="Search products" autocomplete="off" />
+                <div id="adj-product-results" class="adj__picker-results" role="listbox" aria-label="Products" hidden></div>
+              </div>
+              <div id="adj-selected" class="adj__selected-product" hidden>
+                <span id="adj-selected-name" class="adj__selected-name"></span>
+                <span id="adj-selected-category" class="adj__selected-category" hidden></span>
+                <button type="button" id="adj-clear-product" aria-label="Clear product" class="adj__clear-btn">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="adj__grid3">
+              <div class="adj__field-col">
+                <span>Location</span>
+                <div class="adj__static-cell">—</div>
+              </div>
+              <div class="adj__field-col">
+                <span>Bin</span>
+                <div class="adj__static-cell">—</div>
+              </div>
+              <div class="adj__field-col">
+                <span>Current qty</span>
+                <div class="adj__static-cell adj__current-qty" id="adj-current-qty">—</div>
+              </div>
+            </div>
+
+            <div class="adj__field-col">
+              <span id="adj-reason-label">Reason</span>
+              <div role="radiogroup" aria-labelledby="adj-reason-label" class="adj__reasons" id="adj-reasons">
+                {["Damaged", "Lost", "Found", "Expired", "Count correction"].map((label) => (
+                  <button type="button" role="radio" aria-checked="false" class="adj__reason-chip" data-reason={label}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span class="adj__hint">Damaged saves this as a damage record.</span>
+            </div>
+
+            <div class="adj__field-col">
+              <span>Quantity change</span>
+              <div class="adj__qty-row">
+                <div class="adj__stepper">
+                  <button type="button" id="adj-dec" aria-label="Decrease by 1" class="adj__stepper-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14" /></svg>
+                  </button>
+                  <input type="text" inputmode="numeric" id="adj-qty" aria-label="Quantity change" value="" class="adj__qty-input" />
+                  <button type="button" id="adj-inc" aria-label="Increase by 1" class="adj__stepper-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                  </button>
+                </div>
+                <div class="adj__preview">
+                  <span class="adj__preview-label">New qty</span>
+                  <span id="adj-preview-value" class="adj__preview-value">Select a product</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="adj__field-col">
+              <label for="adj-note">Note</label>
+              <textarea id="adj-note" class="adj__textarea" placeholder="What did you check or do?"></textarea>
+            </div>
+
+            <p id="adj-form-message" class="adj__status-message" role="status"></p>
+
+            <div class="adj__spacer"></div>
+            <div class="adj__actions">
+              <button type="button" id="adj-cancel" class="adj__btn">Cancel</button>
+              <button type="button" id="adj-submit" class="adj__btn adj__btn--primary" disabled>Submit adjustment</button>
+            </div>
+          </section>
+
+          <div class="adj__right">
+            <div class="adj__stats">
+              <div class="adj__stat-card">
+                <span class="adj__stat-label">My adjustments</span>
+                <div class="adj__stat-row">
+                  <span class="adj__stat-value">{myAdjustments.count}</span>
+                  <span class="adj__stat-note">this week · {myAdjustments.units} unit{myAdjustments.units === 1 ? "" : "s"}</span>
+                </div>
+              </div>
+              <div class="adj__stat-card">
+                <span class="adj__stat-label">Damaged this week</span>
+                <div class="adj__stat-row">
+                  <span class="adj__stat-value">{myDamaged.units}</span>
+                  <span class="adj__stat-note">units · {myDamaged.count} record{myDamaged.count === 1 ? "" : "s"}</span>
+                </div>
+              </div>
+              <div class="adj__stat-card">
+                <span class="adj__stat-label">Low stock</span>
+                <div class="adj__stat-row">
+                  <span class="adj__stat-value">{lowStockCount}</span>
+                  <span class="adj__stat-note">store-wide</span>
+                </div>
+              </div>
+            </div>
+
+            <section aria-label="Stock movements" class="adj__feed-card">
+              <div class="adj__feed-head">
+                <div role="tablist" aria-label="Adjustments and movements" class="adj__tabs">
+                  <a href={buildUrl({ tab: "mine", page: undefined })} role="tab" aria-selected={tab === "mine"} class={`adj__tab ${tab === "mine" ? "is-active" : ""}`}>
+                    My adjustments <span class="adj__tab-count">{mineCount ?? 0}</span>
+                  </a>
+                  <a href={buildUrl({ tab: undefined, page: undefined })} role="tab" aria-selected={tab === "all"} class={`adj__tab ${tab === "all" ? "is-active" : ""}`}>
+                    Stock movements <span class="adj__tab-count">{allCount ?? 0}</span>
+                  </a>
+                </div>
+                <div class="adj__feed-head-right">
+                  <span class="adj__feed-scope">Last 7 days · all products</span>
+                  <select id="adj-type-filter" class="adj__type-filter" aria-label="Filter by movement type">
+                    {TYPE_FILTER_OPTIONS.map((o) => (
+                      <option value={buildUrl({ type: o.value || undefined, page: undefined })} selected={typeFilter === o.value}>
+                        {o.value ? o.label : "+ Type"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div class="adj__feed-scroll">
+                <div class="adj__row-grid adj__row-grid--head">
+                  <span>Date</span><span>Product</span><span>Type</span><span>Reference</span><span class="adj__col-right">Qty</span><span class="adj__col-right">Balance</span>
+                </div>
+                {
+                  feed.length > 0 ? (
+                    feed.map((r) => (
+                      <div class="adj__row-grid adj__row">
+                        <span class="adj__row-date">{r.when}</span>
+                        <span class="adj__row-product">
+                          <span class="adj__row-product-name">{r.productName}</span>
+                          <span class="adj__row-product-sku">{r.sku}</span>
+                        </span>
+                        <span>
+                          <span class={`adj__type-pill adj__type-pill--${r.typeTone}`}>{r.typeLabel}</span>
+                        </span>
+                        <span class="adj__row-reference">{r.reference}</span>
+                        <span class={`adj__col-right adj__row-change ${r.change > 0 ? "is-positive" : "is-negative"}`}>
+                          {r.change > 0 ? `+${r.change}` : r.change}
+                        </span>
+                        <span class="adj__col-right adj__row-balance">{r.balance}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p class="adj__feed-empty">
+                      {tab === "mine" ? "No adjustments recorded by you in the last 7 days." : "No stock movements in the last 7 days."}
+                    </p>
+                  )
+                }
+              </div>
+
+              {feed.length > 0 && (
+                <div class="adj__feed-footer">
+                  <span class="adj__feed-footer-count">
+                    {feed.length} of {feedCount ?? 0} movement{(feedCount ?? 0) === 1 ? "" : "s"} this week
+                  </span>
+                  <span class="adj__feed-footer-page">Page {page} of {totalPages}</span>
+                  <div class="adj__feed-footer-nav">
+                    <a
+                      href={page > 1 ? buildUrl({ page: String(page - 1) }) : undefined}
+                      aria-disabled={page <= 1}
+                      class={`adj__page-btn ${page <= 1 ? "is-disabled" : ""}`}
+                      aria-label="Previous page"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+                    </a>
+                    <a
+                      href={page < totalPages ? buildUrl({ page: String(page + 1) }) : undefined}
+                      aria-disabled={page >= totalPages}
+                      class={`adj__page-btn ${page >= totalPages ? "is-disabled" : ""}`}
+                      aria-label="Next page"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+                    </a>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="adj-data" hidden data-products={JSON.stringify(products)}></div>
+</BaseLayout>
+
+<style is:global>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .adj__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .adj__main {
+      padding: 16px;
+    }
+  }
+  .adj__header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .adj__header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .adj__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .adj__banner {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-success-fg);
+  }
+
+  .adj__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1050px) {
+    .adj__body {
+      flex-direction: row;
+    }
+  }
+
+  .adj__form-card {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  @media (min-width: 1050px) {
+    .adj__form-card {
+      width: 400px;
+      flex-shrink: 0;
+    }
+  }
+  .adj__form-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .adj__form-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .adj__form-head-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adj__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .adj__field-col > label,
+  .adj__field-col > span:first-child {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .adj__hint {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adj__product-search-wrap {
+    position: relative;
+  }
+  .adj__product-search {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    outline: 0;
+  }
+  .adj__picker-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+  }
+  .adj__picker-row {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    color: var(--sd-fg);
+  }
+  .adj__picker-row:hover {
+    background: var(--sd-muted);
+  }
+  .adj__picker-empty {
+    padding: 12px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .adj__picker-row-sub {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex-grow: 1;
+  }
+  .adj__picker-row-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adj__picker-row-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .adj__stock-pill {
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .adj__stock-pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .adj__stock-pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .adj__stock-pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+
+  .adj__selected-product {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 6px 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .adj__selected-name {
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adj__selected-category {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-fg2);
+    flex-shrink: 0;
+  }
+  .adj__clear-btn {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .adj__grid3 {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 10px;
+  }
+  .adj__grid3 .adj__field-col > span {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .adj__static-cell {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    font-size: 14px;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+  }
+  .adj__current-qty {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--sd-fg);
+  }
+
+  .adj__reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .adj__reason-chip {
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg2);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .adj__reason-chip[aria-checked="true"] {
+    border: 1px solid var(--sd-primary);
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+
+  .adj__qty-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .adj__stepper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .adj__stepper-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .adj__qty-input {
+    width: 84px;
+    height: 48px;
+    box-sizing: border-box;
+    border: 1px solid var(--sd-input);
+    border-radius: 10px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 22px;
+    font-weight: 600;
+    text-align: center;
+    color: var(--sd-fg);
+  }
+  .adj__qty-input.is-negative {
+    color: var(--sd-danger-fg);
+  }
+  .adj__qty-input.is-positive {
+    color: var(--sd-success-fg);
+  }
+  .adj__preview {
+    flex-grow: 1;
+    min-width: 140px;
+    height: 48px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 10px;
+    background: var(--sd-shell);
+    border: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+  .adj__preview-label {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .adj__preview-value {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .adj__textarea {
+    height: 60px;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 10px 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+
+  .adj__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+
+  .adj__spacer {
+    flex-grow: 1;
+  }
+  .adj__actions {
+    display: flex;
+    gap: 8px;
+  }
+  .adj__btn {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 18px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .adj__btn--primary {
+    flex-grow: 1;
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font-size: 15px;
+  }
+  .adj__btn--primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .adj__right {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .adj__stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .adj__stat-card {
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .adj__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .adj__stat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .adj__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .adj__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adj__feed-card {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .adj__feed-head {
+    padding: 10px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .adj__tabs {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--sd-muted);
+    gap: 2px;
+  }
+  .adj__tab {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .adj__tab.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .adj__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+  }
+  .adj__feed-head-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .adj__feed-scope {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    white-space: nowrap;
+  }
+  .adj__type-filter {
+    height: 26px;
+    box-sizing: border-box;
+    padding: 0 8px;
+    border-radius: 7px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .adj__feed-scroll {
+    overflow-x: auto;
+  }
+  .adj__row-grid {
+    display: grid;
+    grid-template-columns: 88px minmax(130px, 1fr) 70px minmax(90px, 0.9fr) 46px 56px;
+    gap: 10px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 590px;
+  }
+  .adj__row-grid--head {
+    height: 32px;
+    background: var(--sd-shell);
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .adj__row {
+    min-height: 50px;
+    box-sizing: border-box;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 12.5px;
+  }
+  .adj__row-date {
+    font-size: 11.5px;
+    color: var(--sd-muted-fg);
+    line-height: 1.3;
+    overflow-wrap: break-word;
+  }
+  .adj__row-product {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .adj__row-product-name {
+    display: block;
+    max-width: 100%;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adj__row-product-sku {
+    font-size: 11px;
+    color: var(--sd-muted-fg);
+  }
+  .adj__row-reference {
+    display: block;
+    max-width: 100%;
+    font-size: 12px;
+    color: var(--sd-fg2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .adj__col-right {
+    text-align: right;
+  }
+  .adj__row-change {
+    font-weight: 600;
+  }
+  .adj__row-change.is-positive {
+    color: var(--sd-success-fg);
+  }
+  .adj__row-change.is-negative {
+    color: var(--sd-danger-fg);
+  }
+  .adj__row-balance {
+    color: var(--sd-fg2);
+  }
+  .adj__type-pill {
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .adj__type-pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .adj__type-pill--neutral {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .adj__type-pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .adj__type-pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .adj__feed-empty {
+    margin: 0;
+    padding: 24px 16px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .adj__feed-footer {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .adj__feed-footer-count {
+    flex-grow: 1;
+  }
+  .adj__feed-footer-page {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .adj__feed-footer-nav {
+    display: flex;
+    gap: 4px;
+  }
+  .adj__page-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+  .adj__page-btn.is-disabled {
+    color: var(--sd-muted-fg);
+    pointer-events: none;
+    opacity: 0.5;
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  interface Product {
+    id: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    qty: number;
+    stockTone: "in" | "low" | "out";
+  }
+
+  const dataEl = document.getElementById("adj-data") as HTMLElement;
+  const products = JSON.parse(dataEl.dataset.products!) as Product[];
+  const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+  let selectedProduct: Product | null = null;
+  let selectedReason: string | null = null;
+
+  // --- Product search-to-select ---
+  const productSearch = document.querySelector<HTMLInputElement>("#adj-product-search")!;
+  const productResults = document.querySelector<HTMLDivElement>("#adj-product-results")!;
+  const selectedBox = document.querySelector<HTMLDivElement>("#adj-selected")!;
+  const selectedNameEl = document.querySelector<HTMLSpanElement>("#adj-selected-name")!;
+  const selectedCategoryEl = document.querySelector<HTMLSpanElement>("#adj-selected-category")!;
+  const clearProductBtn = document.querySelector<HTMLButtonElement>("#adj-clear-product")!;
+  const currentQtyEl = document.querySelector<HTMLDivElement>("#adj-current-qty")!;
+
+  function renderProductResults(filter: string) {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) {
+      productResults.hidden = true;
+      productResults.innerHTML = "";
+      return;
+    }
+    const matches = products.filter((p) => p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle)).slice(0, 20);
+    productResults.innerHTML = "";
+    if (matches.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "adj__picker-empty";
+      empty.textContent = "No products found.";
+      productResults.appendChild(empty);
+    } else {
+      matches.forEach((p) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "adj__picker-row";
+        row.setAttribute("role", "option");
+
+        const sub = document.createElement("span");
+        sub.className = "adj__picker-row-sub";
+        const nameEl = document.createElement("span");
+        nameEl.className = "adj__picker-row-name";
+        nameEl.textContent = p.name;
+        const metaEl = document.createElement("span");
+        metaEl.className = "adj__picker-row-meta";
+        metaEl.append(p.sku);
+        const pill = document.createElement("span");
+        pill.className = `adj__stock-pill adj__stock-pill--${p.stockTone}`;
+        pill.textContent = p.stockTone === "out" ? STOCK_LABEL.out : `${STOCK_LABEL[p.stockTone]} ${p.qty}`;
+        metaEl.appendChild(pill);
+        sub.appendChild(nameEl);
+        sub.appendChild(metaEl);
+        row.appendChild(sub);
+
+        row.addEventListener("click", () => {
+          selectProduct(p);
+          productSearch.value = "";
+          productResults.hidden = true;
+        });
+        productResults.appendChild(row);
+      });
+    }
+    productResults.hidden = false;
+  }
+  productSearch.addEventListener("input", () => renderProductResults(productSearch.value));
+  document.addEventListener("click", (e) => {
+    if (!productResults.hidden && !productResults.contains(e.target as Node) && e.target !== productSearch) {
+      productResults.hidden = true;
+    }
+  });
+
+  function selectProduct(p: Product) {
+    selectedProduct = p;
+    selectedNameEl.textContent = `${p.name} · ${p.sku}`;
+    if (p.category) {
+      selectedCategoryEl.textContent = p.category;
+      selectedCategoryEl.hidden = false;
+    } else {
+      selectedCategoryEl.hidden = true;
+    }
+    selectedBox.hidden = false;
+    productSearch.hidden = true;
+    currentQtyEl.textContent = String(p.qty);
+    updatePreview();
+    updateSubmitState();
+  }
+  clearProductBtn.addEventListener("click", () => {
+    selectedProduct = null;
+    selectedBox.hidden = true;
+    productSearch.hidden = false;
+    productSearch.value = "";
+    currentQtyEl.textContent = "—";
+    updatePreview();
+    updateSubmitState();
+  });
+
+  // --- Reason chips ---
+  const reasonButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".adj__reason-chip"));
+  const qtyInput = document.querySelector<HTMLInputElement>("#adj-qty")!;
+
+  reasonButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const reason = btn.dataset.reason!;
+      selectedReason = reason;
+      reasonButtons.forEach((b) => b.setAttribute("aria-checked", String(b === btn)));
+
+      const noteEl = document.querySelector<HTMLTextAreaElement>("#adj-note")!;
+      if (!noteEl.value.trim()) noteEl.value = reason;
+
+      if (reason === "Damaged") {
+        // Damage can only ever remove stock — force the sign negative,
+        // matching record_inventory_movement()'s own -abs() behavior for
+        // the 'damaged' movement type.
+        const n = parseInt(qtyInput.value, 10);
+        if (Number.isFinite(n) && n > 0) qtyInput.value = String(-n);
+        if (!qtyInput.value || qtyInput.value === "0") qtyInput.value = "-1";
+      }
+      updateQtyStyle();
+      updatePreview();
+      updateSubmitState();
+    });
+  });
+
+  // --- Quantity stepper ---
+  function currentQtyValue(): number {
+    const n = parseInt(qtyInput.value, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function setQty(n: number) {
+    qtyInput.value = n === 0 ? "" : String(n);
+    updateQtyStyle();
+    updatePreview();
+    updateSubmitState();
+  }
+  document.querySelector<HTMLButtonElement>("#adj-dec")!.addEventListener("click", () => {
+    let next = currentQtyValue() - 1;
+    if (selectedReason === "Damaged" && next >= 0) next = -1;
+    setQty(next);
+  });
+  document.querySelector<HTMLButtonElement>("#adj-inc")!.addEventListener("click", () => {
+    let next = currentQtyValue() + 1;
+    if (selectedReason === "Damaged" && next >= 0) next = -1;
+    setQty(next);
+  });
+  qtyInput.addEventListener("input", () => {
+    updateQtyStyle();
+    updatePreview();
+    updateSubmitState();
+  });
+
+  function updateQtyStyle() {
+    const n = currentQtyValue();
+    qtyInput.classList.toggle("is-negative", n < 0);
+    qtyInput.classList.toggle("is-positive", n > 0);
+  }
+
+  const previewEl = document.querySelector<HTMLSpanElement>("#adj-preview-value")!;
+  function updatePreview() {
+    if (!selectedProduct) {
+      previewEl.textContent = "Select a product";
+      return;
+    }
+    const delta = currentQtyValue();
+    const next = selectedProduct.qty + delta;
+    previewEl.textContent = `${selectedProduct.qty} → ${next}`;
+    previewEl.style.color = next < 0 ? "var(--sd-danger-fg)" : "";
+  }
+
+  // --- Submit ---
+  const messageEl = document.querySelector<HTMLParagraphElement>("#adj-form-message")!;
+  const noteInput = document.querySelector<HTMLTextAreaElement>("#adj-note")!;
+  const submitBtn = document.querySelector<HTMLButtonElement>("#adj-submit")!;
+  const cancelBtn = document.querySelector<HTMLButtonElement>("#adj-cancel")!;
+
+  function updateSubmitState() {
+    const delta = currentQtyValue();
+    const newQty = selectedProduct ? selectedProduct.qty + delta : 0;
+    submitBtn.disabled = !selectedProduct || !selectedReason || delta === 0 || newQty < 0;
+  }
+
+  function resetForm() {
+    selectedProduct = null;
+    selectedReason = null;
+    selectedBox.hidden = true;
+    productSearch.hidden = false;
+    productSearch.value = "";
+    currentQtyEl.textContent = "—";
+    qtyInput.value = "";
+    noteInput.value = "";
+    reasonButtons.forEach((b) => b.setAttribute("aria-checked", "false"));
+    messageEl.textContent = "";
+    updateQtyStyle();
+    updatePreview();
+    updateSubmitState();
+  }
+  cancelBtn.addEventListener("click", resetForm);
+
+  submitBtn.addEventListener("click", async () => {
+    messageEl.textContent = "";
+    if (!selectedProduct || !selectedReason) return;
+
+    const delta = currentQtyValue();
+    if (delta === 0) {
+      messageEl.textContent = "Enter a non-zero quantity change.";
+      return;
+    }
+    const reasonText = noteInput.value.trim();
+    if (!reasonText) {
+      messageEl.textContent = "Enter a note describing the reason.";
+      noteInput.focus();
+      return;
+    }
+    if (selectedProduct.qty + delta < 0) {
+      messageEl.textContent = "This would take stock below zero.";
+      return;
+    }
+
+    const movementType = selectedReason === "Damaged" ? "damaged" : "adjustment";
+    const quantity = movementType === "damaged" ? Math.abs(delta) : delta;
+
+    submitBtn.disabled = true;
+    const fd = new FormData();
+    fd.set("productId", selectedProduct.id);
+    fd.set("movementType", movementType);
+    fd.set("quantity", String(quantity));
+    fd.set("reason", reasonText);
+
+    const { error } = await actions.recordInventoryMovement(fd);
+
+    if (error) {
+      messageEl.textContent = error.message;
+      submitBtn.disabled = false;
+      return;
+    }
+
+    window.location.href = "/inventory/adjustments?updated=1";
+  });
+
+  updateQtyStyle();
+  updatePreview();
+  updateSubmitState();
+
+  // --- Type filter (compact "+ Type" select) — each <option>'s value is
+  // already the full real, server-built target URL (see buildUrl() in the
+  // frontmatter), so this just navigates to whatever was picked. ---
+  document.getElementById("adj-type-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Sales/staff screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

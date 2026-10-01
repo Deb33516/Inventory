@@ -1,0 +1,1097 @@
+---
+// Literal recreation of the Claude Design canvas's Super Admin Dashboard
+// screen (project/SuperAdmin.dc.html / SuperAdminDark.dc.html) — this
+// REPLACES the earlier minimal placeholder that used to live at this same
+// route (/super, unchanged). Shell: NavSidebar role="super" (its "super"
+// role config in project/NavSidebar.dc.html, now updated with this turn's
+// real "Overview"/"Access"/"System" grouping — see that file's own header
+// comment) + a new dedicated SuperNavTop.astro (the artboard bakes its own
+// header markup directly, same as Admin.dc.html did, so it gets its own
+// component rather than reusing the generic NavTop.astro — see that
+// component's own header comment for the full reasoning).
+//
+// PERMISSIONS: unchanged — /super is already gated to super_admin only by
+// src/middleware.ts (ROLE_GATED_PREFIXES, from lib/roles.ts), not touched
+// this turn. No RLS, no migration, no schema change anywhere in this turn —
+// every real value below is read through RLS policies that already exist
+// and already grant super_admin unscoped access (profiles_select_all_for_admin,
+// orders_select_staff, approval_requests_select_super_admin,
+// audit_logs_select_super_admin — all confirmed live before writing this
+// page, not assumed).
+//
+// NO-FABRICATION DECISIONS — every KPI/chart/table value below is real,
+// computed from existing tables/RPCs already used elsewhere in this project
+// (profiles, orders via dashboard_revenue_trend, approval_requests,
+// audit_logs — zero new RPCs/views/migrations). Where the design shows a
+// number/concept this schema genuinely has no equivalent for, it is either
+// honestly omitted or relabeled to what it actually is — never copied from
+// the demo, never silently reinterpreted:
+//  - "Revenue · year to date" / "▲ 12.4% vs last year" / sparkline: real
+//    calendar-YTD revenue (dashboard_revenue_trend RPC, same real function
+//    every other dashboard uses — excludes cancelled orders). The
+//    year-over-year %% is real when the same calendar-YTD window last year
+//    had any revenue to compare against; this project's live data only
+//    starts in September 2026, so an honest "No orders last year" is shown
+//    instead of a fabricated percentage. The sparkline reuses the same 6
+//    real monthly points as the "Revenue by month" panel below (only
+//    rendered once ≥2 real months have data).
+//  - "Customer accounts" / "+38 new this month": real count of profiles
+//    with role='customer', real count of those with created_at in the
+//    current real IST calendar month. "No new customers this month" shown
+//    honestly when that count is zero.
+//  - "Active users" / "46" / "Internal team · +3 this month": real count of
+//    every non-customer profile (sales_staff/inventory_staff/admin/
+//    super_admin), real count of those created this month.
+//  - "Uptime · 30 days" / "99.98%" / the day-by-day uptime bar: DROPPED
+//    entirely, not even as a disabled placeholder. No server/infrastructure
+//    health monitoring exists anywhere in this project — this is exactly
+//    the "uptime percentage"/"system metric" the no-fabrication rules
+//    explicitly forbid inventing, and there is no honest partial version of
+//    it to show. Replaced with a genuinely real 4th KPI instead: "Pending
+//    approvals" (approval_requests where status='pending') — real count,
+//    thematically the correct kind of thing for a Super Admin to see at a
+//    glance (the same table review_approval_request() operates on), not
+//    invented to fill the grid slot.
+//  - Header "All systems normal" status pill: dropped entirely, same reason
+//    as the uptime KPI above — no real system-health signal exists.
+//  - Header "Invite user" button: omitted — see SuperNavTop.astro's own
+//    header comment (a real inviteStaff action exists, but its real UI
+//    lives on /admin/staff, not here, and this turn only rebuilds the
+//    Dashboard).
+//  - "Revenue by month": real IST calendar-month revenue for the trailing 6
+//    real months (dashboard_revenue_trend RPC, bucketed by month here
+//    exactly like /admin's own "Revenue trend" chart already does), shown
+//    as the design's own horizontal bar-row layout with real ₹ amounts —
+//    not the demo's fabricated 28/31/33/32/35.8/38.6 figures.
+//  - "Team accounts by role": real profiles grouped by role, restricted to
+//    the 4 real staff roles (customer excluded — this panel is about the
+//    internal team, matching the design's own "N active internal users"
+//    framing). Real total, real per-role counts and real donut proportions
+//    — not the demo's fabricated 22/18/4/2. "Manage roles & permissions →"
+//    link omitted: /super/roles doesn't exist yet (explicitly out of scope
+//    this turn) and linking to a route that doesn't exist would be worse
+//    than no link (same reasoning /admin's own dashboard already used for
+//    its own not-yet-built destinations).
+//  - "Recent user activity": relabeled from the demo's fake roster to the 5
+//    real most-recently-created non-customer profiles (name, role, and
+//    "Joined" — real created_at — real Active/Inactive from the real
+//    is_active column). The design's "Last sign-in" column has no real
+//    equivalent anywhere in this schema (no sign-in tracking is exposed
+//    beyond auth.users, which nothing in this app currently reads) —
+//    relabeled to "Joined" rather than fabricated. The design's "Invited"
+//    status also has no real equivalent (is_active is a real two-state
+//    boolean, not a three-state lifecycle) — only real Active/Inactive ever
+//    render. "All users" link omitted: /super/users doesn't exist yet.
+//  - "Audit log": real audit_logs rows (already unscoped-readable by
+//    super_admin via audit_logs_select_super_admin), real actor name (join
+//    profiles), real timestamp. Rendered into a real sentence per real
+//    `action` value this schema actually produces today (staff_invited,
+//    approval_approved, approval_rejected — the only three actions any code
+//    in this project ever inserts), with approval_approved/rejected further
+//    enriched with the real target action_type via a join to
+//    approval_requests when approval_request_id is set. Any future action
+//    value this schema doesn't know how to phrase yet falls back to a
+//    plain, still-entirely-real "{actor} — {action} on {entity_table}"
+//    rather than being hidden or invented. "Open log" link omitted:
+//    /super/audit-log doesn't exist yet.
+//  - Header "Export" button: no export/report-generation capability exists
+//    anywhere in this project — omitted (same precedent as /admin's own
+//    dashboard).
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import NavSidebar from "../../components/staff/NavSidebar.astro";
+import SuperNavTop from "../../components/staff/SuperNavTop.astro";
+import { resolveDashboardRange } from "../../lib/dashboardRange";
+
+// dashboard_revenue_trend's real return shape (day/revenue/order_count) —
+// not present in the generated Supabase types (RPC return rows come back
+// untyped), so annotated explicitly here, same as /admin's own dashboard.
+interface RevenueTrendRow {
+  day: string;
+  revenue: number;
+  order_count: number;
+}
+
+interface ProfileRow {
+  id: string;
+  role: "customer" | "sales_staff" | "inventory_staff" | "admin" | "super_admin";
+  full_name: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+interface AuditLogRow {
+  id: string;
+  actor_id: string;
+  action: string;
+  entity_table: string;
+  entity_id: string;
+  new_value: Record<string, unknown> | null;
+  approval_request_id: string | null;
+  created_at: string;
+}
+
+const ROLE_LABEL: Record<ProfileRow["role"], string> = {
+  customer: "Customer",
+  sales_staff: "Sales staff",
+  inventory_staff: "Inventory staff",
+  admin: "Admin",
+  super_admin: "Super admin",
+};
+
+const ACTION_TYPE_LABEL: Record<string, string> = {
+  delete_product: "a delete-product",
+  deactivate_staff: "a deactivate-staff",
+  change_role: "a change-role",
+  cancel_paid_order: "a cancel-order",
+  refund_payment: "a refund-payment",
+};
+
+// Same IST-anchoring technique dashboardRange.ts already uses, generalized
+// to calendar-month boundaries (needed here because dashboardRange.ts only
+// exports fixed day-count/YTD presets, not month boundaries) — identical
+// helper to the one /admin/index.astro already defines for itself.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+function istMonthBoundsUtc(year: number, month0: number): { from: string; to: string } {
+  const fromUtcMs = Date.UTC(year, month0, 1) - IST_OFFSET_MS;
+  const toUtcMs = Date.UTC(year, month0 + 1, 1) - IST_OFFSET_MS;
+  return { from: new Date(fromUtcMs).toISOString(), to: new Date(toUtcMs).toISOString() };
+}
+const nowIst = new Date(Date.now() + IST_OFFSET_MS);
+const curYear = nowIst.getUTCFullYear();
+const curMonth0 = nowIst.getUTCMonth();
+const thisMonth = istMonthBoundsUtc(curYear, curMonth0);
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const ytd = resolveDashboardRange("ytd");
+// Same calendar-YTD window, one year earlier, for an apples-to-apples
+// year-over-year comparison (Jan 1 last year through "today" last year).
+const lastYearYtd = istMonthBoundsUtc(curYear - 1, 0);
+lastYearYtd.to = new Date(Date.UTC(curYear - 1, curMonth0, nowIst.getUTCDate() + 1) - IST_OFFSET_MS).toISOString();
+const sixMoStart = istMonthBoundsUtc(curYear, curMonth0 - 5).from;
+
+const [
+  { data: profileRows },
+  { data: ytdRevenueRows },
+  { data: lastYearRevenueRows },
+  { data: sixMoRevenueRows },
+  { count: pendingApprovalCount },
+  { data: auditRows },
+] = await Promise.all([
+  Astro.locals.supabase.from("profiles").select("id, role, full_name, is_active, created_at"),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: ytd.from, p_to: ytd.to }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: lastYearYtd.from, p_to: lastYearYtd.to }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: sixMoStart, p_to: thisMonth.to }),
+  Astro.locals.supabase.from("approval_requests").select("id", { count: "exact", head: true }).eq("status", "pending"),
+  Astro.locals.supabase
+    .from("audit_logs")
+    .select("id, actor_id, action, entity_table, entity_id, new_value, approval_request_id, created_at")
+    .order("created_at", { ascending: false })
+    .limit(5),
+]);
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+
+const profiles = (profileRows ?? []) as ProfileRow[];
+const STAFF_ROLES = ["inventory_staff", "sales_staff", "admin", "super_admin"] as const;
+
+// --- Customer accounts ---
+const customers = profiles.filter((p) => p.role === "customer");
+const newCustomersThisMonth = customers.filter((p) => p.created_at >= thisMonth.from).length;
+
+// --- Active users (internal team) ---
+const staff = profiles.filter((p) => p.role !== "customer");
+const newStaffThisMonth = staff.filter((p) => p.created_at >= thisMonth.from).length;
+
+// --- Revenue · YTD, real vs. last year ---
+const sumRevenue = (rows: RevenueTrendRow[] | null) => (rows ?? []).reduce((sum, r) => sum + Number(r.revenue), 0);
+const ytdRevenue = sumRevenue(ytdRevenueRows as RevenueTrendRow[] | null);
+const lastYearRevenue = sumRevenue(lastYearRevenueRows as RevenueTrendRow[] | null);
+const yoyChangePct = lastYearRevenue > 0 ? ((ytdRevenue - lastYearRevenue) / lastYearRevenue) * 100 : null;
+
+// --- Revenue by month, trailing 6 real IST calendar months (zero-filled —
+// a real zero for a month with genuinely no orders, not an invented one) ---
+const revenueByMonth = new Map<string, number>();
+for (const r of (sixMoRevenueRows ?? []) as RevenueTrendRow[]) {
+  const ym = String(r.day).slice(0, 7);
+  revenueByMonth.set(ym, (revenueByMonth.get(ym) ?? 0) + Number(r.revenue));
+}
+const monthBars = Array.from({ length: 6 }, (_, i) => {
+  const d = new Date(Date.UTC(curYear, curMonth0 - 5 + i, 1));
+  const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  return { label: MONTH_LABELS[d.getUTCMonth()], value: revenueByMonth.get(ym) ?? 0 };
+});
+const monthBarsMax = Math.max(...monthBars.map((m) => m.value), 1);
+
+// Revenue KPI sparkline reuses these same 6 real monthly points.
+const sparkPoints = monthBars.map((m) => m.value);
+const sparkMax = Math.max(...sparkPoints, 1);
+const sparkSvgPoints = sparkPoints
+  .map((v, i) => {
+    const x = (i / (sparkPoints.length - 1)) * 96;
+    const y = 34 - (v / sparkMax) * 32;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  })
+  .join(" ");
+const hasRealSparkline = sparkPoints.some((v) => v > 0) && sparkPoints.length > 1;
+
+// --- Team accounts by role (donut) ---
+const roleCounts = new Map<string, number>();
+for (const r of STAFF_ROLES) roleCounts.set(r, staff.filter((p) => p.role === r).length);
+const totalStaff = staff.length;
+const ROLE_COLOR: Record<string, string> = {
+  inventory_staff: "var(--sd-accent)",
+  sales_staff: "var(--sd-chart2)",
+  admin: "var(--sd-fg)",
+  super_admin: "var(--sd-input)",
+};
+const CIRCUMFERENCE = 2 * Math.PI * 60;
+let cumulative = 0;
+const donutSegments = STAFF_ROLES.map((r) => {
+  const count = roleCounts.get(r) ?? 0;
+  const frac = totalStaff > 0 ? count / totalStaff : 0;
+  const len = frac * CIRCUMFERENCE;
+  const seg = {
+    role: r,
+    label: ROLE_LABEL[r],
+    count,
+    color: ROLE_COLOR[r],
+    dasharray: `${len.toFixed(2)} ${(CIRCUMFERENCE - len).toFixed(2)}`,
+    dashoffset: (-cumulative).toFixed(2),
+  };
+  cumulative += len;
+  return seg;
+});
+
+// --- Recent user activity: 5 most-recently-created real internal-team
+// profiles (customers excluded — this panel mirrors the design's own
+// "internal team" framing, same scope as the Active users KPI above) ---
+const recentActivity = [...staff].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 5);
+
+// --- Audit log: real rows, enriched with real actor names + (when set) the
+// real approval_requests.action_type behind an approval_approved/rejected
+// entry ---
+const audit = (auditRows ?? []) as AuditLogRow[];
+const actorIds = [...new Set(audit.map((a) => a.actor_id))];
+const actorNameById = new Map<string, string>();
+for (const id of actorIds) {
+  const known = profiles.find((p) => p.id === id);
+  if (known) actorNameById.set(id, known.full_name || "—");
+}
+const missingActorIds = actorIds.filter((id) => !actorNameById.has(id));
+if (missingActorIds.length > 0) {
+  const { data: extraProfiles } = await Astro.locals.supabase.from("profiles").select("id, full_name").in("id", missingActorIds);
+  for (const p of extraProfiles ?? []) actorNameById.set(p.id as string, (p.full_name as string) || "—");
+}
+
+const approvalIds = [...new Set(audit.map((a) => a.approval_request_id).filter((id): id is string => !!id))];
+const actionTypeByApprovalId = new Map<string, string>();
+if (approvalIds.length > 0) {
+  const { data: approvalRows } = await Astro.locals.supabase.from("approval_requests").select("id, action_type").in("id", approvalIds);
+  for (const r of approvalRows ?? []) actionTypeByApprovalId.set(r.id as string, r.action_type as string);
+}
+
+function auditLineFor(entry: AuditLogRow): { text: string; dotColor: string } {
+  const actorName = actorNameById.get(entry.actor_id) ?? "—";
+  if (entry.action === "staff_invited") {
+    const email = (entry.new_value?.email as string | undefined) ?? "a new user";
+    const role = entry.new_value?.role as ProfileRow["role"] | undefined;
+    return { text: `${actorName} invited ${email} as ${role ? ROLE_LABEL[role] : "staff"}`, dotColor: "var(--sd-accent)" };
+  }
+  if (entry.action === "approval_approved" || entry.action === "approval_rejected") {
+    const actionType = entry.approval_request_id ? actionTypeByApprovalId.get(entry.approval_request_id) : undefined;
+    const actionLabel = actionType ? ACTION_TYPE_LABEL[actionType] ?? `a ${actionType}` : "an approval";
+    const verb = entry.action === "approval_approved" ? "approved" : "rejected";
+    return {
+      text: `${actorName} ${verb} ${actionLabel} request`,
+      dotColor: entry.action === "approval_approved" ? "var(--sd-success-fg)" : "var(--sd-danger-fg)",
+    };
+  }
+  return { text: `${actorName} — ${entry.action} on ${entry.entity_table}`, dotColor: "var(--sd-muted-fg)" };
+}
+const auditEntries = audit.map((a) => ({
+  ...auditLineFor(a),
+  meta: new Date(a.created_at).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  }),
+}));
+
+const todayLabel = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+---
+
+<BaseLayout title="Platform overview — Super Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Overview" role="super" />
+    </div>
+
+    <div class="sd__panel">
+      <SuperNavTop section="Dashboard" page="Overview" />
+
+      <main id="main-content" class="sa__main">
+        <div class="sa__header">
+          <div class="sa__heading-col">
+            <h1>Platform overview</h1>
+            <span class="sa__subtitle">Store-wide · as of {todayLabel}</span>
+          </div>
+        </div>
+
+        <div class="sa__kpis">
+          <div class="sa__kpi-card">
+            <span class="sa__kpi-label">Revenue · year to date</span>
+            <div class="sa__kpi-row">
+              <div class="sa__kpi-col">
+                <span class="sa__kpi-value">{formatCurrency(ytdRevenue)}</span>
+                <span class="sa__kpi-note">
+                  {yoyChangePct !== null ? (
+                    <Fragment>
+                      <span class={yoyChangePct >= 0 ? "sa__delta-up" : "sa__delta-down"}>
+                        {yoyChangePct >= 0 ? "▲" : "▼"} {Math.abs(yoyChangePct).toFixed(1)}%
+                      </span>{" "}
+                      vs last year
+                    </Fragment>
+                  ) : (
+                    "No orders last year"
+                  )}
+                </span>
+              </div>
+              {hasRealSparkline && (
+                <svg width="96" height="36" viewBox="0 0 96 36" aria-hidden="true" class="sa__sparkline">
+                  <polyline points={sparkSvgPoints} fill="none" stroke="var(--sd-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              )}
+            </div>
+          </div>
+
+          <div class="sa__kpi-card">
+            <span class="sa__kpi-label">Customer accounts</span>
+            <div class="sa__kpi-col">
+              <span class="sa__kpi-value">{customers.length}</span>
+              <span class="sa__kpi-note">
+                {newCustomersThisMonth > 0 ? (
+                  <Fragment><span class="sa__delta-up">+{newCustomersThisMonth}</span> new this month</Fragment>
+                ) : (
+                  "No new customers this month"
+                )}
+              </span>
+            </div>
+          </div>
+
+          <div class="sa__kpi-card">
+            <span class="sa__kpi-label">Active users</span>
+            <div class="sa__kpi-col">
+              <span class="sa__kpi-value">{staff.length}</span>
+              <span class="sa__kpi-note">
+                Internal team ·{" "}
+                {newStaffThisMonth > 0 ? (
+                  <Fragment><span class="sa__delta-up">+{newStaffThisMonth}</span> this month</Fragment>
+                ) : (
+                  "no new members this month"
+                )}
+              </span>
+            </div>
+          </div>
+
+          <div class="sa__kpi-card">
+            <div class="sa__kpi-top">
+              <span class="sa__kpi-label">Pending approvals</span>
+              {(pendingApprovalCount ?? 0) > 0 && <span class="sa__needs-action">Needs review</span>}
+            </div>
+            <div class="sa__kpi-col">
+              <span class="sa__kpi-value">{pendingApprovalCount ?? 0}</span>
+              <span class="sa__kpi-note">Awaiting super admin review</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sa__charts">
+          <section class="sa__chart-card">
+            <div class="sa__section-head">
+              <div class="sa__section-head-col">
+                <h2>Revenue by month</h2>
+                <span class="sa__section-sub">Last 6 months · real orders, cancelled excluded</span>
+              </div>
+              <span class="sa__legend">Total {formatCurrency(monthBars.reduce((s, m) => s + m.value, 0))}</span>
+            </div>
+            <div
+              role="img"
+              aria-label={`Monthly revenue: ${monthBars.map((m) => `${m.label} ${formatCurrency(m.value)}`).join(", ")}`}
+              class="sa__month-bars"
+            >
+              {monthBars.map((b) => (
+                <div class="sa__month-row">
+                  <span class="sa__month-label">{b.label}</span>
+                  <div class="sa__month-track"><div class="sa__month-fill" style={`width:${(b.value / monthBarsMax) * 100}%`}></div></div>
+                  <span class="sa__month-value">{formatCurrency(b.value)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section class="sa__side-card">
+            <div class="sa__section-head-col">
+              <h2>Team accounts by role</h2>
+              <span class="sa__section-sub">{totalStaff} active internal user{totalStaff === 1 ? "" : "s"}</span>
+            </div>
+            {totalStaff > 0 ? (
+              <div class="sa__donut-row">
+                <svg width="150" height="150" viewBox="0 0 150 150" role="img" aria-label={donutSegments.map((s) => `${s.label} ${s.count}`).join(", ")}>
+                  <g transform="rotate(-90 75 75)" fill="none" stroke-width="18">
+                    {donutSegments.map((s) => (
+                      <circle cx="75" cy="75" r="60" stroke={s.color} stroke-dasharray={s.dasharray} stroke-dashoffset={s.dashoffset} />
+                    ))}
+                  </g>
+                  <text x="75" y="72" text-anchor="middle" font-family="Geist, sans-serif" font-size="24" font-weight="600" class="sa__donut-total">{totalStaff}</text>
+                  <text x="75" y="92" text-anchor="middle" font-family="Geist, sans-serif" font-size="11" class="sa__donut-unit">users</text>
+                </svg>
+                <div class="sa__donut-legend">
+                  {donutSegments.map((s) => (
+                    <div class="sa__donut-legend-row">
+                      <span class="sa__donut-swatch" style={`background:${s.color}`}></span>
+                      <span class="sa__donut-legend-label">{s.label}</span>
+                      <span class="sa__donut-legend-count">{s.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p class="sa__empty">No internal team accounts yet.</p>
+            )}
+          </section>
+        </div>
+
+        <div class="sa__bottom">
+          <section class="sa__activity-card">
+            <div class="sa__section-head sa__section-head--padded">
+              <h2>Recent user activity</h2>
+            </div>
+            {recentActivity.length > 0 ? (
+              <Fragment>
+                <div class="sa__activity-grid sa__activity-grid--head">
+                  <span>User</span><span>Role</span><span>Joined</span><span>Status</span>
+                </div>
+                {recentActivity.map((p) => {
+                  const initials =
+                    (p.full_name || "—")
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((part) => part[0]?.toUpperCase())
+                      .join("") || "?";
+                  return (
+                    <div class="sa__activity-grid sa__activity-row">
+                      <span class="sa__activity-user">
+                        <span class="sa__activity-avatar">{initials}</span>
+                        <span class="sa__activity-name">{p.full_name || "—"}</span>
+                      </span>
+                      <span><span class="sa__role-pill">{ROLE_LABEL[p.role]}</span></span>
+                      <span class="sa__activity-joined">{new Date(p.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })}</span>
+                      <span><span class={`sa__status-pill ${p.is_active ? "sa__status-pill--active" : "sa__status-pill--inactive"}`}>{p.is_active ? "Active" : "Inactive"}</span></span>
+                    </div>
+                  );
+                })}
+              </Fragment>
+            ) : (
+              <p class="sa__empty">No internal team accounts yet.</p>
+            )}
+          </section>
+
+          <section class="sa__audit-card">
+            <div class="sa__section-head">
+              <h2>Audit log</h2>
+            </div>
+            {auditEntries.length > 0 ? (
+              <div class="sa__audit-list">
+                {auditEntries.map((l) => (
+                  <div class="sa__audit-row">
+                    <span class="sa__audit-dot" style={`background:${l.dotColor}`}></span>
+                    <div class="sa__audit-col">
+                      <span class="sa__audit-text">{l.text}</span>
+                      <span class="sa__audit-meta">{l.meta}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p class="sa__empty">No audit activity yet.</p>
+            )}
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-chart2: #d9731f;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-chart2: #e8894a;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .sa__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .sa__main {
+      padding: 16px;
+    }
+  }
+
+  .sa__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .sa__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sa__heading-col h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .sa__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sa__kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .sa__kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 520px) {
+    .sa__kpis {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sa__kpi-card {
+    min-height: 118px;
+    box-sizing: border-box;
+    padding: 18px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .sa__kpi-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sa__kpi-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .sa__needs-action {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .sa__kpi-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .sa__kpi-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .sa__kpi-value {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  .sa__kpi-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .sa__delta-up {
+    color: var(--sd-success-fg);
+    font-weight: 600;
+  }
+  .sa__delta-down {
+    color: var(--sd-danger-fg);
+    font-weight: 600;
+  }
+  .sa__sparkline {
+    flex-shrink: 0;
+  }
+
+  .sa__charts {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .sa__charts {
+      flex-direction: row;
+      height: 300px;
+    }
+  }
+  .sa__chart-card {
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  @media (min-width: 1100px) {
+    .sa__chart-card {
+      width: 62%;
+      flex-shrink: 0;
+    }
+  }
+  .sa__side-card {
+    flex-grow: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sa__section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .sa__section-head--padded {
+    padding: 0 20px 12px;
+  }
+  .sa__section-head-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .sa__section-head h2,
+  .sa__section-head-col h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sa__section-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .sa__legend {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+
+  .sa__month-bars {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    gap: 12px;
+    overflow-y: auto;
+  }
+  .sa__month-row {
+    display: grid;
+    grid-template-columns: 56px 1fr 88px;
+    gap: 14px;
+    align-items: center;
+    font-size: 13px;
+  }
+  .sa__month-label {
+    color: var(--sd-fg2);
+  }
+  .sa__month-track {
+    height: 14px;
+    border-radius: 4px;
+    background: var(--sd-muted);
+  }
+  .sa__month-fill {
+    height: 14px;
+    border-radius: 4px;
+    background: var(--sd-accent);
+  }
+  .sa__month-value {
+    text-align: right;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .sa__donut-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-grow: 1;
+  }
+  .sa__donut-total {
+    fill: var(--sd-fg);
+  }
+  .sa__donut-unit {
+    fill: var(--sd-muted-fg);
+  }
+  .sa__donut-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex-grow: 1;
+    font-size: 13px;
+    min-width: 0;
+  }
+  .sa__donut-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sa__donut-swatch {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    border-radius: 3px;
+  }
+  .sa__donut-legend-label {
+    flex-grow: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sa__donut-legend-count {
+    font-weight: 600;
+  }
+
+  .sa__bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .sa__bottom {
+      flex-direction: row;
+    }
+  }
+  .sa__activity-card {
+    box-sizing: border-box;
+    padding: 20px 0 8px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow-x: auto;
+    min-width: 0;
+  }
+  @media (min-width: 1100px) {
+    .sa__activity-card {
+      width: 62%;
+      flex-shrink: 0;
+    }
+  }
+  .sa__activity-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px 130px 100px;
+    gap: 8px;
+    padding: 0 20px;
+    align-items: center;
+    min-width: 520px;
+  }
+  .sa__activity-grid--head {
+    height: 34px;
+    background: var(--sd-shell);
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .sa__activity-row {
+    height: 44px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .sa__activity-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .sa__activity-avatar {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sa__activity-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sa__role-pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .sa__activity-joined {
+    color: var(--sd-fg2);
+    white-space: nowrap;
+  }
+  .sa__status-pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .sa__status-pill--active {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .sa__status-pill--inactive {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+
+  .sa__audit-card {
+    flex-grow: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sa__audit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+  }
+  .sa__audit-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .sa__audit-dot {
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .sa__audit-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-grow: 1;
+    min-width: 0;
+  }
+  .sa__audit-text {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .sa__audit-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sa__empty {
+    margin: 0;
+    padding: 24px 20px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

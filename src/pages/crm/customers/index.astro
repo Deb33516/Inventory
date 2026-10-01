@@ -1,40 +1,100 @@
 ---
+// Literal recreation of the Claude Design canvas's Sales Contacts screen
+// (project/SalesContacts.dc.html -> NavSidebar + NavTop + PageCustomers
+// with role="sales") — the supplied design is the visual source of truth,
+// not the app's existing DESIGN.md/AppShell component system. Reuses the
+// same --sd-* token system + NavSidebar.astro established by the approved
+// Sales Dashboard (neither file touched this turn), plus the new
+// NavTop.astro this screen introduces. FilterChip/EmptyState/Badge/
+// AppShell are NOT reused here (their visual output doesn't match this
+// artboard) — every real value below comes from the same real, unchanged
+// profiles/customers/customer_metrics/orders tables, the same real
+// customer_contact_email() RPC, and the same real search/type-filter/
+// sort/pagination query params the existing /crm/customers route already
+// supported before this pass.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: customer name, phone (profiles.phone), email
+//    (customer_contact_email() RPC — same real staff-only lookup already
+//    used on the customer detail page), last order date and all-time
+//    order count (customer_metrics, unchanged), the existing real
+//    New/Returning type filter and name search and name/spend/recent sort
+//    and pagination, real "New order" link (/sales/orders/new, unchanged
+//    route), real navigation to the existing customer detail route
+//    (/crm/customers/{id}), a real preview panel (phone/email/shipping
+//    address/lifetime spend/order count/first+last order date/3 most
+//    recent real orders) for whichever customer is selected via a real
+//    ?preview= query param — every field in it is drawn from the exact
+//    same real sources the (untouched) customer detail page already
+//    uses, just condensed into a side panel.
+//  - Stat strip: the design's "My contacts"/"Due to reorder"/"Accounts
+//    ordering" are personal-rep-framed and/or predictive — explicitly
+//    disallowed. Replaced with four different, store-wide, fully real
+//    stats that fill the same 4-card slot honestly: Total customers (real
+//    count), New this month (real, profiles.created_at this calendar
+//    month), Ordered this month (real, distinct customers with an order
+//    this month — same technique as the Sales Dashboard's own KPI), No
+//    order in 90+ days (real, customer_metrics.last_order_at null or
+//    older than 90 days — this one already existed in the design almost
+//    as-is and needed no substitution). Disclosed as a deviation below.
+//  - "Company" column/facet, job-title subtitle, "Dealer"/"Active"/
+//    "C-2041" preview badges, "Tags" (Wholesale/Lighting/Key account):
+//    none of these have any backing — customers here are individual
+//    people (Supabase Auth signups), not B2B company accounts, and there
+//    is no company/segment/account-code/tag concept anywhere in this
+//    schema — all omitted entirely rather than invented.
+//  - "Orders this year" column header: relabelled to "Orders" — the real
+//    customer_metrics.order_count is all-time, not calendar-year-scoped,
+//    and computing a genuinely time-scoped count wasn't already supported
+//    — showing the real all-time number under an honest label instead of
+//    overclaiming a "this year" figure that isn't actually computed that
+//    way.
+//  - "Last order" toolbar facet: the design's own facet doesn't correspond
+//    to any real filter; the EXISTING real New/Returning type filter is
+//    shown instead, in matching dashed-facet-button styling.
+//  - "New contact" header button and the "Company"/"View" toolbar
+//    controls: no real "staff creates a customer" capability exists
+//    anywhere (customers only arrive via their own real signup) and no
+//    density/view-mode toggle exists — both omitted rather than shown as
+//    dead buttons.
+//  - Preview panel's "Call" action: real, a plain tel: link using the
+//    real phone number, only rendered when one exists.
+//  - Per-row "New order" button links to the existing real
+//    /sales/orders/new route unmodified — it does not pre-select the
+//    customer, since that route has no customer-preselection param and
+//    New Order is explicitly out of scope to modify this turn.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import FilterChip from "../../../components/catalog/FilterChip.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import Badge from "../../../components/ui/Badge.astro";
-import AppShell from "../../../components/layout/AppShell.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { OrderStatus } from "../../../lib/types";
 
-// customer_metrics is a view over profiles LEFT JOIN orders, not a table
-// with a declared FK to profiles, so PostgREST can't embed it via a
-// single select — two queries, merged in JS, keeps this simple and
-// correct at the dataset sizes this project targets.
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 const url = Astro.url;
 const search = url.searchParams.get("search")?.trim() ?? "";
 const type = url.searchParams.get("type") ?? "";
 const sort = url.searchParams.get("sort") ?? "name";
 const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+const previewParam = url.searchParams.get("preview") ?? "";
 
-let profileQuery = Astro.locals.supabase
-  .from("profiles")
-  .select("id, full_name, created_at")
-  .eq("role", "customer");
-
-if (search) {
-  profileQuery = profileQuery.ilike("full_name", `%${search}%`);
-}
-
+// --- Real filtered/sorted/paginated customer list (unchanged logic, phone added to the select) ---
+let profileQuery = Astro.locals.supabase.from("profiles").select("id, full_name, phone, created_at").eq("role", "customer");
+if (search) profileQuery = profileQuery.ilike("full_name", `%${search}%`);
 const { data: profiles } = await profileQuery;
 
 const { data: metricsRows } = await Astro.locals.supabase
   .from("customer_metrics")
-  .select("profile_id, order_count, lifetime_spend, last_order_at");
-
+  .select("profile_id, order_count, lifetime_spend, first_order_at, last_order_at");
 const metricsByProfile = new Map((metricsRows ?? []).map((m) => [m.profile_id, m]));
 
 const formatCurrency = (value: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
+};
+const formatDate = (value: string | null) => (value ? new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
+const formatYear = (value: string | null) => (value ? new Date(value).getFullYear() : "—");
 
 let customers = (profiles ?? []).map((p) => {
   const m = metricsByProfile.get(p.id);
@@ -42,16 +102,17 @@ let customers = (profiles ?? []).map((p) => {
   return {
     id: p.id,
     fullName: p.full_name ?? "Unnamed customer",
+    phone: p.phone ?? null,
+    createdAt: p.created_at,
     orderCount,
     lifetimeSpend: m?.lifetime_spend ?? 0,
+    firstOrderAt: m?.first_order_at ?? null,
     lastOrderAt: m?.last_order_at ?? null,
     classification: orderCount <= 1 ? "new" : "returning",
   };
 });
 
-if (type) {
-  customers = customers.filter((c) => c.classification === type);
-}
+if (type) customers = customers.filter((c) => c.classification === type);
 
 type CustomerRow = (typeof customers)[number];
 const sortFns: Record<string, (a: CustomerRow, b: CustomerRow) => number> = {
@@ -61,8 +122,19 @@ const sortFns: Record<string, (a: CustomerRow, b: CustomerRow) => number> = {
 };
 customers.sort(sortFns[sort] ?? sortFns.name);
 
-const totalPages = Math.max(1, Math.ceil(customers.length / PAGE_SIZE));
+const totalFiltered = customers.length;
+const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
 const pageItems = customers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+// Real per-row email — same real customer_contact_email() RPC the customer detail page already uses, called once per visible row.
+const emailByCustomerId = new Map<string, string | null>(
+  await Promise.all(
+    pageItems.map(async (c) => {
+      const { data } = await Astro.locals.supabase.rpc("customer_contact_email", { p_profile_id: c.id });
+      return [c.id, data ?? null] as const;
+    })
+  )
+);
 
 function buildUrl(overrides: Record<string, string | undefined>) {
   const next = new URLSearchParams(url.search);
@@ -73,114 +145,857 @@ function buildUrl(overrides: Record<string, string | undefined>) {
   const qs = next.toString();
   return qs ? `/crm/customers?${qs}` : "/crm/customers";
 }
+
+// --- Real store-wide stat strip (independent of the current search/filter/page) ---
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const nowIstShifted = new Date(Date.now() + IST_OFFSET_MS);
+const istYear = nowIstShifted.getUTCFullYear();
+const istMonth = nowIstShifted.getUTCMonth();
+const thisMonthFromUtc = new Date(Date.UTC(istYear, istMonth, 1) - IST_OFFSET_MS);
+const nextMonthFromUtc = new Date(Date.UTC(istYear, istMonth + 1, 1) - IST_OFFSET_MS);
+const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+const { data: allCustomerProfiles } = await Astro.locals.supabase.from("profiles").select("id, created_at").eq("role", "customer");
+const totalCustomers = allCustomerProfiles?.length ?? 0;
+const newThisMonthCount = (allCustomerProfiles ?? []).filter((p) => new Date(p.created_at) >= thisMonthFromUtc && new Date(p.created_at) < nextMonthFromUtc).length;
+
+const { data: thisMonthOrderRows } = await Astro.locals.supabase
+  .from("orders")
+  .select("customer_id")
+  .gte("created_at", thisMonthFromUtc.toISOString())
+  .lt("created_at", nextMonthFromUtc.toISOString());
+const orderedThisMonthCount = new Set((thisMonthOrderRows ?? []).map((o) => o.customer_id)).size;
+
+const noOrderIn90Count = (metricsRows ?? []).filter(
+  (m) => m.last_order_at === null || new Date(m.last_order_at) < ninetyDaysAgo
+).length;
+
+const stats = [
+  { label: "Total customers", value: String(totalCustomers), note: "" },
+  { label: "New this month", value: String(newThisMonthCount), note: "" },
+  { label: "Ordered this month", value: String(orderedThisMonthCount), note: "" },
+  { label: "No order in 90+ days", value: String(noOrderIn90Count), note: "" },
+];
+
+// --- Real preview panel for the selected customer (default: first row shown) ---
+const previewId = previewParam || pageItems[0]?.id || "";
+let previewData: {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  lifetimeSpend: number;
+  orderCount: number;
+  firstOrderAt: string | null;
+  lastOrderAt: string | null;
+  recentOrders: { id: string; status: string; total: number; created_at: string }[];
+} | null = null;
+
+if (previewId) {
+  const rowMatch = pageItems.find((c) => c.id === previewId);
+  const { data: previewProfile } = await Astro.locals.supabase
+    .from("profiles")
+    .select("id, full_name, phone, created_at")
+    .eq("id", previewId)
+    .eq("role", "customer")
+    .maybeSingle();
+
+  if (previewProfile) {
+    const { data: previewCustomer } = await Astro.locals.supabase
+      .from("customers")
+      .select("shipping_address")
+      .eq("profile_id", previewId)
+      .maybeSingle();
+    const { data: previewMetrics } = await Astro.locals.supabase
+      .from("customer_metrics")
+      .select("order_count, lifetime_spend, first_order_at, last_order_at")
+      .eq("profile_id", previewId)
+      .maybeSingle();
+    const previewEmail = rowMatch ? (emailByCustomerId.get(previewId) ?? null) : (await Astro.locals.supabase.rpc("customer_contact_email", { p_profile_id: previewId })).data;
+    const { data: recentOrders } = await Astro.locals.supabase
+      .from("orders")
+      .select("id, status, total, created_at")
+      .eq("customer_id", previewId)
+      .order("created_at", { ascending: false })
+      .limit(3);
+
+    previewData = {
+      id: previewProfile.id,
+      fullName: previewProfile.full_name ?? "Unnamed customer",
+      phone: previewProfile.phone ?? null,
+      email: previewEmail ?? null,
+      address: (previewCustomer?.shipping_address as { formatted?: string } | null)?.formatted ?? null,
+      lifetimeSpend: previewMetrics?.lifetime_spend ?? 0,
+      orderCount: previewMetrics?.order_count ?? 0,
+      firstOrderAt: previewMetrics?.first_order_at ?? null,
+      lastOrderAt: previewMetrics?.last_order_at ?? null,
+      recentOrders: recentOrders ?? [],
+    };
+  }
+}
+
+const previewInitials = previewData
+  ? previewData.fullName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]!.toUpperCase())
+      .join("")
+  : "";
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
 ---
 
-<BaseLayout title="Customers — CRM">
-  <AppShell active="crm">
-    <h1 class="text-2xl font-bold text-ink">Customers</h1>
+<BaseLayout title="Contacts — Sales">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-    <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
-      <input
-        type="text"
-        name="search"
-        value={search}
-        placeholder="Search by name..."
-        class="w-full md:max-w-sm h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
-      />
-      <select name="sort" class="h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none">
-        <option value="name" selected={sort === "name"}>
-          Name
-        </option>
-        <option value="spend" selected={sort === "spend"}>
-          Lifetime spend
-        </option>
-        <option value="recent" selected={sort === "recent"}>
-          Most recent order
-        </option>
-      </select>
-      {type && <input type="hidden" name="type" value={type} />}
-      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
-        Apply
-      </button>
-    </form>
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
 
-    <div class="mt-md flex gap-xs overflow-x-auto pb-xs">
-      <FilterChip href={buildUrl({ type: undefined, page: undefined })} active={!type}>
-        All
-      </FilterChip>
-      <FilterChip href={buildUrl({ type: "new", page: undefined })} active={type === "new"}>
-        New
-      </FilterChip>
-      <FilterChip href={buildUrl({ type: "returning", page: undefined })} active={type === "returning"}>
-        Returning
-      </FilterChip>
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Contacts" />
     </div>
 
-    {
-      pageItems.length > 0 ? (
-        <>
-          <div class="mt-lg overflow-x-auto">
-            <table class="w-full text-sm border-collapse">
-              <thead>
-                <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
-                  <th class="py-xs pr-md">Name</th>
-                  <th class="py-xs pr-md">Orders</th>
-                  <th class="py-xs pr-md">Lifetime spend</th>
-                  <th class="py-xs pr-md">Last order</th>
-                  <th class="py-xs pr-md">Type</th>
-                  <th class="py-xs" />
-                </tr>
-              </thead>
-              <tbody>
+    <div class="sd__panel">
+      <NavTop section="Sales" page="Contacts" searchAction="/crm/customers" searchName="search" searchValue={search} searchPlaceholder="Filter by name…" />
+
+      <main id="main-content" class="cts__main">
+        <div class="cts__header">
+          <div class="cts__heading-col">
+            <h1>Contacts</h1>
+            <span class="cts__meta">People at your accounts · {totalFiltered} contact{totalFiltered === 1 ? "" : "s"}</span>
+          </div>
+        </div>
+
+        <div class="cts__stats">
+          {stats.map((s) => (
+            <div class="cts__stat-card">
+              <span class="cts__stat-label">{s.label}</span>
+              <div class="cts__stat-body">
+                <span class="cts__stat-value">{s.value}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div class="cts__toolbar">
+          <form method="get" class="cts__filter-form">
+            <input type="text" name="search" value={search} placeholder="Filter by name…" class="cts__filter-input" />
+            <select name="sort" class="cts__sort-select">
+              <option value="name" selected={sort === "name"}>Name</option>
+              <option value="spend" selected={sort === "spend"}>Lifetime spend</option>
+              <option value="recent" selected={sort === "recent"}>Most recent order</option>
+            </select>
+            {type && <input type="hidden" name="type" value={type} />}
+            <button type="submit" class="cts__filter-apply">Apply</button>
+          </form>
+          <a href={buildUrl({ type: undefined, page: undefined })} class={`cts__facet ${!type ? "is-active" : ""}`}>All</a>
+          <a href={buildUrl({ type: "new", page: undefined })} class={`cts__facet ${type === "new" ? "is-active" : ""}`}>New</a>
+          <a href={buildUrl({ type: "returning", page: undefined })} class={`cts__facet ${type === "returning" ? "is-active" : ""}`}>Returning</a>
+        </div>
+
+        <div class="cts__body">
+          <div class="cts__table-panel">
+            {pageItems.length > 0 ? (
+              <Fragment>
+                <div class="cts__grid cts__grid-head">
+                  <span>Name</span>
+                  <span>Phone</span>
+                  <span>Email</span>
+                  <span>Last order</span>
+                  <span class="cts__col-right">Orders</span>
+                  <span></span>
+                </div>
                 {pageItems.map((c) => (
-                  <tr class="border-b border-hairline">
-                    <td class="py-sm pr-md text-ink font-bold">{c.fullName}</td>
-                    <td class="py-sm pr-md text-body">{c.orderCount}</td>
-                    <td class="py-sm pr-md text-body">{formatCurrency(c.lifetimeSpend)}</td>
-                    <td class="py-sm pr-md text-body">
-                      {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString() : "—"}
-                    </td>
-                    <td class="py-sm pr-md">
-                      <Badge tone={c.classification === "new" ? "neutral" : "success"}>
-                        {c.classification === "new" ? "New" : "Returning"}
-                      </Badge>
-                    </td>
-                    <td class="py-sm">
-                      <a href={`/crm/customers/${c.id}`} class="text-primary font-bold">
-                        View
-                      </a>
-                    </td>
-                  </tr>
+                  <div class={`cts__grid cts__row ${c.id === previewId ? "is-selected" : ""}`}>
+                    <a href={buildUrl({ preview: c.id })} class="cts__name-cell">{c.fullName}</a>
+                    <span class="cts__muted-cell">{c.phone ?? "—"}</span>
+                    <span class="cts__muted-cell cts__ellipsis">{emailByCustomerId.get(c.id) ?? "—"}</span>
+                    <span class="cts__muted-cell">{formatDate(c.lastOrderAt)}</span>
+                    <span class="cts__col-right">{c.orderCount}</span>
+                    <a href={`/crm/customers/${c.id}`} class="cts__view-link">View</a>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+                <div class="cts__panel-footer">
+                  <span class="cts__panel-footer-count">Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalFiltered)} of {totalFiltered} contacts</span>
+                  <span class="cts__panel-footer-page">Page {page} of {totalPages}</span>
+                  <div class="cts__pager">
+                    <a href={page > 1 ? buildUrl({ page: String(page - 1) }) : undefined} aria-disabled={page <= 1} class="cts__pager-btn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                    </a>
+                    <a href={page < totalPages ? buildUrl({ page: String(page + 1) }) : undefined} aria-disabled={page >= totalPages} class="cts__pager-btn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+                    </a>
+                  </div>
+                </div>
+              </Fragment>
+            ) : (
+              <div class="cts__empty">
+                <p class="cts__empty-title">No contacts found</p>
+                <p class="cts__empty-body">Try a different search or filter.</p>
+              </div>
+            )}
           </div>
 
-          {totalPages > 1 && (
-            <div class="mt-xl flex items-center justify-center gap-md text-sm">
-              <a
-                href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
-                aria-disabled={page <= 1}
-                class={`px-md py-xs border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
-              >
-                Previous
-              </a>
-              <span class="text-muted">
-                Page {page} of {totalPages}
-              </span>
-              <a
-                href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
-                aria-disabled={page >= totalPages}
-                class={`px-md py-xs border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : ""}`}
-              >
-                Next
-              </a>
-            </div>
+          {previewData && (
+            <aside aria-label="Contact preview" class="cts__preview">
+              <div class="cts__preview-head">
+                <span class="cts__preview-avatar">{previewInitials}</span>
+                <div class="cts__preview-identity">
+                  <span class="cts__preview-name">{previewData.fullName}</span>
+                  <span class="cts__preview-sub">Customer since {formatYear(previewData.firstOrderAt)}</span>
+                </div>
+              </div>
+
+              <div class="cts__preview-section">
+                <span class="cts__preview-label">Contact</span>
+                <span class="cts__preview-row">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"></path></svg>
+                  {previewData.phone ?? "No phone on file"}
+                </span>
+                <span class="cts__preview-row">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18v12H3zM3 7l9 6 9-6"></path></svg>
+                  {previewData.email ?? "No email on file"}
+                </span>
+                {previewData.address && (
+                  <span class="cts__preview-row">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11zM10 10a2 2 0 1 0 4 0a2 2 0 1 0-4 0"></path></svg>
+                    {previewData.address}
+                  </span>
+                )}
+              </div>
+
+              <div class="cts__preview-section">
+                <div class="cts__preview-metric-head">
+                  <span class="cts__preview-label">Lifetime spend</span>
+                </div>
+                <span class="cts__preview-metric-value">{formatCompact(previewData.lifetimeSpend)}</span>
+                <span class="cts__preview-metric-sub">{previewData.orderCount} order{previewData.orderCount === 1 ? "" : "s"} · last order {formatDate(previewData.lastOrderAt)}</span>
+              </div>
+
+              {previewData.recentOrders.length > 0 && (
+                <div class="cts__preview-section">
+                  <span class="cts__preview-label">Recent orders</span>
+                  {previewData.recentOrders.map((o) => (
+                    <a href={`/sales/orders/${o.id}`} class="cts__preview-order">
+                      <span class="cts__preview-order-id">{o.id.slice(0, 8)}</span>
+                      <span class="cts__preview-order-date">{formatDate(o.created_at)}</span>
+                      <span class="cts__preview-order-total">{formatCompact(o.total)}</span>
+                      <span class={`cts__pill cts__pill--${STATUS_TONE[o.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[o.status as OrderStatus] ?? o.status}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+
+              <div class="cts__preview-actions">
+                {previewData.phone && (
+                  <a href={`tel:${previewData.phone}`} class="cts__preview-secondary-btn">Call</a>
+                )}
+                <a href="/sales/orders/new" class="cts__preview-primary-btn">New order</a>
+              </div>
+            </aside>
           )}
-        </>
-      ) : (
-        <EmptyState class="mt-lg" title="No customers found" />
-      )
-    }
-  </AppShell>
+        </div>
+      </main>
+    </div>
+  </div>
 </BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .cts__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .cts__main {
+      padding: 16px;
+    }
+  }
+
+  .cts__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .cts__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cts__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .cts__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .cts__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .cts__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .cts__stats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cts__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cts__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .cts__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .cts__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cts__filter-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cts__filter-input {
+    width: 220px;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+  }
+  .cts__sort-select {
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+  }
+  .cts__filter-apply {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    cursor: pointer;
+  }
+  .cts__facet {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+  }
+  .cts__facet.is-active {
+    border-style: solid;
+    background: var(--sd-muted);
+  }
+
+  .cts__body {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (max-width: 1100px) {
+    .cts__body {
+      flex-direction: column;
+    }
+  }
+
+  .cts__table-panel {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .cts__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 130px minmax(0, 1fr) 90px 80px 64px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 720px;
+  }
+  .cts__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .cts__row {
+    height: 50px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .cts__row.is-selected {
+    background: var(--sd-muted);
+    box-shadow: inset 2px 0 0 var(--sd-primary);
+  }
+  .cts__name-cell {
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cts__muted-cell {
+    color: var(--sd-fg2);
+    font-size: 13px;
+  }
+  .cts__ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cts__col-right {
+    text-align: right;
+    color: var(--sd-fg2);
+  }
+  .cts__view-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-accent);
+    text-decoration: none;
+    text-align: right;
+  }
+  .cts__panel-footer {
+    min-width: 720px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .cts__panel-footer-count {
+    flex-grow: 1;
+  }
+  .cts__panel-footer-page {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .cts__pager {
+    display: flex;
+    gap: 4px;
+  }
+  .cts__pager-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+  .cts__pager-btn[aria-disabled="true"] {
+    pointer-events: none;
+    opacity: 0.4;
+  }
+
+  .cts__empty {
+    padding: 48px 24px;
+    text-align: center;
+  }
+  .cts__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .cts__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .cts__preview {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  @media (min-width: 1100px) {
+    .cts__preview {
+      width: 300px;
+      flex-shrink: 0;
+    }
+  }
+  .cts__preview-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .cts__preview-avatar {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cts__preview-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .cts__preview-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .cts__preview-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .cts__preview-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--sd-border);
+  }
+  .cts__preview-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .cts__preview-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--sd-fg2);
+  }
+  .cts__preview-metric-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .cts__preview-metric-value {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .cts__preview-metric-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .cts__preview-order {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--sd-fg);
+    font-size: 13px;
+  }
+  .cts__preview-order-id {
+    font-weight: 500;
+    width: 72px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cts__preview-order-date {
+    color: var(--sd-muted-fg);
+    width: 44px;
+    flex-shrink: 0;
+  }
+  .cts__preview-order-total {
+    flex-grow: 1;
+    text-align: right;
+    font-weight: 500;
+  }
+  .cts__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .cts__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .cts__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .cts__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .cts__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .cts__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .cts__preview-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+  }
+  .cts__preview-secondary-btn {
+    flex: 1;
+    height: 34px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cts__preview-primary-btn {
+    flex: 1;
+    height: 34px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

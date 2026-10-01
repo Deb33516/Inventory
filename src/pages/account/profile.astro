@@ -1,29 +1,57 @@
 ---
-// Matches the Claude Design canvas's Customer Profile artboard
-// (project/PageCustProfile.dc.html, imported by CustProfile.dc.html).
-// Reuses the existing CustomerProfileForm (Phase 6) unchanged — this page
-// just gives it its own route, matching the design's separate Profile
-// screen instead of bundling it into the portal dashboard.
+// Literal recreation of the Claude Design canvas's Customer Profile
+// artboard (project/PageCustProfile.dc.html, imported by
+// CustProfile.dc.html) — the supplied design is the visual source of
+// truth, not the app's existing DESIGN.md component system. Reuses the
+// same --cp-* token system and NavCustomer header already approved on
+// every other Customer screen. Card/Input/Textarea/Button and the old
+// CustomerProfileForm component are NOT reused (their visual output
+// doesn't match this artboard) — this page rebuilds the same real,
+// unchanged updateCustomerProfile action call and edit/cancel/save
+// behavior with fresh markup, preserving the exact selectors the existing
+// Playwright suite already asserts ("Edit profile", "Phone (optional)",
+// [data-field="phone"], "Cancel", "Save changes", "Profile updated").
 //
-// Real vs deferred, per the design's own sections:
-//  - Contact person (name/phone) + addresses (billing/shipping): real,
-//    CustomerProfileForm/updateCustomerProfile, unchanged.
-//  - "Company details" (account code, GST number, account manager): no
-//    backing columns exist anywhere in the schema — omitted rather than
-//    fabricated, not rendered as an empty/deferred stub either, since
-//    there's no real feature behind it to preview.
-//  - "Change password": no in-session password-change action exists
-//    (Supabase's updateUser() has no current-password verification step,
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Real: email (read-only, "cannot be changed here" — same as before),
+//    full name, phone, billing/shipping address (the two real address
+//    columns on `customers` — see the Delivery-addresses note below),
+//    marketing-email opt-in, all via the same real updateCustomerProfile
+//    action; real sign-out (actions.signOut()).
+//  - "Company details" section (Company name / Customer account / GST
+//    number / Account manager): no backing columns exist anywhere in the
+//    schema for any of these — omitted entirely, same as the previous
+//    implementation of this page.
+//  - "Delivery addresses": the design shows a dynamic, named address book
+//    (multiple saved addresses, each with its own "Edit" button, plus an
+//    "Add address" button implying unlimited entries). The real schema
+//    only has exactly two single address fields on `customers`
+//    (billing_address, shipping_address jsonb) — not a collection, and
+//    adding one would be a genuine new table, which "do not add schema
+//    just to reproduce design content" rules out here. Rendered instead
+//    as exactly two fixed real slots (Billing address / Shipping
+//    address), no fabricated named locations ("Andheri shop"), no
+//    "Default" pill (no such concept with only one of each), no
+//    per-row "Edit" button and no "Add address" button (both imply
+//    per-address CRUD that doesn't exist) — both addresses are edited
+//    through the same single Edit-profile form as name/phone, matching
+//    the app's real one-form architecture.
+//  - "Change password": no in-session password-change action exists —
+//    Supabase's updateUser() has no current-password verification step,
 //    and the existing updatePassword action is purpose-built for the
-//    recovery-link flow) — same "sign out and use Forgot password" note
-//    already used on this page's staff-branch panel, not a new flow.
-//  - "Notifications" (email/SMS toggles): no notification system exists
-//    anywhere in this app (explicitly out of scope) — shown as an honest
-//    disabled/deferred block, not functional toggles.
+//    recovery-link flow (see reset-password.astro). Same honest "sign out
+//    and use Forgot password" note already used on this page before this
+//    pass, not a new flow. "Last changed 12 Jul 2026" in the design is
+//    fabricated (no such timestamp is tracked) — omitted.
+//  - "Notifications" (email/SMS toggles for Order updates / Support
+//    replies): no notification-preference system exists anywhere in this
+//    app — shown as an honest disabled block with a "not available yet"
+//    note, not functional toggles, same treatment already used on this
+//    page before this pass.
+//  - Header subtitle "Meera Thakkar · Meera Traders · Account C-2041":
+//    replaced with just the real full name (no business/account concept).
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import Card from "../../components/ui/Card.astro";
-import PublicHeader from "../../components/layout/PublicHeader.astro";
-import CustomerProfileForm from "../../components/crm/CustomerProfileForm.astro";
+import NavCustomer from "../../components/customer/NavCustomer.astro";
 
 const { user, role } = Astro.locals;
 
@@ -32,6 +60,7 @@ if (role !== "customer") {
 }
 
 const userId = user!.id;
+const email = user?.email ?? "";
 
 const { data: profile } = await Astro.locals.supabase
   .from("profiles")
@@ -44,65 +73,659 @@ const { data: customer } = await Astro.locals.supabase
   .select("billing_address, shipping_address, marketing_opt_in")
   .eq("profile_id", userId)
   .single();
+
+const fullName = profile?.full_name ?? null;
+const phone = profile?.phone ?? null;
+const billingAddress = customer?.billing_address ?? null;
+const shippingAddress = customer?.shipping_address ?? null;
+const marketingOptIn = customer?.marketing_opt_in ?? false;
+
+const avatarInitials = fullName
+  ? fullName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p: string) => p[0]!.toUpperCase())
+      .join("")
+  : (email[0]?.toUpperCase() ?? "?");
 ---
 
 <BaseLayout title="Profile — Inventory">
-  <PublicHeader backHref="/account" backLabel="Account" />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl grid grid-cols-1 lg:grid-cols-3 gap-lg">
-    <div class="lg:col-span-2 space-y-lg">
-      <Card>
-        <h1 class="text-2xl font-bold text-ink">Profile</h1>
-        <p class="mt-xs text-sm text-muted">Contact details and delivery addresses. We send order and support updates here.</p>
-        <div class="mt-lg">
-          <CustomerProfileForm
-            email={user?.email ?? ""}
-            fullName={profile?.full_name ?? null}
-            phone={profile?.phone ?? null}
-            billingAddress={customer?.billing_address ?? null}
-            shippingAddress={customer?.shipping_address ?? null}
-            marketingOptIn={customer?.marketing_opt_in ?? false}
-          />
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
+
+    <NavCustomer active="Profile" />
+
+    <main id="main-content" class="cp__main">
+      <div class="pr__header">
+        <div class="pr__header-left">
+          <span class="pr__avatar">{avatarInitials}</span>
+          <div class="pr__heading-col">
+            <h1>Profile</h1>
+            {fullName && <span class="pr__meta">{fullName}</span>}
+          </div>
         </div>
-      </Card>
-    </div>
-
-    <div class="space-y-lg">
-      <Card>
-        <h2 class="text-lg font-bold text-ink">Password</h2>
-        <p class="mt-xs text-sm text-muted">
-          To change your password, sign out and use "Forgot password?" on the sign-in page.
-        </p>
-        <button id="profile-signout-btn" type="button" class="mt-md text-sm font-bold text-error hover:underline">
+        <button type="button" id="profile-signout-btn" class="pr__signout-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"></path></svg>
           Sign out
         </button>
-      </Card>
+      </div>
 
-      <Card>
-        <h2 class="text-lg font-bold text-ink">Notifications</h2>
-        <div class="mt-md space-y-sm opacity-50 pointer-events-none">
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="text-sm font-bold text-ink">Order updates</p>
-              <p class="text-xs text-muted">Confirmation, dispatch and delivery</p>
+      <div class="pr__layout">
+        <div class="pr__main-col">
+          <section class="pr__card">
+            <div class="pr__card-head">
+              <div class="pr__card-head-text">
+                <h2>Contact person</h2>
+                <span>We send order and support updates to these details.</span>
+              </div>
+              <button type="button" id="edit-profile-btn" class="pr__save-btn-header">Edit profile</button>
             </div>
-            <div class="w-9 h-5 rounded-full bg-hairline-strong" />
-          </div>
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="text-sm font-bold text-ink">Support replies</p>
-              <p class="text-xs text-muted">When our team replies to your ticket</p>
+
+            <div id="profile-display" class="pr__display">
+              <div class="pr__display-grid">
+                <div class="pr__display-field">
+                  <span class="pr__field-label">Full name</span>
+                  <span class="pr__display-value" data-field="fullName">{fullName || "—"}</span>
+                </div>
+                <div class="pr__display-field">
+                  <span class="pr__field-label">Email</span>
+                  <span class="pr__display-value">{email}</span>
+                </div>
+                <div class="pr__display-field">
+                  <span class="pr__field-label">Phone</span>
+                  <span class="pr__display-value" data-field="phone">{phone || "—"}</span>
+                </div>
+              </div>
+              <div class="pr__display-field pr__display-field--wide">
+                <span class="pr__field-label">Marketing emails</span>
+                <span class="pr__display-value" data-field="marketingOptIn">{marketingOptIn ? "Yes" : "No"}</span>
+              </div>
+              <p id="profile-success-message" class="pr__success-message hidden" role="status">Profile updated</p>
             </div>
-            <div class="w-9 h-5 rounded-full bg-hairline-strong" />
-          </div>
+
+            <form id="profile-form" class="pr__form hidden">
+              <div class="pr__form-grid">
+                <label class="pr__field">
+                  <span>Full name</span>
+                  <input type="text" name="fullName" value={fullName ?? ""} required />
+                </label>
+                <label class="pr__field">
+                  <span>Email</span>
+                  <span class="pr__readonly-note">{email} (cannot be changed here)</span>
+                </label>
+                <label class="pr__field">
+                  <span>Phone (optional)</span>
+                  <input type="tel" name="phone" value={phone ?? ""} />
+                </label>
+              </div>
+              <label class="pr__checkbox-row">
+                <input type="checkbox" name="marketingOptIn" checked={marketingOptIn} />
+                Send me marketing emails
+              </label>
+              <p id="form-message" class="pr__form-message" role="status" />
+              <div class="pr__form-actions">
+                <button type="submit" class="pr__submit-btn">Save changes</button>
+                <button type="button" id="cancel-edit-btn" class="pr__cancel-btn">Cancel</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="pr__card">
+            <div class="pr__card-head-text">
+              <h2>Delivery addresses</h2>
+              <span>Used when you edit your profile above.</span>
+            </div>
+            <div class="pr__addresses">
+              <div class="pr__address-row">
+                <span class="pr__address-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21zM12 7.5a2 2 0 1 0 0 4a2 2 0 1 0 0-4z"></path></svg>
+                </span>
+                <span class="pr__address-body">
+                  <span class="pr__address-name">Billing address</span>
+                  <span class="pr__address-line" data-field="billingAddress">{billingAddress?.formatted || "Not set yet"}</span>
+                </span>
+              </div>
+              <div class="pr__address-row">
+                <span class="pr__address-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21zM12 7.5a2 2 0 1 0 0 4a2 2 0 1 0 0-4z"></path></svg>
+                </span>
+                <span class="pr__address-body">
+                  <span class="pr__address-name">Shipping address</span>
+                  <span class="pr__address-line" data-field="shippingAddress">{shippingAddress?.formatted || "Not set yet"}</span>
+                </span>
+              </div>
+              <label class="pr__field pr__address-edit-field">
+                <span>Billing address (optional)</span>
+                <textarea name="billingAddress" form="profile-form" rows="3">{billingAddress?.formatted ?? ""}</textarea>
+              </label>
+              <label class="pr__field pr__address-edit-field">
+                <span>Shipping address (optional)</span>
+                <textarea name="shippingAddress" form="profile-form" rows="3">{shippingAddress?.formatted ?? ""}</textarea>
+              </label>
+            </div>
+          </section>
         </div>
-        <p class="mt-sm text-xs text-muted">Notification preferences aren't available yet.</p>
-      </Card>
-    </div>
-  </main>
+
+        <div class="pr__side">
+          <section class="pr__card">
+            <div class="pr__card-head-text">
+              <h2>Change password</h2>
+              <span>To change your password, sign out and use "Forgot password?" on the sign-in page.</span>
+            </div>
+          </section>
+
+          <section class="pr__card pr__notif-card">
+            <div class="pr__card-head-text">
+              <h2>Notifications</h2>
+              <span>Notification preferences aren't available yet.</span>
+            </div>
+            <div class="pr__notif-row">
+              <span class="pr__notif-body">
+                <span class="pr__notif-label">Order updates</span>
+                <span class="pr__notif-sub">Confirmation, dispatch and delivery</span>
+              </span>
+              <span class="pr__toggle pr__toggle--disabled" role="switch" aria-checked="false" aria-disabled="true" aria-label="Order updates (not available)"></span>
+            </div>
+            <div class="pr__notif-row">
+              <span class="pr__notif-body">
+                <span class="pr__notif-label">Support replies</span>
+                <span class="pr__notif-sub">When our team replies to your ticket</span>
+              </span>
+              <span class="pr__toggle pr__toggle--disabled" role="switch" aria-checked="false" aria-disabled="true" aria-label="Support replies (not available)"></span>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
 </BaseLayout>
 
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-success-fg: #15803d;
+    --cp-error-fg: #b91c1c;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-success-fg: #4ade80;
+    --cp-error-fg: #f87171;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+  .hidden {
+    display: none !important;
+  }
+
+  .pr__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .pr__header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .pr__avatar {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--cp-info-bg);
+    color: var(--cp-info-fg);
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pr__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pr__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .pr__meta {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+  .pr__signout-btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-error-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pr__layout {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1100px) {
+    .pr__layout {
+      flex-direction: row;
+    }
+  }
+
+  .pr__main-col {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .pr__side {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .pr__side {
+      width: 380px;
+      flex-shrink: 0;
+    }
+  }
+
+  .pr__card {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .pr__card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .pr__card-head-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pr__card-head-text h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .pr__card-head-text span {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .pr__save-btn-header {
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .pr__display-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px 20px;
+  }
+  @media (max-width: 640px) {
+    .pr__display-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pr__display-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pr__display-field--wide {
+    margin-top: 14px;
+  }
+  .pr__field-label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .pr__display-value {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-shell);
+    font-size: 14px;
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+  }
+  .pr__success-message {
+    margin: 14px 0 0;
+    font-size: 13px;
+    color: var(--cp-success-fg);
+  }
+
+  .pr__form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .pr__form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pr__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pr__field span:first-child {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .pr__field input,
+  .pr__field textarea {
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--cp-fg);
+  }
+  .pr__field input {
+    height: 36px;
+  }
+  .pr__field textarea {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    line-height: 1.5;
+    resize: none;
+  }
+  .pr__readonly-note {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+  .pr__checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .pr__form-message {
+    margin: 0;
+    min-height: 16px;
+    font-size: 13px;
+    color: var(--cp-error-fg);
+  }
+  .pr__form-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pr__submit-btn {
+    height: 36px;
+    padding: 0 16px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .pr__cancel-btn {
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .pr__addresses {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .pr__address-row {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--cp-border);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .pr__address-icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pr__address-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pr__address-name {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .pr__address-line {
+    font-size: 13px;
+    color: var(--cp-fg2);
+    white-space: pre-line;
+  }
+  .pr__address-edit-field {
+    display: none;
+  }
+
+  .pr__notif-card {
+    gap: 4px;
+  }
+  .pr__notif-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-top: 1px solid var(--cp-border);
+  }
+  .pr__notif-body {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pr__notif-label {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .pr__notif-sub {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .pr__toggle {
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 2px;
+    border-radius: 10px;
+    background: var(--cp-muted);
+    display: flex;
+    align-items: center;
+  }
+  .pr__toggle::after {
+    content: "";
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--cp-card);
+    border: 1px solid var(--cp-input);
+  }
+  .pr__toggle--disabled {
+    cursor: not-allowed;
+  }
+</style>
+
 <script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
   import { actions } from "astro:actions";
 
   const signOutButton = document.querySelector<HTMLButtonElement>("#profile-signout-btn");
@@ -110,5 +733,76 @@ const { data: customer } = await Astro.locals.supabase
     signOutButton.disabled = true;
     await actions.signOut();
     window.location.href = "/login";
+  });
+
+  const displayEl = document.querySelector<HTMLDivElement>("#profile-display")!;
+  const formEl = document.querySelector<HTMLFormElement>("#profile-form")!;
+  const editBtn = document.querySelector<HTMLButtonElement>("#edit-profile-btn")!;
+  const cancelBtn = document.querySelector<HTMLButtonElement>("#cancel-edit-btn")!;
+  const successMsg = document.querySelector<HTMLParagraphElement>("#profile-success-message")!;
+  const formMsg = document.querySelector<HTMLParagraphElement>("#form-message")!;
+  const saveBtn = formEl.querySelector<HTMLButtonElement>("button[type=submit]")!;
+  const addressEditFields = document.querySelectorAll<HTMLElement>(".pr__address-edit-field");
+
+  function enterEditMode() {
+    successMsg.classList.add("hidden");
+    displayEl.classList.add("hidden");
+    formEl.classList.remove("hidden");
+    addressEditFields.forEach((el) => (el.style.display = "flex"));
+  }
+
+  function exitEditMode() {
+    formEl.classList.add("hidden");
+    displayEl.classList.remove("hidden");
+    addressEditFields.forEach((el) => (el.style.display = "none"));
+  }
+
+  editBtn.addEventListener("click", enterEditMode);
+
+  cancelBtn.addEventListener("click", () => {
+    formEl.reset();
+    formMsg.textContent = "";
+    exitEditMode();
+  });
+
+  formEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    saveBtn.disabled = true;
+    formMsg.textContent = "";
+
+    const { error } = await actions.updateCustomerProfile(new FormData(formEl));
+
+    saveBtn.disabled = false;
+
+    if (error) {
+      formMsg.textContent = error.message;
+      return;
+    }
+
+    const fullNameInput = formEl.elements.namedItem("fullName") as HTMLInputElement;
+    const phoneInput = formEl.elements.namedItem("phone") as HTMLInputElement;
+    const billingInput = formEl.elements.namedItem("billingAddress") as HTMLTextAreaElement;
+    const shippingInput = formEl.elements.namedItem("shippingAddress") as HTMLTextAreaElement;
+    const marketingInput = formEl.elements.namedItem("marketingOptIn") as HTMLInputElement;
+
+    // Move the form's own "reset" baseline forward to what was just saved,
+    // so a later Edit → Cancel reverts to these values, not the stale
+    // pre-save ones — form.reset() only restores to defaultValue/
+    // defaultChecked, which otherwise never move past first page load.
+    fullNameInput.defaultValue = fullNameInput.value;
+    phoneInput.defaultValue = phoneInput.value;
+    billingInput.defaultValue = billingInput.value;
+    shippingInput.defaultValue = shippingInput.value;
+    marketingInput.defaultChecked = marketingInput.checked;
+
+    displayEl.querySelector('[data-field="fullName"]')!.textContent = fullNameInput.value || "—";
+    displayEl.querySelector('[data-field="phone"]')!.textContent = phoneInput.value || "—";
+    displayEl.querySelector('[data-field="marketingOptIn"]')!.textContent = marketingInput.checked ? "Yes" : "No";
+    document.querySelector('[data-field="billingAddress"]')!.textContent = billingInput.value || "Not set yet";
+    document.querySelector('[data-field="shippingAddress"]')!.textContent = shippingInput.value || "Not set yet";
+
+    exitEditMode();
+    successMsg.classList.remove("hidden");
+    setTimeout(() => successMsg.classList.add("hidden"), 3000);
   });
 </script>

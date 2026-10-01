@@ -1,174 +1,1157 @@
 ---
+// Literal recreation of the Claude Design canvas's Sales Dashboard
+// artboard (project/Sales.dc.html) — the supplied design is the visual
+// source of truth, not the app's existing DESIGN.md/AppShell component
+// system. This is the first screen of the new Sales Staff redo pass —
+// establishes a fresh --sd-* token system + the new NavSidebar.astro
+// component (project/NavSidebar.dc.html), matching the precedent set by
+// --cp-*/NavCustomer.astro for the Customer area. AppShell/Card/KpiCard/
+// ChartCanvas/DateRangeFilter/EmptyState are NOT reused here (their
+// visual output doesn't match this artboard) — every real number below
+// comes from the same real, unmodified orders/order_items/payments/
+// inventory/products tables and RLS, plus the existing
+// dashboard_revenue_trend RPC (reused, not reimplemented).
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: this-month revenue (dashboard_revenue_trend RPC, unchanged —
+//    already excludes cancelled orders), last-month revenue (same RPC,
+//    used only to compute a real month-over-month % — not fabricated,
+//    a genuine derived figure from two real RPC calls), orders-this-month
+//    count + real pending/delivered breakdown, real average order value
+//    (this month's real revenue ÷ real non-cancelled order count), real
+//    distinct active-customer count this month, a real store-wide orders-
+//    by-status board (Pending/Processing/Shipped/Delivered, real customer
+//    names via the real profiles join, real totals, real dates, real
+//    "+N more" counts), a real revenue-by-month bar chart (6 months, same
+//    RPC re-bucketed), a real "Needs attention" list (orders with a real
+//    pending payment — payments.status = 'pending', the only category of
+//    the design's three that has any backing data), a real "Stock check"
+//    panel (inventory.quantity_on_hand / reorder_level — the same real
+//    low-stock threshold Phase 5 already established — with a real,
+//    working search), real signed-in staff identity + sign-out.
+//  - "Good morning, Arjun" / the demo user throughout the design: replaced
+//    with the real signed-in staff member's real name via a real
+//    time-of-day greeting.
+//  - NOT fabricated, explicitly avoided: no "My sales"/"My orders"
+//    personal-rep framing anywhere — `orders.placed_by` exists in the
+//    schema but records who *processed* an order (audit trail), not a
+//    sales-attribution/performance concept, and your instruction is
+//    explicit that personal rep attribution doesn't exist — every KPI on
+//    this page is store-wide, matching the existing (unmodified) /sales
+//    dashboard's own already-established store-wide scope.
+//  - "Sales target" ring (72% of ₹13.6L) and "Contacts to reorder" (6,
+//    implying predictive reorder-date logic): no target/quota data and no
+//    reorder-prediction logic exists anywhere in this schema — both
+//    KPI cards are replaced with two different, equally real metrics
+//    (Average order value, Active customers) that fill the same visual
+//    slot honestly instead of a deferred placeholder, since real
+//    replacements were available. Disclosed as a deviation below.
+//  - "Sales vs target" chart's Target line: no target data — the Target
+//    series is dropped; the chart is relabelled "Revenue by month" and
+//    shows only the real revenue bars.
+//  - Per-order "Backorder"/"In stock"/"Due {date}" pills on the status
+//    board and "Backorder"/"Delayed" entries in Needs Attention: no
+//    backorder/delivery-ETA tracking exists anywhere — omitted; only the
+//    real "Payment pending" category renders.
+//  - Header topbar's global "Search orders, contacts, products…": no
+//    unified cross-entity search exists — shown disabled, matching the
+//    honest-deferred-composer pattern already used on Support Ticket
+//    Detail. Notifications bell: decorative, no backend — same as
+//    AppShell's own documented behavior elsewhere in this app.
+//  - NavSidebar's "Products & stock" and "My reports" items: sales_staff
+//    has no role-gated route to either yet (lib/roles.ts) — shown
+//    disabled rather than linked to a fabricated/broken route or a new
+//    route created just for this design (explicitly out of scope this
+//    turn). "Contacts" links to the real, already-existing /crm/customers
+//    (sales_staff is role-gated into /crm).
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import Card from "../../components/ui/Card.astro";
-import EmptyState from "../../components/catalog/EmptyState.astro";
-import KpiCard from "../../components/dashboard/KpiCard.astro";
-import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
-import { resolveDashboardRange } from "../../lib/dashboardRange";
-import AppShell from "../../components/layout/AppShell.astro";
-import { CHART_COLORS } from "../../lib/chartTheme";
+import NavSidebar from "../../components/staff/NavSidebar.astro";
 
-const url = Astro.url;
-const range = resolveDashboardRange(url.searchParams.get("range"));
+const user = Astro.locals.user;
+const firstName = ((user?.user_metadata?.full_name as string | undefined) ?? user?.email ?? "there").split(" ")[0];
 
-// Current-state counts — not range-filtered, since these describe the
-// operational queue right now, not a historical trend.
-const { data: currentOrders } = await Astro.locals.supabase.from("orders").select("status");
-const currentRows = currentOrders ?? [];
-const pendingCount = currentRows.filter((o) => o.status === "pending").length;
-const inProgressCount = currentRows.filter((o) => o.status === "confirmed" || o.status === "processing").length;
+const hour = new Date().getHours();
+const timeOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+const todayLabel = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 
-const [{ data: revenueTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
-  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
+// --- Real IST calendar-month boundaries, same convention as lib/dashboardRange.ts ---
+// istMonthStart() returns the real UTC instant of IST midnight on the 1st
+// of the target month — correct for range boundaries passed to the RPC,
+// but reading that instant's own UTC calendar fields back (e.g. for a
+// month label) is WRONG: IST midnight is 18:30 UTC the previous day, so
+// .getUTCMonth() on it silently returns the previous month. istMonthLabel
+// below computes the IST calendar (year, month) directly instead, with no
+// offset subtraction, so labels/keys never take that detour.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const nowIstShifted = new Date(Date.now() + IST_OFFSET_MS);
+const currentIstYear = nowIstShifted.getUTCFullYear();
+const currentIstMonth = nowIstShifted.getUTCMonth();
+
+function istMonthStart(monthsAgo: number): Date {
+  const start = Date.UTC(currentIstYear, currentIstMonth - monthsAgo, 1);
+  return new Date(start - IST_OFFSET_MS);
+}
+function istMonthLabel(monthsAgo: number): { key: string; label: string } {
+  const d = new Date(Date.UTC(currentIstYear, currentIstMonth - monthsAgo, 1));
+  const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  const label = d.toLocaleDateString(undefined, { month: "short", timeZone: "UTC" });
+  return { key, label };
+}
+const thisMonthFrom = istMonthStart(0);
+const nextMonthFrom = istMonthStart(-1);
+const lastMonthFrom = istMonthStart(1);
+const sixMonthsAgoFrom = istMonthStart(5);
+
+const [{ data: thisMonthTrend }, { data: lastMonthTrend }, { data: sixMonthTrend }] = await Promise.all([
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", {
+    p_from: thisMonthFrom.toISOString(),
+    p_to: nextMonthFrom.toISOString(),
+  }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", {
+    p_from: lastMonthFrom.toISOString(),
+    p_to: thisMonthFrom.toISOString(),
+  }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", {
+    p_from: sixMonthsAgoFrom.toISOString(),
+    p_to: nextMonthFrom.toISOString(),
+  }),
 ]);
 
-const revenueRows = revenueTrend ?? [];
-const statusRows = ordersByStatus ?? [];
-const productRows = topProducts ?? [];
+const sumRevenue = (rows: { revenue: number }[] | null) => (rows ?? []).reduce((s, r) => s + Number(r.revenue), 0);
+const sumOrders = (rows: { order_count: number }[] | null) => (rows ?? []).reduce((s, r) => s + Number(r.order_count), 0);
 
-const totalRevenue = revenueRows.reduce((sum, r) => sum + Number(r.revenue), 0);
-const totalOrders = revenueRows.reduce((sum, r) => sum + Number(r.order_count), 0);
-const aov = totalOrders > 0 ? totalRevenue / totalOrders : null;
+const thisMonthRevenue = sumRevenue(thisMonthTrend);
+const lastMonthRevenue = sumRevenue(lastMonthTrend);
+const thisMonthNonCancelledCount = sumOrders(thisMonthTrend);
+const revenueDeltaPct = lastMonthRevenue > 0 ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100 : null;
+const avgOrderValue = thisMonthNonCancelledCount > 0 ? thisMonthRevenue / thisMonthNonCancelledCount : null;
+
+// Real month buckets for the 6-month bar chart (re-bucketed from the RPC's daily rows).
+const monthKey = (dayStr: string) => dayStr.slice(0, 7); // "YYYY-MM"
+const monthBuckets = new Map<string, number>();
+for (const row of sixMonthTrend ?? []) {
+  const key = monthKey(row.day);
+  monthBuckets.set(key, (monthBuckets.get(key) ?? 0) + Number(row.revenue));
+}
+const monthLabels: { key: string; label: string; value: number }[] = [];
+for (let i = 5; i >= 0; i--) {
+  const { key, label } = istMonthLabel(i);
+  monthLabels.push({ key, label, value: monthBuckets.get(key) ?? 0 });
+}
+const maxMonthValue = Math.max(1, ...monthLabels.map((m) => m.value));
+
+// --- Real "orders this month" (all statuses, unlike the RPC above which excludes cancelled) ---
+const { data: thisMonthOrderRows } = await Astro.locals.supabase
+  .from("orders")
+  .select("status, customer_id")
+  .gte("created_at", thisMonthFrom.toISOString())
+  .lt("created_at", nextMonthFrom.toISOString());
+
+const thisMonthOrders = thisMonthOrderRows ?? [];
+const thisMonthPendingCount = thisMonthOrders.filter((o) => o.status === "pending").length;
+const thisMonthDeliveredCount = thisMonthOrders.filter((o) => o.status === "delivered").length;
+const activeCustomerCount = new Set(thisMonthOrders.map((o) => o.customer_id)).size;
+
+// --- Real store-wide orders-by-status board (operational, not date-scoped) ---
+const { data: boardRows } = await Astro.locals.supabase
+  .from("orders")
+  .select("id, status, total, created_at, profiles(full_name)")
+  .in("status", ["pending", "confirmed", "processing", "shipped", "delivered"])
+  .order("created_at", { ascending: false })
+  .limit(200);
+
+type BoardOrder = { id: string; total: number; created_at: string; name: string };
+const STAGE_MAP: Record<string, "Pending" | "Processing" | "Shipped" | "Delivered"> = {
+  pending: "Pending",
+  confirmed: "Processing",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+};
+const stageBuckets: Record<"Pending" | "Processing" | "Shipped" | "Delivered", BoardOrder[]> = {
+  Pending: [],
+  Processing: [],
+  Shipped: [],
+  Delivered: [],
+};
+for (const row of boardRows ?? []) {
+  const stage = STAGE_MAP[row.status];
+  if (!stage) continue;
+  stageBuckets[stage].push({
+    id: row.id,
+    total: Number(row.total),
+    created_at: row.created_at,
+    name: (row.profiles as unknown as { full_name: string | null } | null)?.full_name ?? "—",
+  });
+}
+const STAGES = (["Pending", "Processing", "Shipped", "Delivered"] as const).map((name) => {
+  const all = stageBuckets[name];
+  const shown = all.slice(0, 2);
+  return {
+    name,
+    count: all.length,
+    total: all.reduce((s, o) => s + o.total, 0),
+    shown,
+    moreCount: all.length - shown.length,
+  };
+});
+
+// --- Real "Needs attention": orders with a real pending payment ---
+const { data: pendingPaymentRows } = await Astro.locals.supabase
+  .from("payments")
+  .select("amount, orders(id, created_at, profiles(full_name))")
+  .eq("status", "pending")
+  .order("created_at", { ascending: false })
+  .limit(6);
+
+const attentionItems = (pendingPaymentRows ?? [])
+  .map((p) => {
+    const order = p.orders as unknown as {
+      id: string;
+      created_at: string;
+      profiles: { full_name: string | null } | null;
+    } | null;
+    if (!order) return null;
+    return {
+      orderId: order.id,
+      name: order.profiles?.full_name ?? "—",
+      amount: Number(p.amount),
+    };
+  })
+  .filter((x): x is { orderId: string; name: string; amount: number } => x !== null);
+
+// --- Real "Stock check" — worst-stocked first, real search ---
+const stockSearch = Astro.url.searchParams.get("stockSearch")?.trim() ?? "";
+let stockQuery = Astro.locals.supabase
+  .from("inventory")
+  .select("product_id, quantity_on_hand, reorder_level, products!inner(name, sku)")
+  .order("quantity_on_hand", { ascending: true })
+  .limit(5);
+if (stockSearch) {
+  stockQuery = stockQuery.or(`name.ilike.%${stockSearch}%,sku.ilike.%${stockSearch}%`, { referencedTable: "products" });
+}
+const { data: stockRows } = await stockQuery;
 
 const formatCurrency = (value: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
-
-const statusColors: Record<string, string> = {
-  pending: CHART_COLORS.warning,
-  confirmed: CHART_COLORS.mute,
-  processing: CHART_COLORS.mute,
-  shipped: CHART_COLORS.success,
-  delivered: CHART_COLORS.success,
-  cancelled: CHART_COLORS.error,
-  refunded: CHART_COLORS.error,
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
 };
+const formatDate = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+const attentionCount = attentionItems.length;
 ---
 
-<BaseLayout title="Sales dashboard">
-  <AppShell active="dashboard">
-    <div class="flex items-center justify-between flex-wrap gap-md">
-      <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
-      <nav aria-label="Sales sections" class="flex items-center gap-lg text-sm">
-        <a href="/sales/orders" class="text-primary font-bold hover:underline">Orders</a>
-        <a href="/sales/orders/new" class="text-primary font-bold hover:underline">New order</a>
-      </nav>
+<BaseLayout title="Sales dashboard — Inventory">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Dashboard" />
     </div>
 
-    <div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
-      <a href="/sales/orders?status=pending" class="block">
-        <Card class="hover:border-ink transition-colors">
-          <p class="text-xs uppercase tracking-[0.5px] text-muted">Pending</p>
-          <p class="mt-xs text-3xl font-bold text-warning">{pendingCount}</p>
-        </Card>
-      </a>
-      <Card>
-        <p class="text-xs uppercase tracking-[0.5px] text-muted">In progress</p>
-        <p class="mt-xs text-3xl font-bold text-ink">{inProgressCount}</p>
-      </Card>
-      <Card>
-        <p class="text-xs uppercase tracking-[0.5px] text-muted">Orders (all time)</p>
-        <p class="mt-xs text-3xl font-bold text-ink">{currentRows.length}</p>
-      </Card>
-    </div>
+    <div class="sd__panel">
+      <header class="sd__header">
+        <button type="button" id="sd-sidebar-toggle" class="sd__sidebar-toggle" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sd-sidebar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18"></path></svg>
+        </button>
+        <div class="sd__header-divider"></div>
+        <nav aria-label="Breadcrumb" class="sd__breadcrumb">
+          <span>Dashboard</span><span aria-hidden="true">/</span><span class="sd__breadcrumb-current">Overview</span>
+        </nav>
+        <div class="sd__header-spacer"></div>
+        <button type="button" id="sd-theme-toggle" class="sd__theme-toggle" aria-label="Switch to dark mode">
+          <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+          <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+        </button>
+        <label class="sd__search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
+          <input type="search" aria-label="Search" placeholder="Search orders, contacts, products…" disabled />
+        </label>
+        <button type="button" aria-label="Notifications" class="sd__notif-btn" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4zM10 21h4"></path></svg>
+        </button>
+        <a href="/sales/orders/new" class="sd__new-order-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          New order
+        </a>
+      </header>
 
-    <div class="mt-xl flex items-center justify-between flex-wrap gap-md">
-      <h2 class="text-lg font-bold text-ink">Revenue analytics</h2>
-      <DateRangeFilter current={range.preset} url={url} pathname="/sales" />
-    </div>
-    <p class="mt-xs text-xs text-muted">{range.label}</p>
-
-    <div class="mt-md grid grid-cols-1 sm:grid-cols-3 gap-lg">
-      <KpiCard label="Revenue in range" value={formatCurrency(totalRevenue)} />
-      <KpiCard label="Orders in range" value={String(totalOrders)} />
-      <KpiCard label="Average order value" value={aov !== null ? formatCurrency(aov) : "—"} />
-    </div>
-
-    <div class="mt-lg grid grid-cols-1 lg:grid-cols-2 gap-lg">
-      <Card>
-        <h3 class="text-sm font-bold text-ink">Revenue trend</h3>
-        <div class="mt-sm">
-          {
-            revenueRows.length > 0 ? (
-              <ChartCanvas
-                id="sales-revenue-trend"
-                type="line"
-                data={{
-                  labels: revenueRows.map((r) => r.day),
-                  datasets: [
-                    {
-                      label: "Revenue",
-                      data: revenueRows.map((r) => Number(r.revenue)),
-                      borderColor: CHART_COLORS.ink,
-                      backgroundColor: "rgba(17,17,17,0.06)",
-                      fill: true,
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No revenue in this range" message="Try another date range." />
-            )
-          }
+      <main id="main-content" class="sd__main">
+        <div class="sd__greeting">
+          <h1>Good {timeOfDay}, {firstName}</h1>
+          <span class="sd__greeting-sub">
+            {todayLabel}
+            {attentionCount > 0 && <Fragment> · {attentionCount} order{attentionCount === 1 ? "" : "s"} need{attentionCount === 1 ? "s" : ""} your attention</Fragment>}
+          </span>
         </div>
-      </Card>
 
-      <Card>
-        <h3 class="text-sm font-bold text-ink">Orders by status</h3>
-        <div class="mt-sm">
-          {
-            statusRows.length > 0 ? (
-              <ChartCanvas
-                id="sales-orders-status"
-                type="bar"
-                data={{
-                  labels: statusRows.map((r) => r.status),
-                  datasets: [
-                    {
-                      label: "Orders",
-                      data: statusRows.map((r) => Number(r.order_count)),
-                      backgroundColor: statusRows.map((r) => statusColors[r.status] ?? CHART_COLORS.mute),
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No orders in this range" message="Try another date range." />
-            )
-          }
+        <div class="sd__kpi-grid">
+          <div class="sd__kpi-card">
+            <span class="sd__kpi-label">Revenue this month</span>
+            <div class="sd__kpi-body">
+              <span class="sd__kpi-value">{formatCompact(thisMonthRevenue)}</span>
+              <span class="sd__kpi-sub">
+                {revenueDeltaPct !== null ? (
+                  <Fragment>
+                    <span class={revenueDeltaPct >= 0 ? "sd__delta-up" : "sd__delta-down"}>
+                      {revenueDeltaPct >= 0 ? "+" : ""}{revenueDeltaPct.toFixed(0)}%
+                    </span> vs last month
+                  </Fragment>
+                ) : (
+                  "No data last month to compare"
+                )}
+              </span>
+            </div>
+          </div>
+          <div class="sd__kpi-card">
+            <span class="sd__kpi-label">Orders this month</span>
+            <div class="sd__kpi-body">
+              <span class="sd__kpi-value">{thisMonthOrders.length}</span>
+              <span class="sd__kpi-sub">
+                <span class="sd__delta-warn">{thisMonthPendingCount} pending</span> · {thisMonthDeliveredCount} delivered
+              </span>
+            </div>
+          </div>
+          <div class="sd__kpi-card">
+            <span class="sd__kpi-label">Average order value</span>
+            <div class="sd__kpi-body">
+              <span class="sd__kpi-value">{avgOrderValue !== null ? formatCompact(avgOrderValue) : "—"}</span>
+              <span class="sd__kpi-sub">This month, excluding cancelled</span>
+            </div>
+          </div>
+          <div class="sd__kpi-card">
+            <span class="sd__kpi-label">Active customers</span>
+            <div class="sd__kpi-body">
+              <span class="sd__kpi-value">{activeCustomerCount}</span>
+              <span class="sd__kpi-sub">Placed an order this month</span>
+            </div>
+          </div>
         </div>
-      </Card>
 
-      <Card class="lg:col-span-2">
-        <h3 class="text-sm font-bold text-ink">Top products by revenue</h3>
-        <div class="mt-sm">
-          {
-            productRows.length > 0 ? (
-              <ChartCanvas
-                id="sales-top-products"
-                type="bar"
-                data={{
-                  labels: productRows.map((r) => r.name),
-                  datasets: [
-                    {
-                      label: "Revenue",
-                      data: productRows.map((r) => Number(r.revenue)),
-                      backgroundColor: CHART_COLORS.ink,
-                    },
-                  ],
-                }}
-                options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
-              />
+        <section class="sd__board">
+          <div class="sd__board-head">
+            <h2>Orders by status</h2>
+            <a href="/sales/orders">All orders</a>
+          </div>
+          <div class="sd__board-grid">
+            {STAGES.map((stage) => (
+              <div class="sd__stage">
+                <div class="sd__stage-head">
+                  <span class="sd__stage-name">
+                    <span class={`sd__stage-dot sd__stage-dot--${stage.name.toLowerCase()}`} />
+                    {stage.name} <span class="sd__stage-count">{stage.count}</span>
+                  </span>
+                  <span class="sd__stage-total">{formatCompact(stage.total)}</span>
+                </div>
+                {stage.shown.map((o) => (
+                  <a href={`/sales/orders/${o.id}`} class="sd__order-card">
+                    <div class="sd__order-card-top">
+                      <span class="sd__order-name">{o.name}</span>
+                      <span class="sd__order-amt">{formatCompact(o.total)}</span>
+                    </div>
+                    <div class="sd__order-card-bottom">
+                      <span class="sd__order-meta">{o.id.slice(0, 8)} · {formatDate(o.created_at)}</span>
+                    </div>
+                  </a>
+                ))}
+                {stage.moreCount > 0 && <span class="sd__stage-more">+ {stage.moreCount} more</span>}
+                {stage.count === 0 && <span class="sd__stage-more">No orders</span>}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div class="sd__row">
+          <section class="sd__chart-card">
+            <div class="sd__chart-head">
+              <div class="sd__card-head-text">
+                <h2>Revenue by month</h2>
+                <span>Order value · last 6 months</span>
+              </div>
+            </div>
+            <div class="sd__bars">
+              {monthLabels.map((m) => (
+                <div class="sd__bar-col">
+                  <div class="sd__bar-track">
+                    <div class="sd__bar-fill" style={`height: ${Math.round((m.value / maxMonthValue) * 100)}%`} title={formatCurrency(m.value)} />
+                  </div>
+                  <span class="sd__bar-label">{m.label}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section class="sd__attention-card">
+            <div class="sd__card-head-row">
+              <h2>Needs attention</h2>
+              <a href="/sales/orders">All orders</a>
+            </div>
+            {attentionItems.length > 0 ? (
+              attentionItems.map((item) => (
+                <a href={`/sales/orders/${item.orderId}`} class="sd__attention-row">
+                  <span class="sd__attention-body">
+                    <span class="sd__attention-title">{item.orderId.slice(0, 8)} · {item.name}</span>
+                    <span class="sd__attention-sub">Payment pending · {formatCurrency(item.amount)} unpaid</span>
+                  </span>
+                  <span class="sd__pill sd__pill--danger">Payment</span>
+                </a>
+              ))
             ) : (
-              <EmptyState title="No product sales in this range" message="Try another date range." />
-            )
-          }
+              <p class="sd__attention-empty">Nothing needs attention right now.</p>
+            )}
+          </section>
+
+          <section class="sd__stock-card">
+            <div class="sd__card-head-row">
+              <div class="sd__card-head-text">
+                <h2>Stock check</h2>
+                <span>Before you promise a date</span>
+              </div>
+            </div>
+            <form method="get" class="sd__stock-search">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
+              <input type="search" name="stockSearch" aria-label="Search product or SKU" placeholder="Search product or SKU" value={stockSearch} />
+            </form>
+            {(stockRows ?? []).length > 0 ? (
+              (stockRows ?? []).map((row) => {
+                const product = row.products as unknown as { name: string; sku: string };
+                const tone = row.quantity_on_hand === 0 ? "danger" : row.quantity_on_hand <= row.reorder_level ? "warn" : "success";
+                const label = row.quantity_on_hand === 0 ? "Out of stock" : row.quantity_on_hand <= row.reorder_level ? `${row.quantity_on_hand} left` : `${row.quantity_on_hand} in stock`;
+                return (
+                  <div class="sd__stock-row">
+                    <span class="sd__stock-body">
+                      <span class="sd__stock-name">{product.name}</span>
+                      <span class="sd__stock-sku">{product.sku}</span>
+                    </span>
+                    <span class={`sd__pill sd__pill--${tone}`}>{label}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <p class="sd__attention-empty">No products found.</p>
+            )}
+          </section>
         </div>
-      </Card>
+      </main>
     </div>
-  </AppShell>
+  </div>
 </BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__theme-toggle {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border-radius: 9px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .sd[data-theme="dark"] .icon-sun,
+  .sd:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+
+  .sd__sidebar-toggle {
+    width: 32px;
+    height: 32px;
+    margin-left: -8px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+      margin-left: 8px;
+    }
+  }
+
+  .sd__header {
+    height: 64px;
+    box-sizing: border-box;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--sd-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  @media (max-width: 1023px) {
+    .sd__header {
+      padding: 0 16px;
+    }
+  }
+  .sd__header-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--sd-border);
+    flex-shrink: 0;
+  }
+  .sd__breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+  .sd__breadcrumb-current {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .sd__header-spacer {
+    flex-grow: 1;
+  }
+  .sd__search {
+    width: 260px;
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+  .sd__search input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    flex-grow: 1;
+    color: var(--sd-fg);
+  }
+  .sd__search input:disabled {
+    cursor: not-allowed;
+  }
+  .sd__notif-btn {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: not-allowed;
+  }
+  .sd__new-order-btn {
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .sd__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .sd__main {
+      padding: 20px 16px;
+    }
+  }
+
+  .sd__greeting {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sd__greeting h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .sd__greeting-sub {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sd__kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .sd__kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .sd__kpi-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sd__kpi-card {
+    box-sizing: border-box;
+    padding: 18px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 118px;
+  }
+  .sd__kpi-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__kpi-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sd__kpi-value {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .sd__kpi-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__delta-up {
+    color: var(--sd-success-fg);
+    font-weight: 600;
+  }
+  .sd__delta-down {
+    color: var(--sd-danger-fg);
+    font-weight: 600;
+  }
+  .sd__delta-warn {
+    color: var(--sd-warn-fg);
+    font-weight: 600;
+  }
+
+  .sd__board {
+    box-sizing: border-box;
+    padding: 18px 20px 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sd__board-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sd__board-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sd__board-head a {
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--sd-accent);
+  }
+  .sd__board-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .sd__board-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 560px) {
+    .sd__board-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sd__stage {
+    background: var(--sd-muted);
+    border-radius: 12px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sd__stage-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 4px;
+  }
+  .sd__stage-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .sd__stage-count {
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .sd__stage-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .sd__stage-dot--pending {
+    background: #a1a1aa;
+  }
+  .sd__stage-dot--processing {
+    background: color-mix(in srgb, var(--sd-accent) 50%, transparent);
+  }
+  .sd__stage-dot--shipped {
+    background: var(--sd-accent);
+  }
+  .sd__stage-dot--delivered {
+    background: #1f7a4d;
+  }
+  .sd__stage-total {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__order-card {
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-decoration: none;
+    color: var(--sd-fg);
+  }
+  .sd__order-card-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .sd__order-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sd__order-amt {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .sd__order-card-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sd__order-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__stage-more {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    padding: 0 4px;
+  }
+
+  .sd__row {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1200px) {
+    .sd__row {
+      flex-direction: row;
+    }
+  }
+
+  .sd__card-head-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sd__card-head-text h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sd__card-head-text span {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__card-head-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 8px;
+  }
+  .sd__card-head-row h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sd__card-head-row a {
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--sd-accent);
+  }
+
+  .sd__chart-card {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  @media (min-width: 1200px) {
+    .sd__chart-card {
+      width: 420px;
+      flex-shrink: 0;
+    }
+  }
+  .sd__chart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .sd__bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    height: 180px;
+  }
+  .sd__bar-col {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+  }
+  .sd__bar-track {
+    flex-grow: 1;
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+  }
+  .sd__bar-fill {
+    width: 100%;
+    min-height: 2px;
+    background: var(--sd-accent);
+    border-radius: 4px 4px 0 0;
+  }
+  .sd__bar-label {
+    font-size: 11px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sd__attention-card {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sd__attention-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 9px 0;
+    border-top: 1px solid var(--sd-border);
+    text-decoration: none;
+    color: var(--sd-fg);
+  }
+  .sd__attention-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sd__attention-title {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .sd__attention-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__attention-empty {
+    margin: 0;
+    padding: 16px 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sd__stock-card {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1200px) {
+    .sd__stock-card {
+      width: 320px;
+      flex-shrink: 0;
+    }
+  }
+  .sd__stock-search {
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-muted-fg);
+  }
+  .sd__stock-search input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    flex-grow: 1;
+    color: var(--sd-fg);
+  }
+  .sd__stock-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--sd-border);
+  }
+  .sd__stock-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .sd__stock-name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .sd__stock-sku {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sd__pill {
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .sd__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .sd__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .sd__pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

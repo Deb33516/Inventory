@@ -1,8 +1,38 @@
 ---
+// Literal recreation of the Claude Design canvas's Shop artboard
+// (project/PageShop.dc.html, imported by CustShop.dc.html) — the supplied
+// design is the visual source of truth, not the app's existing DESIGN.md
+// component system. Reuses the same --cp-* token system and NavCustomer
+// header already approved on the Customer Portal, per your instruction to
+// keep the established visual language. ProductCard.astro/
+// AddToCartButton.astro are NOT reused here — their current visual output
+// (square/hairline cards, pill buttons) doesn't match this artboard, and
+// they're shared with Product Detail/Landing, which haven't had their own
+// redo turn yet — so this page builds its own card markup, wired to the
+// same real, unmodified cart logic (src/lib/cart.ts).
+//
+// Real vs deferred, per your explicit stock rule:
+//  - Products, categories, real category counts, search, sort, pagination,
+//    Add to cart, quantity stepper: all real, same queries/logic as
+//    before this pass.
+//  - Price range filter: real — min/max are genuine query params applied
+//    via .gte()/.lte() on the real `price` column, not decorative.
+//  - "In stock only" filter and every per-product stock pill
+//    ("In stock"/"Only 12 left"/"Back 3 Oct"): `inventory` RLS only
+//    grants SELECT to staff roles (0005_inventory.sql,
+//    inventory_select_staff) — a customer has no live stock figure at
+//    all. Per your explicit instruction, no new RLS/view was added to
+//    manufacture one. The checkbox is kept (visual structure preserved)
+//    but disabled with an honest "not available yet" note; stock pills on
+//    cards are omitted entirely rather than shown as a fake "In stock".
+//  - MRP / discount % / "dealer prices" / GST-added-at-checkout / a
+//    per-product "unit": none of these have backing columns anywhere in
+//    the schema (products has sku/name/description/price/category_id/
+//    image_url only) — omitted rather than invented.
+//  - "Bought before" filter: not existing functionality (no purchase-
+//    history filter implemented anywhere) — omitted, not faked.
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import ProductCard from "../../components/catalog/ProductCard.astro";
-import EmptyState from "../../components/catalog/EmptyState.astro";
-import PublicHeader from "../../components/layout/PublicHeader.astro";
+import NavCustomer from "../../components/customer/NavCustomer.astro";
 
 const PAGE_SIZE = 24;
 
@@ -11,6 +41,10 @@ const search = url.searchParams.get("search")?.trim() ?? "";
 const categorySlug = url.searchParams.get("category") ?? "";
 const sort = url.searchParams.get("sort") ?? "name";
 const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+const minPriceParam = url.searchParams.get("minPrice");
+const maxPriceParam = url.searchParams.get("maxPrice");
+const minPrice = minPriceParam ? Number(minPriceParam) : null;
+const maxPrice = maxPriceParam ? Number(maxPriceParam) : null;
 
 const { data: categories } = await Astro.locals.supabase
   .from("categories")
@@ -47,10 +81,6 @@ const sortConfig = sortMap[sort] ?? sortMap.name;
 const from = (page - 1) * PAGE_SIZE;
 const to = from + PAGE_SIZE - 1;
 
-// No stock join here — `inventory` RLS only grants SELECT to staff roles
-// (0005_inventory.sql, inventory_select_staff), so a customer/anonymous
-// shopper has no live stock figure to show. See products/[sku].astro's
-// fuller note.
 let query = Astro.locals.supabase
   .from("products")
   .select("id, sku, name, price, image_url, categories(name)", { count: "exact" })
@@ -61,6 +91,12 @@ if (search) {
 }
 if (categoryId) {
   query = query.eq("category_id", categoryId);
+}
+if (minPrice !== null && !Number.isNaN(minPrice)) {
+  query = query.gte("price", minPrice);
+}
+if (maxPrice !== null && !Number.isNaN(maxPrice)) {
+  query = query.lte("price", maxPrice);
 }
 
 query = query.order(sortConfig.column, { ascending: sortConfig.ascending }).range(from, to);
@@ -78,117 +114,748 @@ function buildUrl(overrides: Record<string, string | undefined>) {
   const qs = next.toString();
   return qs ? `/products?${qs}` : "/products";
 }
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
 ---
 
 <BaseLayout title="Shop — Inventory">
-  <PublicHeader />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-3xl font-bold text-ink">Shop</h1>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-    <div class="mt-lg flex flex-col lg:flex-row gap-lg items-start">
-      <aside aria-label="Filters" class="w-full lg:w-[220px] shrink-0 flex flex-col gap-md">
-        <div class="flex flex-col gap-xxs">
-          <span class="text-xs font-bold uppercase tracking-[0.5px] text-muted px-xs pb-xs">Categories</span>
-          <a
-            href={buildUrl({ category: undefined, page: undefined })}
-            class={`px-sm py-xs flex justify-between text-sm rounded-md ${!categorySlug ? "bg-surface-soft font-bold text-ink" : "text-body hover:text-ink"}`}
-          >
-            <span>All products</span>
-            <span class="text-muted">{totalActiveCount}</span>
-          </a>
+    <NavCustomer active="Shop" />
+
+    <main id="main-content" class="cp__main">
+      <div class="cp__header">
+        <h1>Shop</h1>
+      </div>
+
+      <div class="shop__layout">
+        <aside aria-label="Filters" class="shop__filters">
+          <div class="shop__filter-group">
+            <span class="shop__filter-label">Categories</span>
+            <a href={buildUrl({ category: undefined, page: undefined })} class={!categorySlug ? "is-active" : ""}>
+              <span>All products</span><span class="shop__count">{totalActiveCount}</span>
+            </a>
+            {
+              categories?.map((c) => (
+                <a href={buildUrl({ category: c.slug, page: undefined })} class={categorySlug === c.slug ? "is-active" : ""}>
+                  <span>{c.name}</span><span class="shop__count">{categoryCounts.get(c.id) ?? 0}</span>
+                </a>
+              ))
+            }
+          </div>
+
+          <div class="shop__divider" />
+
+          <div class="shop__filter-group">
+            <span class="shop__filter-label">Availability</span>
+            <label class="shop__checkbox shop__checkbox--disabled">
+              <input type="checkbox" disabled />
+              In stock only
+            </label>
+            <span class="shop__filter-note">Live stock isn't available to customers yet.</span>
+          </div>
+
+          <div class="shop__divider" />
+
+          <form method="get" class="shop__filter-group">
+            {search && <input type="hidden" name="search" value={search} />}
+            {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
+            {sort !== "name" && <input type="hidden" name="sort" value={sort} />}
+            <div class="shop__price-head">
+              <span class="shop__filter-label">Price range</span>
+              <span class="shop__filter-note">per unit</span>
+            </div>
+            <div class="shop__price-inputs">
+              <input type="number" name="minPrice" min="0" placeholder="Min" value={minPriceParam ?? ""} aria-label="Minimum price" />
+              <span>–</span>
+              <input type="number" name="maxPrice" min="0" placeholder="Max" value={maxPriceParam ?? ""} aria-label="Maximum price" />
+            </div>
+            <button type="submit" class="btn-outline-sm shop__price-apply">Apply</button>
+          </form>
+
+          <div class="shop__ask">
+            <p class="shop__ask-title">Not sure what to pick?</p>
+            <p class="shop__ask-body">Ask our support team about sizes, fit or compatibility.</p>
+            <a href="/account/support">Ask a question</a>
+          </div>
+
+          {(categorySlug || search || minPriceParam || maxPriceParam || sort !== "name") && (
+            <a href="/products" class="btn-outline-sm shop__clear">Clear filters</a>
+          )}
+        </aside>
+
+        <div class="shop__catalog">
+          <div class="shop__toolbar">
+            <form method="get" class="shop__search">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
+              <input type="text" name="search" value={search} placeholder="Search by name or SKU…" />
+              {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
+              {minPriceParam && <input type="hidden" name="minPrice" value={minPriceParam} />}
+              {maxPriceParam && <input type="hidden" name="maxPrice" value={maxPriceParam} />}
+              <input type="hidden" name="sort" value={sort} />
+            </form>
+            <select id="shop-sort-select" class="shop__sort">
+              <option value={buildUrl({ sort: "name", page: undefined })} selected={sort === "name"}>Sort: Name</option>
+              <option value={buildUrl({ sort: "price_asc", page: undefined })} selected={sort === "price_asc"}>Sort: Price low to high</option>
+              <option value={buildUrl({ sort: "price_desc", page: undefined })} selected={sort === "price_desc"}>Sort: Price high to low</option>
+            </select>
+            <span class="shop__toolbar-spacer" />
+            <span class="shop__count-label">{count ?? 0} products</span>
+          </div>
+
           {
-            categories?.map((c) => (
-              <a
-                href={buildUrl({ category: c.slug, page: undefined })}
-                class={`px-sm py-xs flex justify-between text-sm rounded-md ${categorySlug === c.slug ? "bg-surface-soft font-bold text-ink" : "text-body hover:text-ink"}`}
-              >
-                <span>{c.name}</span>
-                <span class="text-muted">{categoryCounts.get(c.id) ?? 0}</span>
-              </a>
-            ))
+            products && products.length > 0 ? (
+              <Fragment>
+                <div class="shop__grid">
+                  {products.map((p) => (
+                    <article class="shop__card">
+                      <a href={`/products/${p.sku}`} class="shop__card-image" aria-label={`View ${p.name} details`}>
+                        {p.image_url ? (
+                          <img src={p.image_url} alt={p.name} loading="lazy" />
+                        ) : (
+                          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"></path></svg>
+                        )}
+                        {p.categories?.name && <span class="shop__card-badge">{p.categories.name}</span>}
+                      </a>
+                      <div class="shop__card-body">
+                        <a href={`/products/${p.sku}`} class="shop__card-name">{p.name}</a>
+                        <span class="shop__card-sku">{p.sku}</span>
+                        <span class="shop__card-price">{formatCurrency(p.price)}</span>
+                        <div class="shop__card-actions">
+                          <div class="shop__stepper" data-stepper>
+                            <button type="button" class="shop__stepper-btn" data-dec aria-label={`Decrease quantity of ${p.name}`}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg>
+                            </button>
+                            <span class="shop__stepper-value" data-qty="1">1</span>
+                            <button type="button" class="shop__stepper-btn" data-inc aria-label={`Increase quantity of ${p.name}`}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            class="shop__add-btn"
+                            data-add-to-cart
+                            data-product-id={p.id}
+                            data-sku={p.sku}
+                            data-name={p.name}
+                            data-price={p.price}
+                          >
+                            Add
+                          </button>
+                        </div>
+                        <p class="shop__card-message" data-message role="status" />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                {totalPages > 1 && (
+                  <div class="shop__pagination">
+                    <a
+                      href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
+                      aria-disabled={page <= 1}
+                      class={page <= 1 ? "is-disabled" : ""}
+                    >
+                      Previous
+                    </a>
+                    <span>Page {page} of {totalPages}</span>
+                    <a
+                      href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
+                      aria-disabled={page >= totalPages}
+                      class={page >= totalPages ? "is-disabled" : ""}
+                    >
+                      Next
+                    </a>
+                  </div>
+                )}
+              </Fragment>
+            ) : (
+              <div class="shop__empty">
+                <p class="shop__empty-title">No products found</p>
+                <p class="shop__empty-body">Try a different search term, category or price range.</p>
+              </div>
+            )
           }
         </div>
-
-        <div class="p-md bg-surface-soft flex flex-col gap-xxs">
-          <p class="text-sm font-bold text-ink">Not sure what to pick?</p>
-          <p class="text-xs text-muted leading-relaxed">Ask our support team about sizes, fit or compatibility.</p>
-          <a href="/account/support" class="mt-xxs text-xs font-bold text-primary">Ask a question</a>
-        </div>
-      </aside>
-
-      <div class="flex-grow w-full min-w-0 flex flex-col gap-md">
-        <form method="get" class="flex flex-col md:flex-row gap-sm items-stretch">
-          <input
-            type="text"
-            name="search"
-            value={search}
-            placeholder="Search by name or SKU…"
-            class="flex-1 min-w-0 md:max-w-sm h-11 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none transition-colors"
-          />
-          <select
-            name="sort"
-            class="h-11 px-md rounded-full bg-surface-soft text-ink border border-transparent focus:border-hairline-strong focus:bg-canvas outline-none"
-          >
-            <option value="name" selected={sort === "name"}>Name</option>
-            <option value="price_asc" selected={sort === "price_asc"}>Price: low to high</option>
-            <option value="price_desc" selected={sort === "price_desc"}>Price: high to low</option>
-          </select>
-          {categorySlug && <input type="hidden" name="category" value={categorySlug} />}
-          <button
-            type="submit"
-            class="h-11 px-lg rounded-full bg-primary text-on-primary font-bold text-sm transition-[background-color,opacity,transform] duration-150 hover:bg-primary-active active:scale-[0.97] active:opacity-80"
-          >
-            Apply
-          </button>
-          <span class="flex-grow" />
-          <span class="self-center text-xs text-muted whitespace-nowrap">{count ?? 0} products</span>
-        </form>
-
-        {
-          products && products.length > 0 ? (
-            <>
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
-                {products.map((p) => (
-                  <ProductCard
-                    productId={p.id}
-                    sku={p.sku}
-                    name={p.name}
-                    price={p.price}
-                    imageUrl={p.image_url}
-                    categoryName={p.categories?.name}
-                    showStepper
-                  />
-                ))}
-              </div>
-
-              {totalPages > 1 && (
-                <div class="mt-md flex items-center justify-center gap-md text-sm">
-                  <a
-                    href={page > 1 ? buildUrl({ page: String(page - 1) }) : "#"}
-                    aria-disabled={page <= 1}
-                    class={`px-md py-xs rounded-full border border-hairline-strong ${page <= 1 ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
-                  >
-                    Previous
-                  </a>
-                  <span class="text-muted">
-                    Page {page} of {totalPages}
-                  </span>
-                  <a
-                    href={page < totalPages ? buildUrl({ page: String(page + 1) }) : "#"}
-                    aria-disabled={page >= totalPages}
-                    class={`px-md py-xs rounded-full border border-hairline-strong ${page >= totalPages ? "pointer-events-none opacity-40" : "hover:bg-surface-soft"}`}
-                  >
-                    Next
-                  </a>
-                </div>
-              )}
-            </>
-          ) : (
-            <EmptyState title="No products found" message="Try a different search term or category." />
-          )
-        }
       </div>
-    </div>
-  </main>
+    </main>
+  </div>
 </BaseLayout>
+
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-success-bg: #ecfdf3;
+    --cp-success-fg: #15803d;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-success-bg: #0f2a1c;
+    --cp-success-fg: #4ade80;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+  .cp__header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .btn-outline-sm {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .shop__layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1100px) {
+    .shop__layout {
+      flex-direction: row;
+      align-items: flex-start;
+    }
+  }
+  .shop__filters {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .shop__filters {
+      width: 220px;
+      flex-shrink: 0;
+    }
+  }
+  .shop__filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .shop__filter-label {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0 2px 6px;
+  }
+  .shop__filter-group a {
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-decoration: none;
+    font-size: 14px;
+    color: var(--cp-fg2);
+  }
+  .shop__filter-group a.is-active {
+    background: var(--cp-muted);
+    color: var(--cp-fg);
+    font-weight: 500;
+  }
+  .shop__count {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+    font-weight: 400;
+  }
+  .shop__divider {
+    height: 1px;
+    background: var(--cp-border);
+  }
+  .shop__checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--cp-fg);
+  }
+  .shop__checkbox--disabled {
+    color: var(--cp-muted-fg);
+    cursor: not-allowed;
+  }
+  .shop__checkbox input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--cp-primary);
+  }
+  .shop__filter-note {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+    padding: 0 2px;
+  }
+  .shop__price-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0 2px;
+  }
+  .shop__price-inputs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .shop__price-inputs input {
+    width: 0;
+    flex-grow: 1;
+    height: 32px;
+    box-sizing: border-box;
+    padding: 0 8px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--cp-fg);
+  }
+  .shop__price-inputs span {
+    color: var(--cp-muted-fg);
+    font-size: 13px;
+  }
+  .shop__price-apply {
+    margin-top: 10px;
+    width: 100%;
+  }
+  .shop__ask {
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .shop__ask-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .shop__ask-body {
+    margin: 0;
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+    line-height: 1.4;
+  }
+  .shop__ask a {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-accent);
+    text-decoration: none;
+    padding-top: 2px;
+  }
+  .shop__clear {
+    width: 100%;
+  }
+
+  .shop__catalog {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .shop__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .shop__search {
+    width: 100%;
+    max-width: 340px;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--cp-muted-fg);
+  }
+  .shop__search input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    flex-grow: 1;
+    color: var(--cp-fg);
+  }
+  .shop__sort {
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--cp-fg);
+  }
+  .shop__toolbar-spacer {
+    flex-grow: 1;
+  }
+  .shop__count-label {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .shop__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (min-width: 700px) {
+    .shop__grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 1100px) {
+    .shop__grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  .shop__card {
+    box-sizing: border-box;
+    padding: 12px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .shop__card-image {
+    height: 128px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    text-decoration: none;
+    overflow: hidden;
+  }
+  .shop__card-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .shop__card-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--cp-card);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--cp-fg2);
+  }
+  .shop__card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .shop__card-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    text-decoration: none;
+  }
+  .shop__card-sku {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .shop__card-price {
+    margin-top: 4px;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .shop__card-actions {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .shop__stepper {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    box-sizing: border-box;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    flex-shrink: 0;
+  }
+  .shop__stepper-btn {
+    width: 28px;
+    height: 30px;
+    border: 0;
+    background: transparent;
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .shop__stepper-value {
+    min-width: 24px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .shop__add-btn {
+    flex-grow: 1;
+    min-width: 0;
+    height: 32px;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .shop__card-message {
+    margin: 4px 0 0;
+    min-height: 16px;
+    font-size: 11px;
+    color: var(--cp-success-fg);
+  }
+  .shop__card-message a {
+    margin-left: 4px;
+    color: var(--cp-accent);
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .shop__pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .shop__pagination a {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    color: var(--cp-fg);
+    text-decoration: none;
+  }
+  .shop__pagination a.is-disabled {
+    pointer-events: none;
+    opacity: 0.4;
+  }
+
+  .shop__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+  }
+  .shop__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .shop__empty-body {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+</style>
+
+<script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  import { addToCart } from "../../lib/cart";
+
+  document.getElementById("shop-sort-select")?.addEventListener("change", (event) => {
+    window.location.href = (event.target as HTMLSelectElement).value;
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-stepper]").forEach((stepper) => {
+    const valueEl = stepper.querySelector<HTMLSpanElement>("[data-qty]")!;
+    stepper.querySelector("[data-dec]")?.addEventListener("click", () => {
+      const next = Math.max(1, Number(valueEl.dataset.qty ?? "1") - 1);
+      valueEl.dataset.qty = String(next);
+      valueEl.textContent = String(next);
+    });
+    stepper.querySelector("[data-inc]")?.addEventListener("click", () => {
+      const next = Number(valueEl.dataset.qty ?? "1") + 1;
+      valueEl.dataset.qty = String(next);
+      valueEl.textContent = String(next);
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-add-to-cart]").forEach((button) => {
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+    button.addEventListener("click", () => {
+      const card = button.closest(".shop__card")!;
+      const qtyEl = card.querySelector<HTMLSpanElement>("[data-qty]");
+      const quantity = Number(qtyEl?.dataset.qty ?? "1");
+
+      addToCart(
+        {
+          productId: button.dataset.productId!,
+          sku: button.dataset.sku!,
+          name: button.dataset.name!,
+          price: Number(button.dataset.price),
+        },
+        quantity
+      );
+
+      const message = card.querySelector<HTMLParagraphElement>("[data-message]");
+      if (message) {
+        message.replaceChildren();
+        const added = document.createElement("span");
+        added.textContent = "Added";
+        const viewCart = document.createElement("a");
+        viewCart.href = "/cart";
+        viewCart.textContent = "View cart";
+        message.append(added, " ", viewCart);
+      }
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => message?.replaceChildren(), 6000);
+
+      window.dispatchEvent(new CustomEvent("cart-updated"));
+    });
+  });
+</script>

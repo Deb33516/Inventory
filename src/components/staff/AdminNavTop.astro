@@ -1,0 +1,192 @@
+---
+// Literal recreation of the Claude Design canvas's Admin top bar — unlike
+// the Sales/Inventory Staff screens, the Admin artboard (project/Admin.dc.html)
+// does NOT import a separate shared "NavTop" sub-component the way
+// StaffReceiving.dc.html/SalesProducts.dc.html etc. do; its header markup
+// is baked directly into Admin.dc.html itself. Extracted here as its own
+// real component anyway (not inlined per-page) because every future Admin
+// screen will need this exact same header — matching NavTop.astro's own
+// reasoning for existing as a shared component, just scoped to the Admin
+// artboard's own distinct layout (search width/breadcrumb style/button set
+// genuinely differ from Sales/Staff's NavTop, per your explicit "do not
+// assume the Admin shell should be identical" instruction).
+//
+// Real vs deferred, per the no-fabrication rules:
+//  - Sidebar toggle + breadcrumb: real (same #sd-sidebar-toggle contract
+//    every NavSidebar.astro consumer already relies on).
+//  - Theme toggle: the design's own compiled markup has no toggle button
+//    at all (Claude Design previews light/dark as two separate static
+//    exports, not a runtime switch) — same as literally every other
+//    screen's own source artboard. Every approved screen so far (Sales,
+//    Inventory Staff) added a real #sd-theme-toggle button anyway, since
+//    actual dark-mode support is mandatory for the real app — reproduced
+//    here for the same reason, in the same "immediately left of search"
+//    position NavTop.astro already established.
+//  - Search ("Search customers, orders, SKUs…", "⌘K" hint): no real
+//    cross-entity search backend exists anywhere in this project — same
+//    "no searchAction = render disabled" precedent NavTop.astro already
+//    uses for a page with nothing real to search. The "⌘K" hint is
+//    dropped entirely (not just disabled) — keeping it would imply a real
+//    working keyboard shortcut that doesn't exist.
+//  - Notifications button + its unread-dot indicator: no real notification
+//    system exists anywhere in this project (CLAUDE.md lists this as an
+//    explicitly out-of-scope deferred item) — rendered disabled, same as
+//    NavTop.astro's own existing notifications button; the decorative
+//    unread dot is dropped entirely (it would imply a real unread count
+//    that was never computed).
+//  - Header "+ New" button: omitted. From the Dashboard specifically there
+//    is no single real destination it could honestly point to (New order/
+//    New product/etc. all belong to Admin screens not yet rebuilt this
+//    turn) — a generic non-functional "+ New" would be a fabricated
+//    action, not a real one deferred.
+interface Props {
+  section: string;
+  page: string;
+}
+
+const { section, page } = Astro.props;
+---
+
+<header class="admintop">
+  <button type="button" id="sd-sidebar-toggle" class="admintop__sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="false" aria-controls="sd-sidebar">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18"></path></svg>
+  </button>
+  <div class="admintop__divider"></div>
+  <nav aria-label="Breadcrumb" class="admintop__breadcrumb">
+    <span>{section}</span><span aria-hidden="true">/</span>
+    <span class="admintop__breadcrumb-current">{page}</span>
+  </nav>
+  <div class="admintop__spacer"></div>
+  <button type="button" id="sd-theme-toggle" class="admintop__theme-toggle" aria-label="Switch to dark mode">
+    <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+    <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+  </button>
+  <label class="admintop__search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
+    <input type="search" aria-label="Search" placeholder="Search customers, orders, SKUs…" disabled />
+  </label>
+  <button type="button" aria-label="Notifications" class="admintop__notif-btn" disabled>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4zM10 21h4"></path></svg>
+  </button>
+</header>
+
+<style>
+  .admintop {
+    height: 64px;
+    box-sizing: border-box;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--sd-border);
+    background: var(--sd-panel);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  @media (max-width: 1023px) {
+    .admintop {
+      padding: 0 16px;
+    }
+  }
+  .admintop__sidebar-toggle {
+    width: 32px;
+    height: 32px;
+    margin-left: -8px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .admintop__divider {
+    width: 1px;
+    height: 16px;
+    background: var(--sd-border);
+    flex-shrink: 0;
+  }
+  @media (max-width: 1023px) {
+    .admintop__divider {
+      display: none;
+    }
+  }
+  .admintop__breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+  .admintop__breadcrumb-current {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .admintop__spacer {
+    flex-grow: 1;
+  }
+  .admintop__theme-toggle {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border-radius: 9px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  :global(.sd[data-theme="dark"]) .admintop .icon-sun,
+  :global(.sd:not([data-theme="dark"])) .admintop .icon-moon {
+    display: none;
+  }
+  .admintop__search {
+    width: 300px;
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+  @media (max-width: 640px) {
+    .admintop__search {
+      width: 160px;
+    }
+  }
+  .admintop__search input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    flex-grow: 1;
+    color: var(--sd-fg);
+  }
+  .admintop__search input:disabled {
+    cursor: not-allowed;
+  }
+  .admintop__notif-btn {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: not-allowed;
+  }
+</style>

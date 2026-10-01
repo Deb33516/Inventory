@@ -1,0 +1,812 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Support Tickets
+// screen (project/AdminTickets.dc.html -> NavSidebar role="admin"
+// active="Support tickets" + the plain shared NavTop.astro
+// (section="Manage" page="Support tickets") + PageSupportQueue — NOT
+// PageTickets.dc.html, a different, list+detail split-pane component
+// that AdminTickets.dc.html does not import (that one belongs to the
+// already-approved Inventory Staff Support Ticket screen). This is a
+// genuinely separate Admin-shell screen — no markup reused from Customer
+// Support, Customer Support Ticket, or Inventory Staff Support Tickets,
+// per your explicit instruction.
+//
+// SCOPE: this is the ticket QUEUE (list) only.
+//
+// LINKING (this turn): Admin Ticket Detail (/admin/tickets/[id]) now
+// exists, so each real ticket row links there — per your own explicit
+// instruction once that screen shipped ("It is now appropriate for
+// /admin/tickets ticket rows to link to the new Admin Ticket Detail
+// route"). The design's trailing "..." row-actions button is still
+// omitted entirely (no real per-row action exists on this screen that
+// isn't just "open the ticket").
+//
+// SCHEMA REALITY vs THE DESIGN: support_tickets has exactly nine real
+// columns — id, created_by, assigned_to, subject, description, status,
+// resolution, created_at, updated_at (confirmed live). There is no
+// category/priority/order_id/SLA/messages/attachments/internal-notes
+// table anywhere in this schema (confirmed — matches your own explicit
+// list of what this model does NOT contain). The design's "Category"
+// table column is still omitted outright for the same reason (no real
+// concept exists at all, unlike a physical bin location that's simply
+// untracked). The "Category" FACET, however, is now reproduced visually
+// (per your follow-up refinement) as a real, honestly disabled control —
+// present in the toolbar for fidelity, but `disabled` with a title
+// explaining why, never pretending to filter.
+//
+// FILTER REFINEMENT (this turn): re-added the design's own dedicated
+// toolbar search box (was previously only reachable via NavTop's shared
+// search — both now wired to the same real `search` query param, same
+// dual-search-entry-point precedent already established on Admin
+// Customers), added a real "+ Status" compact facet (alongside the
+// already-real status tabs — intentionally redundant with them, matching
+// the design's own toolbar exactly, both driving the same real `status`
+// param), and made "+ Assignee" unconditionally visible with a real
+// "Unassigned" option (assigned_to IS NULL) rather than only appearing
+// once a ticket happens to be assigned.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: every ticket row (support_tickets_select_admin — admin/
+//    super_admin see every ticket, unscoped, unlike inventory_staff who
+//    only ever sees tickets assigned to them), real id, real subject,
+//    real status across the full real 5-value ticket_status enum (open/
+//    in_progress/waiting/resolved/closed — confirmed live, maps exactly
+//    onto the design's own 5 status labels, no invented or dropped
+//    values), real created_by (joined to profiles — customer requesters
+//    shown by name; staff/admin requesters shown "Internal · {name}",
+//    matching the design's own exact convention, driven by the real
+//    profiles.role of the creator, not a guess), real assigned_to (joined
+//    to profiles — "Unassigned" when null, the real assignee's name
+//    otherwise), real updated_at (Today/HH:MM or D MMM, same compact
+//    convention the design itself uses). Real search (matches real
+//    subject or real ticket id), real status tabs AND a real "+ Status"
+//    facet with real counts (both drive the same real status param),
+//    real "+ Assignee" facet — named options derived only from staff who
+//    are actually assigned to at least one real ticket (empty in the
+//    live data today since 0 real tickets are assigned yet, same "derive
+//    facet options from data actually present" convention used on every
+//    other Admin screen) plus a real "Unassigned" option backed by the
+//    real assigned_to IS NULL state.
+//  - Stat strip — all 4 real, computed from the same real ticket set:
+//    "Open" (real count) + real "{N} unassigned" note (open AND
+//    assigned_to is null); "In Progress" (real count) + note "store-wide"
+//    (the design's own "with inventory staff" note assumes every
+//    in-progress ticket is assigned to inventory staff specifically —
+//    assigned_to has no role constraint at the database level, so that
+//    wasn't asserted as fact); "Waiting" (real count) — the design's own
+//    "on customer reply" note assumes a specific reason no field actually
+//    records, so dropped rather than asserted; "Resolved this week" (real
+//    count of resolved-or-closed tickets with a real updated_at in the
+//    real last-7-IST-days window, via the same shared
+//    resolveDashboardRange("7d") IST-safe helper already used on Admin
+//    Stock/Product Info/every other dashboard in this project).
+//  - Header subtitle: the design's own copy ("...reply, assign to
+//    inventory staff and resolve") names three actions — replying and
+//    assigning have no real write path from this screen this turn
+//    (updateSupportTicket only ever touches status/resolution, never
+//    assigned_to; no message/reply table exists at all) — dropped to a
+//    plain, honest "Customer and internal tickets in one queue".
+//  - Checkboxes + bulk actions: no real bulk ticket action exists —
+//    omitted, same "do not invent bulk actions" precedent as every other
+//    Admin list screen.
+//  - "View" grid/list toggle: omitted, no view-mode capability exists.
+//  - Footer pagination ("Page 1 of 1"): replaced with a real "{N} of {M}
+//    tickets" count, same precedent as every other Admin list screen.
+//
+// ADMIN CAPABILITIES CHECKED AND DELIBERATELY NOT BUILT THIS TURN:
+// updateSupportTicket() only ever sets status/resolution, never
+// assigned_to — even though support_tickets_update_admin's own RLS would
+// technically permit admin to update assigned_to via a raw table write,
+// no Action/RPC exists that does so, so no "Assign" control was added
+// anywhere (matches your explicit "do not invent ticket assignment if the
+// current action/schema cannot actually persist it"). Status/resolution
+// updates themselves belong to the ticket detail view (next turn), not
+// this queue/list screen — the design's own PageSupportQueue.dc.html has
+// no inline status-change control either.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import { resolveDashboardRange } from "../../../lib/dashboardRange";
+
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const status = url.searchParams.get("status") ?? "";
+const assignee = url.searchParams.get("assignee") ?? "";
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+// --- Real full ticket queue (support_tickets_select_admin — unscoped) ---
+const { data: ticketRows } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("id, subject, status, created_by, assigned_to, updated_at")
+  .order("updated_at", { ascending: false });
+
+const tickets = ticketRows ?? [];
+
+const profileIds = [...new Set(tickets.flatMap((t) => [t.created_by, t.assigned_to].filter((id): id is string => Boolean(id))))];
+const { data: profileRows } =
+  profileIds.length > 0
+    ? await Astro.locals.supabase.from("profiles").select("id, full_name, role").in("id", profileIds)
+    : { data: [] };
+const profileById = new Map((profileRows ?? []).map((p) => [p.id, { name: p.full_name ?? "Unnamed", role: p.role as string }]));
+
+const STATUS_LABEL: Record<string, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  waiting: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+const STATUS_TONE: Record<string, "outline" | "info" | "warn" | "success" | "muted"> = {
+  open: "outline",
+  in_progress: "info",
+  waiting: "warn",
+  resolved: "success",
+  closed: "muted",
+};
+const ALL_STATUSES = ["open", "in_progress", "waiting", "resolved", "closed"] as const;
+
+function formatUpdated(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const dIst = new Date(d.getTime() + IST_OFFSET_MS);
+  const nowIst = new Date(now.getTime() + IST_OFFSET_MS);
+  const sameIstDay =
+    dIst.getUTCFullYear() === nowIst.getUTCFullYear() && dIst.getUTCMonth() === nowIst.getUTCMonth() && dIst.getUTCDate() === nowIst.getUTCDate();
+  if (sameIstDay) return `Today, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+const allRows = tickets.map((t) => {
+  const creator = profileById.get(t.created_by);
+  const isInternalCreator = creator ? creator.role !== "customer" : false;
+  return {
+    id: t.id as string,
+    subject: t.subject as string,
+    status: t.status as string,
+    requesterLabel: creator ? (isInternalCreator ? `Internal · ${creator.name}` : creator.name) : "—",
+    isInternalCreator,
+    assigneeId: t.assigned_to as string | null,
+    assigneeName: t.assigned_to ? (profileById.get(t.assigned_to)?.name ?? "—") : null,
+    updatedAt: t.updated_at as string,
+    updatedLabel: formatUpdated(t.updated_at as string),
+  };
+});
+
+// --- Real status tabs ---
+const statusCounts = new Map<string, number>(ALL_STATUSES.map((s) => [s, 0]));
+for (const t of allRows) statusCounts.set(t.status, (statusCounts.get(t.status) ?? 0) + 1);
+const TABS: { key: string; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "open", label: "Open" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "waiting", label: "Waiting" },
+  { key: "resolved", label: "Resolved" },
+  { key: "closed", label: "Closed" },
+];
+
+// --- Real "Assignee" facet (only staff actually assigned to at least one
+// real ticket, plus a real "Unassigned" option backed by the real null
+// state — not derived data, but always offered since it's a genuine,
+// always-meaningful value for this field) ---
+const assigneeOptions = [...new Map(allRows.filter((t) => t.assigneeId).map((t) => [t.assigneeId!, t.assigneeName!])).entries()]
+  .map(([id, name]) => ({ id, name }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+const UNASSIGNED_SENTINEL = "unassigned";
+
+// --- Real filter — search matches real subject or real ticket id (full
+// or the same truncated 8-char prefix shown in the table) ---
+const filtered = allRows.filter((t) => {
+  if (status && t.status !== status) return false;
+  if (assignee === UNASSIGNED_SENTINEL && t.assigneeId) return false;
+  if (assignee && assignee !== UNASSIGNED_SENTINEL && t.assigneeId !== assignee) return false;
+  if (!search) return true;
+  const needle = search.toLowerCase();
+  return t.subject.toLowerCase().includes(needle) || t.id.toLowerCase().includes(needle);
+});
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/admin/tickets?${qs}` : "/admin/tickets";
+}
+
+// --- Real stat strip ---
+const openCount = statusCounts.get("open") ?? 0;
+const openUnassignedCount = allRows.filter((t) => t.status === "open" && !t.assigneeId).length;
+const inProgressCount = statusCounts.get("in_progress") ?? 0;
+const waitingCount = statusCounts.get("waiting") ?? 0;
+
+const sevenDayRange = resolveDashboardRange("7d");
+const resolvedThisWeekCount = allRows.filter(
+  (t) => (t.status === "resolved" || t.status === "closed") && new Date(t.updatedAt) >= new Date(sevenDayRange.from!)
+).length;
+
+const stats = [
+  { label: "Open", value: String(openCount), note: `${openUnassignedCount} unassigned` },
+  { label: "In Progress", value: String(inProgressCount), note: "store-wide" },
+  { label: "Waiting", value: String(waitingCount), note: "" },
+  { label: "Resolved this week", value: String(resolvedThisWeekCount), note: "" },
+];
+---
+
+<BaseLayout title="Support tickets — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Support tickets" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Manage" page="Support tickets" searchAction="/admin/tickets" searchName="search" searchValue={search} searchPlaceholder="Search tickets…" />
+
+      <main id="main-content" class="tk__main">
+        <div class="tk__header">
+          <div class="tk__heading-col">
+            <h1>Support tickets</h1>
+            <span class="tk__subtitle">Customer and internal tickets in one queue</span>
+          </div>
+        </div>
+
+        <div class="tk__stats">
+          {stats.map((s) => (
+            <div class="tk__stat-card">
+              <span class="tk__stat-label">{s.label}</span>
+              <div class="tk__stat-body">
+                <span class="tk__stat-value">{s.value}</span>
+                {s.note && <span class="tk__stat-note">{s.note}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div class="tk__toolbar">
+          <div role="tablist" aria-label="Ticket status" class="tk__tabs">
+            {TABS.map((t) => (
+              <a href={buildUrl({ status: t.key || undefined })} role="tab" aria-selected={status === t.key} class={status === t.key ? "is-active" : ""}>
+                {t.label} <span class="tk__tab-count">{t.key ? (statusCounts.get(t.key) ?? 0) : allRows.length}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div class="tk__toolbar">
+          <form method="get" action="/admin/tickets" class="tk__search-form">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
+            <input type="search" name="search" value={search} aria-label="Search tickets" placeholder="Search tickets…" class="tk__search-input" />
+            {status && <input type="hidden" name="status" value={status} />}
+            {assignee && <input type="hidden" name="assignee" value={assignee} />}
+          </form>
+
+          <select id="tk-status-filter" class="tk__facet-select" aria-label="Filter by status">
+            <option value={buildUrl({ status: undefined })} selected={!status}>+ Status</option>
+            {ALL_STATUSES.map((s) => (
+              <option value={buildUrl({ status: s })} selected={status === s}>{STATUS_LABEL[s]}</option>
+            ))}
+          </select>
+
+          <button type="button" class="tk__facet-select tk__facet-select--disabled" disabled title="Not available — this schema has no ticket category field">
+            + Category
+          </button>
+
+          <select id="tk-assignee-filter" class="tk__facet-select" aria-label="Filter by assignee">
+            <option value={buildUrl({ assignee: undefined })} selected={!assignee}>+ Assignee</option>
+            <option value={buildUrl({ assignee: UNASSIGNED_SENTINEL })} selected={assignee === UNASSIGNED_SENTINEL}>Unassigned</option>
+            {assigneeOptions.map((a) => (
+              <option value={buildUrl({ assignee: a.id })} selected={assignee === a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="tk__panel">
+              <div class="tk__grid tk__grid-head">
+                <span>Ticket</span>
+                <span>Requester</span>
+                <span>Status</span>
+                <span>Assignee</span>
+                <span>Updated</span>
+              </div>
+              {filtered.map((t) => (
+                <a href={`/admin/tickets/${t.id}`} class="tk__grid tk__row">
+                  <span class="tk__ticket-cell">
+                    <span class="tk__ticket-id">{t.id.slice(0, 8)}</span>
+                    <span class="tk__ticket-subject">{t.subject}</span>
+                  </span>
+                  <span class={`tk__requester-cell ${t.isInternalCreator ? "tk__requester-cell--internal" : ""}`}>{t.requesterLabel}</span>
+                  <span><span class={`tk__pill tk__pill--${STATUS_TONE[t.status] ?? "muted"}`}>{STATUS_LABEL[t.status] ?? t.status}</span></span>
+                  {t.assigneeName ? (
+                    <span class="tk__assignee-cell">
+                      <span class="tk__avatar">{t.assigneeName.split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]!.toUpperCase()).join("")}</span>
+                      {t.assigneeName}
+                    </span>
+                  ) : (
+                    <span class="tk__muted-cell">Unassigned</span>
+                  )}
+                  <span class="tk__muted-cell tk__ellipsis">{t.updatedLabel}</span>
+                </a>
+              ))}
+              <div class="tk__panel-footer">{filtered.length} of {allRows.length} ticket{allRows.length === 1 ? "" : "s"}</div>
+            </div>
+          ) : (
+            <div class="tk__empty">
+              <p class="tk__empty-title">No tickets found</p>
+              <p class="tk__empty-body">Try a different search or filter.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .tk__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .tk__main {
+      padding: 16px;
+    }
+  }
+
+  .tk__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .tk__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tk__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .tk__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .tk__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .tk__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .tk__stats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .tk__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tk__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .tk__stat-body {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .tk__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .tk__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .tk__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tk__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    max-width: 100%;
+  }
+  .tk__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .tk__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .tk__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .tk__tabs a.is-active .tk__tab-count {
+    color: var(--sd-muted-fg);
+  }
+  .tk__facet-select {
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .tk__facet-select--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    color: var(--sd-muted-fg);
+  }
+  .tk__search-form {
+    width: 260px;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+  .tk__search-input {
+    flex-grow: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+  }
+
+  .tk__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .tk__grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.6fr) 168px 128px 150px 110px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 820px;
+  }
+  .tk__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .tk__row {
+    height: 50px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .tk__row:hover {
+    background: var(--sd-muted);
+  }
+  .tk__ticket-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .tk__ticket-id {
+    flex-shrink: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .tk__ticket-subject {
+    font-weight: 500;
+    color: var(--sd-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tk__requester-cell {
+    color: var(--sd-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tk__requester-cell--internal {
+    color: var(--sd-fg2);
+  }
+  .tk__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .tk__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .tk__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .tk__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .tk__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .tk__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .tk__assignee-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-fg2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tk__avatar {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tk__muted-cell {
+    color: var(--sd-muted-fg);
+  }
+  .tk__ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tk__panel-footer {
+    min-width: 820px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .tk__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .tk__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .tk__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  document.getElementById("tk-status-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+  document.getElementById("tk-assignee-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

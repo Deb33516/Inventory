@@ -1057,4 +1057,90 @@ export const server = {
       return { message: "Ticket updated." };
     },
   }),
+
+  // Admin Settings (real MVP pass). Deliberately NOT accept:"form" — the
+  // low-stock toggle is called as a plain instant-apply object (no form
+  // around it at all), and an HTML checkbox's value is simply absent from
+  // FormData when unchecked, which would make a form-based boolean
+  // impossible to ever turn off. Business profile / Numbering are
+  // submitted as plain objects built from their form fields client-side
+  // for the same reason. RLS (app_settings_update_staff) is the real
+  // authorization backstop — a non-admin/super_admin caller's update
+  // simply affects 0 rows on the singleton row, surfaced as a friendly
+  // error below, same pattern as updateStaffProfile/updateSupportTicket.
+  updateAppSettings: defineAction({
+    input: z.object({
+      businessName: z.preprocess(emptyToUndefined, z.string().optional()),
+      gstin: z.preprocess(emptyToUndefined, z.string().optional()),
+      orderNumberPrefix: z.preprocess(emptyToUndefined, z.string().optional()),
+      nextOrderNumber: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+      lowStockAlertsEnabled: z.boolean().optional(),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const update: Record<string, unknown> = {};
+      if (input.businessName !== undefined) update.business_name = input.businessName;
+      if (input.gstin !== undefined) update.gstin = input.gstin;
+      if (input.orderNumberPrefix !== undefined) update.order_number_prefix = input.orderNumberPrefix;
+      if (input.nextOrderNumber !== undefined) update.next_order_number = input.nextOrderNumber;
+      if (input.lowStockAlertsEnabled !== undefined) update.low_stock_alerts_enabled = input.lowStockAlertsEnabled;
+
+      if (Object.keys(update).length === 0) {
+        throw new ActionError({ code: "BAD_REQUEST", message: "Nothing to update." });
+      }
+
+      const { data, error } = await supabase.from("app_settings").update(update).eq("id", true).select("id").maybeSingle();
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      if (!data) {
+        throw new ActionError({ code: "FORBIDDEN", message: "You don't have access to app settings." });
+      }
+
+      return { message: "Settings updated." };
+    },
+  }),
+
+  // Mark-as-read / Ignore for the caller's own real notification row.
+  // RLS (notifications_update_own) is the real authorization backstop —
+  // targeting another recipient's notification simply affects 0 rows.
+  updateNotification: defineAction({
+    input: z.object({
+      notificationId: z.string().uuid(),
+      markRead: z.boolean().optional(),
+      ignore: z.boolean().optional(),
+    }),
+    handler: async (input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      const update: Record<string, unknown> = {};
+      if (input.markRead) update.read_at = new Date().toISOString();
+      if (input.ignore) update.ignored_at = new Date().toISOString();
+
+      if (Object.keys(update).length === 0) {
+        throw new ActionError({ code: "BAD_REQUEST", message: "Nothing to update." });
+      }
+
+      const { data, error } = await supabase.from("notifications").update(update).eq("id", input.notificationId).select("id").maybeSingle();
+
+      if (error) {
+        throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      if (!data) {
+        throw new ActionError({ code: "FORBIDDEN", message: "Notification not found." });
+      }
+
+      return { message: "Notification updated." };
+    },
+  }),
 };

@@ -1,43 +1,127 @@
 ---
+// Literal recreation of the Claude Design canvas's Sales Orders screen
+// (project/SalesOrders.dc.html -> NavSidebar + NavTop + PageOrders with
+// role="sales") — the supplied design is the visual source of truth, not
+// the app's existing DESIGN.md/AppShell component system. Reuses the same
+// --sd-* token system + NavSidebar.astro/NavTop.astro already established
+// by the approved Sales Dashboard/Contacts screens (neither touched this
+// turn). FilterChip/EmptyState/OrderStatusBadge/AppShell are NOT reused
+// here (their visual output doesn't match this artboard) — every value
+// below comes from the same real, unchanged orders/order_items/payments/
+// profiles tables and the same real status-filter + customer-name-search
+// query params the existing /sales/orders route already supported before
+// this pass (search extended to also match the order id prefix, matching
+// the design's own placeholder text — not a new capability, the same
+// ilike-style substring match just applied to a second real field).
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: order id (truncated UUID, same display convention as every
+//    other order screen), customer name (profiles, staff-authorized via
+//    the existing two-query pattern — orders has two FKs to profiles so a
+//    single embed would be ambiguous), real date, real item count
+//    (order_items(count), same genuine embedded-aggregate pattern already
+//    used on /account/orders), real total, real payment status (payments
+//    table, embedded per-order — one payment row per order since
+//    place_order() is the only insert path), real fulfilment status
+//    across the FULL real 7-value order_status enum (not just the
+//    design's 6 example rows — pending/confirmed/processing/shipped/
+//    delivered/cancelled/refunded all have their own tab), real tab
+//    counts (store-wide, unfiltered by search), real "New order" link to
+//    the existing /sales/orders/new route, real "View" link to the
+//    existing /sales/orders/[id] route (unmodified, out of scope this
+//    turn).
+//  - Title/subtitle: the design's sales-branch copy ("My orders" / "Orders
+//    for your accounts · 14 this month") frames orders as personally
+//    owned. orders.placed_by is an audit/process field, not sales-rep
+//    attribution, and sales_staff sees the same store-wide order set as
+//    admin (orders_select_staff has no per-rep scoping) — so this page
+//    uses the design's own ADMIN-branch framing instead ("Orders" / "Every
+//    customer order · {N} this month"), which is what the real access
+//    model actually matches.
+//  - Stat strip: the design's sales-branch cards ("My orders · September" /
+//    "Pending" / "Unpaid" / "Delivered") are personal-framed and use
+//    invented note text ("1 waiting on stock", "3 orders"). Kept the same
+//    4-slot structure but every value/note is real and store-wide: Orders
+//    this month (real count + real ₹ booked, excluding cancelled — same
+//    exclusion convention as dashboard_revenue_trend), Pending (real
+//    current count), Unpaid (real ₹ sum + real count of orders whose
+//    payment status is pending/failed — "partly paid" is not a real
+//    payment_status value and was dropped), Delivered this month (real
+//    count — this slot needed no substitution).
+//  - "Export" button: admin-only in the design's own isAdmin gate — sales
+//    role never sees it there either, so omitting it matches the artboard
+//    exactly, not a deviation.
+//  - "Payment"/"Date" dashed facet buttons and the grid/list "View"
+//    toggle: no filter-picker or view-mode capability exists anywhere in
+//    this app — omitted rather than shown as dead buttons.
+//  - "Delivery" column (due dates like "Due 2 Oct"/"After 3 Oct"): no
+//    delivery-date/ETA field exists anywhere in the schema — omitted
+//    entirely, per your explicit no-fabricated-ETA rule.
+//  - Row select-all checkboxes + bulk "Mark as shipped": the bulk action
+//    itself is admin-only in the design's own isAdmin gate (sales never
+//    sees it), so the unconditional per-row checkboxes would be pure dead
+//    UI for this role with nothing real bound to a selection — omitted
+//    entirely rather than shown as non-functional chrome.
+//  - Row "..." actions menu: no per-row action menu exists anywhere in
+//    this app — replaced with the same plain "View" link convention
+//    already used on /account/orders and /crm/customers.
+//  - "Sales rep" column + rep initials/avatar: admin-only in the design's
+//    own isAdmin gate (sales never sees it) — matches the artboard exactly,
+//    and also would have been disallowed as personal-rep attribution
+//    either way.
+//  - Pagination footer ("Rows per page 9" / "Page 1 of 2" / prev/next): no
+//    pagination exists on this list today — same as /account/orders,
+//    replaced with a real "{N} orders" count only rather than fake page
+//    controls.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import FilterChip from "../../../components/catalog/FilterChip.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
-import AppShell from "../../../components/layout/AppShell.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { OrderStatus } from "../../../lib/types";
 
-// orders has two FKs to profiles (customer_id, placed_by), so a plain
-// select embed would be ambiguous without knowing the exact generated
-// constraint name — two queries merged in JS avoids relying on that,
-// same pattern already used for the Phase 6 CRM customer list.
 const url = Astro.url;
 const status = url.searchParams.get("status") ?? "";
 const search = url.searchParams.get("search")?.trim() ?? "";
 
-let query = Astro.locals.supabase
+// --- Real, unfiltered-by-status order set (status/search applied in JS so
+// the same fetch can also produce real store-wide tab counts) ---
+const { data: orderRows } = await Astro.locals.supabase
   .from("orders")
-  .select("id, customer_id, status, total, created_at")
+  .select("id, customer_id, status, total, created_at, order_items(count), payments(status)")
   .order("created_at", { ascending: false });
 
-if (status) query = query.eq("status", status);
+const orders = orderRows ?? [];
 
-const { data: orders } = await query;
-
-const customerIds = [...new Set((orders ?? []).map((o) => o.customer_id))];
-
+const customerIds = [...new Set(orders.map((o) => o.customer_id))];
 const { data: customers } =
   customerIds.length > 0
     ? await Astro.locals.supabase.from("profiles").select("id, full_name").in("id", customerIds)
     : { data: [] };
-
 const nameById = new Map((customers ?? []).map((c) => [c.id, c.full_name ?? "Unnamed customer"]));
 
-const filtered = (orders ?? []).filter((o) => {
+type PaymentEmbed = { status: string }[] | { status: string } | null;
+function paymentStatusOf(row: { payments: PaymentEmbed }): string | null {
+  const p = row.payments as unknown as { status: string }[] | null;
+  return p?.[0]?.status ?? null;
+}
+
+const ALL_STATUSES: OrderStatus[] = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"];
+const statusCounts = new Map<string, number>(ALL_STATUSES.map((s) => [s, 0]));
+for (const o of orders) statusCounts.set(o.status, (statusCounts.get(o.status) ?? 0) + 1);
+
+const filtered = orders.filter((o) => {
+  if (status && o.status !== status) return false;
   if (!search) return true;
-  return (nameById.get(o.customer_id) ?? "").toLowerCase().includes(search.toLowerCase());
+  const needle = search.toLowerCase();
+  return (nameById.get(o.customer_id) ?? "").toLowerCase().includes(needle) || o.id.toLowerCase().startsWith(needle);
 });
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
+};
 
 function buildUrl(overrides: Record<string, string | undefined>) {
   const next = new URLSearchParams(url.search);
@@ -48,90 +132,565 @@ function buildUrl(overrides: Record<string, string | undefined>) {
   const qs = next.toString();
   return qs ? `/sales/orders?${qs}` : "/sales/orders";
 }
+
+const TABS: { key: string; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "pending", label: "Pending" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "processing", label: "Processing" },
+  { key: "shipped", label: "Shipped" },
+  { key: "delivered", label: "Delivered" },
+  { key: "cancelled", label: "Cancelled" },
+  { key: "refunded", label: "Refunded" },
+];
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+const PAY_TONE: Record<string, "success" | "warn" | "danger" | "muted"> = {
+  paid: "success",
+  pending: "warn",
+  failed: "danger",
+  refunded: "muted",
+};
+const PAY_LABEL: Record<string, string> = {
+  paid: "Paid",
+  pending: "Unpaid",
+  failed: "Failed",
+  refunded: "Refunded",
+};
+
+// --- Real store-wide stat strip (independent of the current search/status filter) ---
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const nowIstShifted = new Date(Date.now() + IST_OFFSET_MS);
+const istYear = nowIstShifted.getUTCFullYear();
+const istMonth = nowIstShifted.getUTCMonth();
+const thisMonthFromUtc = new Date(Date.UTC(istYear, istMonth, 1) - IST_OFFSET_MS);
+const nextMonthFromUtc = new Date(Date.UTC(istYear, istMonth + 1, 1) - IST_OFFSET_MS);
+const monthLabel = new Date(Date.UTC(istYear, istMonth, 1)).toLocaleDateString(undefined, { month: "long", timeZone: "UTC" });
+
+const ordersThisMonth = orders.filter((o) => {
+  const t = new Date(o.created_at);
+  return t >= thisMonthFromUtc && t < nextMonthFromUtc;
+});
+const bookedThisMonth = ordersThisMonth.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + o.total, 0);
+const pendingCount = statusCounts.get("pending") ?? 0;
+const deliveredThisMonthCount = ordersThisMonth.filter((o) => o.status === "delivered").length;
+
+const unpaidOrders = orders.filter((o) => {
+  const ps = paymentStatusOf(o);
+  return ps === "pending" || ps === "failed";
+});
+const unpaidTotal = unpaidOrders.reduce((sum, o) => sum + o.total, 0);
+
+const stats = [
+  { label: `Orders · ${monthLabel}`, value: String(ordersThisMonth.length), note: `${formatCompact(bookedThisMonth)} booked` },
+  { label: "Pending", value: String(pendingCount), note: "awaiting confirmation" },
+  { label: "Unpaid", value: formatCompact(unpaidTotal), note: `${unpaidOrders.length} order${unpaidOrders.length === 1 ? "" : "s"}` },
+  { label: "Delivered", value: String(deliveredThisMonthCount), note: "this month" },
+];
 ---
 
 <BaseLayout title="Orders — Sales">
-  <AppShell active="sales">
-    <h1 class="text-2xl font-bold text-ink">Orders</h1>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-    <form method="get" class="mt-lg flex flex-col md:flex-row gap-md">
-      <input
-        type="text"
-        name="search"
-        value={search}
-        placeholder="Search by customer name..."
-        class="w-full md:max-w-sm h-12 px-md bg-canvas text-ink border border-hairline focus:border-ink outline-none transition-colors"
-      />
-      {status && <input type="hidden" name="status" value={status} />}
-      <button type="submit" class="h-12 px-lg bg-primary text-on-primary font-bold text-sm">
-        Apply
-      </button>
-    </form>
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
 
-    <div class="mt-md flex gap-xs overflow-x-auto pb-xs">
-      <FilterChip href={buildUrl({ status: undefined })} active={!status}>
-        All
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "pending" })} active={status === "pending"}>
-        Pending
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "confirmed" })} active={status === "confirmed"}>
-        Confirmed
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "processing" })} active={status === "processing"}>
-        Processing
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "shipped" })} active={status === "shipped"}>
-        Shipped
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "delivered" })} active={status === "delivered"}>
-        Delivered
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "cancelled" })} active={status === "cancelled"}>
-        Cancelled
-      </FilterChip>
-      <FilterChip href={buildUrl({ status: "refunded" })} active={status === "refunded"}>
-        Refunded
-      </FilterChip>
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Orders" />
     </div>
 
-    {
-      filtered.length > 0 ? (
-        <div class="mt-lg overflow-x-auto">
-          <table class="w-full text-sm border-collapse">
-            <thead>
-              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
-                <th class="py-xs pr-md">Order</th>
-                <th class="py-xs pr-md">Customer</th>
-                <th class="py-xs pr-md">Date</th>
-                <th class="py-xs pr-md">Total</th>
-                <th class="py-xs pr-md">Status</th>
-                <th class="py-xs" />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((o) => (
-                <tr class="border-b border-hairline">
-                  <td class="py-sm pr-md text-ink font-bold">{o.id.slice(0, 8)}</td>
-                  <td class="py-sm pr-md text-body">{nameById.get(o.customer_id) ?? "—"}</td>
-                  <td class="py-sm pr-md text-body">{new Date(o.created_at).toLocaleDateString()}</td>
-                  <td class="py-sm pr-md text-body">{formatCurrency(o.total)}</td>
-                  <td class="py-sm pr-md">
-                    <OrderStatusBadge status={o.status} />
-                  </td>
-                  <td class="py-sm">
-                    <a href={`/sales/orders/${o.id}`} class="text-primary font-bold">
-                      View
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div class="sd__panel">
+      <NavTop section="Selling" page="Orders" searchAction="/sales/orders" searchName="search" searchValue={search} searchPlaceholder="Filter by order no. or customer…" />
+
+      <main id="main-content" class="so__main">
+        <div class="so__header">
+          <div class="so__heading-col">
+            <h1>Orders</h1>
+            <span class="so__meta">Every customer order · {orders.length} total</span>
+          </div>
+          <a href="/sales/orders/new" class="so__new-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            New order
+          </a>
         </div>
-      ) : (
-        <EmptyState class="mt-lg" title="No orders found" />
-      )
-    }
-  </AppShell>
+
+        <div class="so__stats">
+          {stats.map((s) => (
+            <div class="so__stat-card">
+              <span class="so__stat-label">{s.label}</span>
+              <div class="so__stat-body">
+                <span class="so__stat-value">{s.value}</span>
+                <span class="so__stat-note">{s.note}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div class="so__toolbar">
+          <div role="tablist" aria-label="Fulfilment status" class="so__tabs">
+            {TABS.map((t) => (
+              <a href={buildUrl({ status: t.key || undefined })} role="tab" aria-selected={status === t.key} class={status === t.key ? "is-active" : ""}>
+                {t.label} <span class="so__tab-count">{t.key ? (statusCounts.get(t.key) ?? 0) : orders.length}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="so__panel">
+              <div class="so__grid so__grid-head">
+                <span>Order</span>
+                <span>Customer</span>
+                <span>Date</span>
+                <span class="so__col-right">Items</span>
+                <span class="so__col-right">Total</span>
+                <span>Payment</span>
+                <span>Fulfilment</span>
+                <span></span>
+              </div>
+              {filtered.map((o) => (
+                <div class="so__grid so__row">
+                  <a href={`/sales/orders/${o.id}`} class="so__id-link">{o.id.slice(0, 8)}</a>
+                  <span class="so__ellipsis">{nameById.get(o.customer_id) ?? "—"}</span>
+                  <span class="so__muted-cell">{new Date(o.created_at).toLocaleDateString()}</span>
+                  <span class="so__col-right so__muted-cell">{o.order_items?.[0]?.count ?? 0}</span>
+                  <span class="so__col-right so__total">{formatCurrency(o.total)}</span>
+                  <span>
+                    {(() => {
+                      const ps = paymentStatusOf(o) ?? "pending";
+                      return <span class={`so__pill so__pill--${PAY_TONE[ps] ?? "muted"}`}>{PAY_LABEL[ps] ?? ps}</span>;
+                    })()}
+                  </span>
+                  <span>
+                    <span class={`so__pill so__pill--${STATUS_TONE[o.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[o.status as OrderStatus] ?? o.status}</span>
+                  </span>
+                  <a href={`/sales/orders/${o.id}`} class="so__view-link">View</a>
+                </div>
+              ))}
+              <div class="so__panel-footer">{filtered.length} order{filtered.length === 1 ? "" : "s"}</div>
+            </div>
+          ) : (
+            <div class="so__empty">
+              <p class="so__empty-title">No orders found</p>
+              <p class="so__empty-body">Try a different search or status.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
 </BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .so__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .so__main {
+      padding: 16px;
+    }
+  }
+
+  .so__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .so__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .so__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .so__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .so__new-btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .so__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .so__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .so__stats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .so__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .so__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .so__stat-body {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .so__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .so__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .so__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .so__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    max-width: 100%;
+  }
+  .so__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .so__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .so__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .so__tabs a.is-active .so__tab-count {
+    color: var(--sd-muted-fg);
+  }
+
+  .so__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .so__grid {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr) 92px 56px 104px 92px 100px 56px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 780px;
+  }
+  .so__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .so__row {
+    height: 50px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .so__col-right {
+    text-align: right;
+  }
+  .so__id-link {
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: underline;
+    text-decoration-color: var(--sd-input);
+    text-underline-offset: 3px;
+  }
+  .so__ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .so__muted-cell {
+    color: var(--sd-fg2);
+  }
+  .so__total {
+    font-weight: 500;
+  }
+  .so__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .so__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .so__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .so__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .so__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .so__pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .so__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .so__view-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-accent);
+    text-decoration: none;
+    text-align: right;
+  }
+  .so__panel-footer {
+    min-width: 780px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .so__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .so__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .so__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

@@ -1,0 +1,1148 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Order Detail
+// screen. No distinct "AdminOrderDetail.dc.html" artboard exists in the
+// design export (same situation as Admin Sales Orders) — the ground truth
+// is project/PageOrderDetail.dc.html's own `role="admin"` branch, composed
+// into the same Admin shell already established by Admin Customers/Admin
+// Sales Orders: NavSidebar role="admin" (unchanged) + the plain shared
+// NavTop.astro (not AdminNavTop.astro) + PageOrderDetail's isAdmin
+// content. project/SalesOrderDetail.dc.html (NavSidebar role="sales" +
+// PageOrderDetail role="sales") is the sibling composition already built
+// as /sales/orders/[id].astro (untouched this turn) — that page already
+// implements the real, role-correct order-action authorization
+// (advance/cancel/refund-request) independent of which shell it's
+// rendered in, since it reads Astro.locals.role directly rather than a
+// hardcoded "sales" assumption. This screen reuses that exact same real
+// orders/order_items/payments query shape and the exact same real
+// updateOrderStatus/requestApproval Astro Actions, rendered inside the
+// Admin shell instead, with the design's genuine isAdmin-only extras
+// (a real "Placed by" field) reproduced where real data supports them —
+// per this turn's own explicit instruction ("orders.placed_by is an
+// audit/process field... use an honest label such as 'Placed by' if the
+// design contains an equivalent field and the real value is available").
+// IMPORTANT: this page is NOT linked to/from /sales/orders/[id] — it is a
+// separate, self-contained Admin-shell route, never a redirect or reuse of
+// the Sales-shell page, per your explicit instruction.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: order id (truncated UUID), real payment-status pill and
+//    fulfilment-status pill (full 7-value order_status enum), real
+//    customer name/phone (profiles), real line items (SKU/name/qty/unit
+//    price/line subtotal from order_items+products), real item/unit
+//    counts, real Subtotal/Tax/Shipping/Total exactly as stored (this
+//    app's tax/shipping are genuinely 0 by design — shown as such, no
+//    invented 18% GST or "Free" shipping), real shipping address
+//    (orders.shipping_address.formatted — the address actually used for
+//    THIS order), real payment method/status/amount/paid_at, real order
+//    notes (orders.notes — the customer's own checkout note, read-only).
+//  - "Sales staff: Arjun Mehta" row -> relabeled "Placed by": real, and
+//    computed exactly like the Admin Sales Orders list's own Placed-by
+//    column — "Customer" when orders.placed_by equals the order's own
+//    customer_id (self-checkout via place_order()'s real auth.uid()
+//    behavior), otherwise the real staff profile's name. Never shown as
+//    "Sales staff"/ownership per this project's explicit warning.
+//  - Real status actions restricted to exactly what the signed-in
+//    admin/super_admin is authorized to do today (identical underlying
+//    logic to /sales/orders/[id].astro, just re-derived inline): advance
+//    to the next legal status; a direct cancel for super_admin or a
+//    request-approval cancel (updateOrderStatus / requestApproval
+//    'cancel_paid_order') for admin; the same real requestApproval
+//    'refund_payment' control for a cancelled+paid order, shown only to
+//    admin (super_admin approves, doesn't request — same real
+//    can-request rule already proven on the Sales page). The design's
+//    admin-only "Cancel order" header button is replaced by these real,
+//    role-correct controls (same disclosed deviation already approved on
+//    Sales Order Detail — the true authorization source is viewerRole +
+//    order status, not the design's blanket isAdmin gate). "Print order"
+//    is real (window.print()) — genuinely present in the design for both
+//    roles, not gated, so kept; no print behavior was added beyond what
+//    the design/already-approved Sales page already has.
+//  - "Download" (PDF/invoice) header button: no export capability exists
+//    anywhere in this app — omitted, not invented.
+//  - "Bin"/"Shipped" columns, the header's fabricated shipment narrative,
+//    and the "Shipment" card (carrier/AWB/parcel weight/"Track parcel"/
+//    5-step dated tracker): no warehouse-bin field, no per-item partial-
+//    shipment tracking, and no carrier/tracking data exist anywhere in
+//    the schema — all omitted. Replaced with the same honest 5-step
+//    status tracker already approved on the Sales/Customer Order Detail
+//    pages, driven only by the real order.status; a cancelled/refunded
+//    order gets a plain status banner instead.
+//  - "Billing address" / GSTIN: no separate per-order billing address, no
+//    tax-id field anywhere in the schema — omitted.
+//  - "Gross margin" card: admin-only in the design, but needs a real
+//    product-cost field that doesn't exist (products only stores selling
+//    price) — omitted, never fabricated.
+//  - "Support tickets for this order" link: admin-only in the design, but
+//    support_tickets has no order_id column at all (confirmed already on
+//    the Sales Order Detail and Support Ticket Detail screens) — omitted.
+//  - "Internal notes" card: the design shows a fabricated existing note
+//    with an invented author/date plus a free-text add-note input. There
+//    is no order_notes table and no real write path for staff notes on an
+//    order — inventing one would need a new migration, not authorized
+//    this turn. The one real, read-only equivalent (orders.notes, the
+//    customer's own checkout note) is shown instead, honestly labelled,
+//    with no add-note input — identical treatment to the Sales page.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { OrderStatus } from "../../../lib/types";
+
+const { id } = Astro.params;
+const viewerRole = Astro.locals.role;
+const navViewerRole = (viewerRole === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+const { data: order } = await Astro.locals.supabase
+  .from("orders")
+  .select("id, customer_id, placed_by, status, subtotal, tax, shipping_fee, total, shipping_address, notes, created_at")
+  .eq("id", id)
+  .maybeSingle();
+
+if (!order) {
+  Astro.response.status = 404;
+}
+
+const { data: customer } = order
+  ? await Astro.locals.supabase.from("profiles").select("full_name, phone").eq("id", order.customer_id).maybeSingle()
+  : { data: null };
+
+let placedByName: string | null = null;
+if (order?.placed_by && order.placed_by !== order.customer_id) {
+  const { data: placer } = await Astro.locals.supabase.from("profiles").select("full_name").eq("id", order.placed_by).maybeSingle();
+  placedByName = placer?.full_name ?? null;
+}
+const placedByLabel = order ? (order.placed_by === order.customer_id ? "Customer" : (placedByName ?? "—")) : "—";
+
+const { data: itemRows } = order
+  ? await Astro.locals.supabase
+      .from("order_items")
+      .select("id, quantity, unit_price, subtotal, products(sku, name)")
+      .eq("order_id", id)
+  : { data: null };
+
+function productOf(row: { products: unknown }): { sku: string; name: string } | null {
+  return row.products as unknown as { sku: string; name: string } | null;
+}
+
+const { data: payment } = order
+  ? await Astro.locals.supabase.from("payments").select("id, status, method, paid_at").eq("order_id", id).maybeSingle()
+  : { data: null };
+
+const items = itemRows ?? [];
+const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0);
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatDate = (value: string) =>
+  new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+const PAY_TONE: Record<string, "success" | "warn" | "danger" | "muted"> = {
+  paid: "success",
+  pending: "warn",
+  failed: "danger",
+  refunded: "muted",
+};
+const PAY_LABEL: Record<string, string> = { paid: "Paid", pending: "Unpaid", failed: "Failed", refunded: "Refunded" };
+const PAY_METHOD_LABEL: Record<string, string> = { upi: "UPI", card: "Card", bank_transfer: "Net banking", cash: "Cash on delivery" };
+
+const FORWARD_STATUSES = ["pending", "confirmed", "processing", "shipped", "delivered"];
+const currentIndex = order ? FORWARD_STATUSES.indexOf(order.status) : -1;
+const isTerminalOffRamp = order ? order.status === "cancelled" || order.status === "refunded" : false;
+const TRACKER_STEPS = [
+  { key: "pending", label: "Placed" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "processing", label: "Processing" },
+  { key: "shipped", label: "Shipped" },
+  { key: "delivered", label: "Delivered" },
+];
+
+// --- Real status-action authorization — identical logic to
+// /sales/orders/[id].astro, re-derived inline so the markup below can be
+// styled fresh for the Admin shell.
+const nextStatus: Record<string, string> = { pending: "confirmed", confirmed: "processing", processing: "shipped", shipped: "delivered" };
+const canAdvance = !!order && order.status in nextStatus;
+const canCancel = !!order && ["pending", "confirmed", "processing"].includes(order.status);
+const canDirectCancel = viewerRole === "super_admin";
+const canRequestRefund = viewerRole === "sales_staff" || viewerRole === "admin";
+const canShowRefundControl = !!order && canRequestRefund && order.status === "cancelled" && payment?.status === "paid";
+---
+
+<BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Admin` : "Order not found — Admin"}>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Sales orders" role="admin" viewerRole={navViewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Sales" parent="Sales orders" page={order ? order.id.slice(0, 8) : "Not found"} />
+
+      <main id="main-content" class="aod__main">
+        {
+          order ? (
+            <Fragment>
+              <div class="aod__topbar">
+                <a href="/admin/orders" class="aod__back aod__no-print">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                  Sales orders
+                </a>
+                <div class="aod__header">
+                  <div class="aod__heading-col">
+                    <div class="aod__heading-row">
+                      <h1>{order.id.slice(0, 8)}</h1>
+                      {payment && <span class={`aod__pill aod__pill--${PAY_TONE[payment.status] ?? "muted"}`}>{PAY_LABEL[payment.status] ?? payment.status}</span>}
+                      <span class={`aod__pill aod__pill--${STATUS_TONE[order.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[order.status as OrderStatus] ?? order.status}</span>
+                    </div>
+                    <span class="aod__meta">{customer?.full_name ?? "Unnamed customer"} · placed {formatDate(order.created_at)}</span>
+                  </div>
+                  <div id="order-status-actions" data-order-id={order.id} data-cancel-mode={viewerRole === "super_admin" ? "direct" : "request"} class="aod__actions aod__no-print">
+                    {canAdvance && (
+                      <button type="button" data-action="advance" data-next-status={nextStatus[order.status]} class="aod__btn aod__btn--primary">
+                        Mark as {STATUS_LABEL[nextStatus[order.status] as OrderStatus]}
+                      </button>
+                    )}
+                    {canCancel && (
+                      <button type="button" data-action="cancel" class="aod__btn aod__btn--danger">
+                        {canDirectCancel ? "Cancel order" : "Request cancellation"}
+                      </button>
+                    )}
+                    <button type="button" id="aod-print-btn" class="aod__btn">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5M7 17H4v-9h16v9h-3M7 14h10v7H7z" /></svg>
+                      Print order
+                    </button>
+                  </div>
+                </div>
+                <p id="status-message" class="aod__status-message aod__no-print" role="status" />
+              </div>
+
+              <div class="aod__body">
+                <div class="aod__left">
+                  <section class="aod__panel-card">
+                    <div class="aod__panel-head">
+                      <span class="aod__panel-title">Line items</span>
+                      <span class="aod__panel-sub">{items.length} item{items.length === 1 ? "" : "s"} · {totalUnits} unit{totalUnits === 1 ? "" : "s"}</span>
+                    </div>
+                    <div class="aod__grid aod__grid-head">
+                      <span>SKU</span><span>Item</span><span class="aod__col-right">Qty</span><span class="aod__col-right">Price</span><span class="aod__col-right">Total</span>
+                    </div>
+                    {items.map((item) => (
+                      <div class="aod__grid aod__row">
+                        <span class="aod__muted-cell">{productOf(item)?.sku ?? "—"}</span>
+                        <span class="aod__item-name">{productOf(item)?.name ?? "—"}</span>
+                        <span class="aod__col-right">{item.quantity}</span>
+                        <span class="aod__col-right aod__muted-cell">{formatCurrency(item.unit_price)}</span>
+                        <span class="aod__col-right aod__item-total">{formatCurrency(item.subtotal)}</span>
+                      </div>
+                    ))}
+                    <div class="aod__totals">
+                      <div class="aod__totals-row"><span>Subtotal</span><span>{formatCurrency(order.subtotal)}</span></div>
+                      <div class="aod__totals-row"><span>Tax</span><span>{formatCurrency(order.tax)}</span></div>
+                      <div class="aod__totals-row"><span>Shipping</span><span>{formatCurrency(order.shipping_fee)}</span></div>
+                      <div class="aod__totals-row aod__totals-final"><span>Total</span><span>{formatCurrency(order.total)}</span></div>
+                    </div>
+                  </section>
+
+                  {isTerminalOffRamp ? (
+                    <section class="aod__status-banner aod__no-print">
+                      <span class={`aod__pill aod__pill--${STATUS_TONE[order.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[order.status as OrderStatus] ?? order.status}</span>
+                      <span>{order.status === "cancelled" ? "This order was cancelled." : "This order was refunded."}</span>
+                    </section>
+                  ) : (
+                    <section class="aod__panel-card aod__tracker-card aod__no-print">
+                      <span class="aod__panel-title">Order status</span>
+                      <div class="aod__steps">
+                        {TRACKER_STEPS.map((step, i) => {
+                          const done = currentIndex >= i;
+                          const isLast = i === TRACKER_STEPS.length - 1;
+                          return (
+                            <div class="aod__step">
+                              <div class="aod__step-row">
+                                <span class={`aod__step-dot ${done ? "is-done" : ""}`}>
+                                  {done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg>}
+                                </span>
+                                {!isLast && <span class={`aod__step-line ${currentIndex > i ? "is-done" : ""}`} />}
+                              </div>
+                              <div class="aod__step-label-col">
+                                <span class={`aod__step-label ${done ? "is-done" : ""}`}>{step.label}</span>
+                                {step.key === "pending" && <span class="aod__step-date">{formatDate(order.created_at)}</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                </div>
+
+                <div class="aod__right">
+                  <section class="aod__side-card">
+                    <div class="aod__customer-head">
+                      <span class="aod__avatar aod__no-print">
+                        {(customer?.full_name ?? "?").split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]!.toUpperCase()).join("")}
+                      </span>
+                      <div class="aod__customer-identity">
+                        <span class="aod__customer-name">{customer?.full_name ?? "Unnamed customer"}</span>
+                        <span class="aod__customer-sub">{customer?.phone ?? "No phone on file"}</span>
+                      </div>
+                    </div>
+                    <div class="aod__divider" />
+                    <div class="aod__field-col">
+                      <span class="aod__field-label">Shipping address</span>
+                      <span class="aod__field-value">{(order.shipping_address as { formatted?: string } | null)?.formatted ?? "No address on file."}</span>
+                    </div>
+                    <div class="aod__divider" />
+                    <div class="aod__kv-row">
+                      <span class="aod__field-label">Placed by</span>
+                      <span class="aod__kv-value">{placedByLabel}</span>
+                    </div>
+                  </section>
+
+                  <section class="aod__side-card">
+                    <div class="aod__side-head-row">
+                      <span class="aod__panel-title">Payment</span>
+                      {payment && <span class={`aod__pill aod__pill--${PAY_TONE[payment.status] ?? "muted"}`}>{PAY_LABEL[payment.status] ?? payment.status}</span>}
+                    </div>
+                    <dl class="aod__dl">
+                      <div class="aod__dl-row"><dt>Amount</dt><dd>{formatCurrency(order.total)}</dd></div>
+                      <div class="aod__dl-row">
+                        <dt>Method</dt>
+                        <dd>
+                          {payment ? (PAY_METHOD_LABEL[payment.method] ?? payment.method) : "—"}
+                          {payment?.paid_at && <Fragment> · {new Date(payment.paid_at).toLocaleString()}</Fragment>}
+                        </dd>
+                      </div>
+                    </dl>
+                    {canShowRefundControl && (
+                      <div class="aod__refund aod__no-print" id="refund-control" data-payment-id={payment!.id}>
+                        <button type="button" id="request-refund-btn" class="aod__btn aod__btn--danger aod__btn--full">Request refund</button>
+                        <p id="refund-message" class="aod__status-message" role="status" />
+                      </div>
+                    )}
+                  </section>
+
+                  {order.notes && (
+                    <section class="aod__side-card aod__no-print">
+                      <span class="aod__panel-title">Order notes</span>
+                      <div class="aod__note-box">
+                        <span class="aod__note-text">{order.notes}</span>
+                        <span class="aod__note-meta">From the customer at checkout</span>
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </div>
+            </Fragment>
+          ) : (
+            <div class="aod__notfound">
+              <p class="aod__notfound-title">Order not found</p>
+              <p class="aod__notfound-body">This order may not exist.</p>
+              <a href="/admin/orders" class="aod__btn">Back to Sales orders</a>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .aod__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .aod__main {
+      padding: 16px;
+    }
+  }
+
+  .aod__topbar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .aod__back {
+    align-self: flex-start;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .aod__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .aod__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .aod__heading-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .aod__heading-row h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .aod__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .aod__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .aod__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .aod__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .aod__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .aod__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .aod__pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .aod__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .aod__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .aod__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .aod__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .aod__btn--danger {
+    color: var(--sd-danger-fg);
+    border-color: var(--sd-danger-fg);
+  }
+  .aod__btn--full {
+    width: 100%;
+    justify-content: center;
+  }
+  .aod__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .aod__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .aod__body {
+      flex-direction: row;
+    }
+  }
+
+  .aod__left {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .aod__right {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1000px) {
+    .aod__right {
+      width: 340px;
+      flex-shrink: 0;
+    }
+  }
+
+  .aod__panel-card {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .aod__panel-head {
+    min-width: 500px;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .aod__panel-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .aod__panel-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .aod__grid {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr) 60px 100px 110px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 500px;
+  }
+  .aod__grid-head {
+    height: 40px;
+    background: var(--sd-shell);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .aod__row {
+    height: 48px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .aod__col-right {
+    text-align: right;
+  }
+  .aod__muted-cell {
+    color: var(--sd-fg2);
+    font-size: 13px;
+  }
+  .aod__item-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .aod__item-total {
+    font-weight: 500;
+    color: var(--sd-fg);
+  }
+  .aod__totals {
+    min-width: 500px;
+    margin-top: auto;
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .aod__totals-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 24px;
+  }
+  .aod__totals-row span:first-child {
+    color: var(--sd-muted-fg);
+  }
+  .aod__totals-row span:last-child {
+    width: 120px;
+    text-align: right;
+    font-weight: 500;
+  }
+  .aod__totals-final {
+    padding-top: 8px;
+    border-top: 1px solid var(--sd-border);
+  }
+  .aod__totals-final span:first-child {
+    font-weight: 600;
+    color: var(--sd-fg);
+  }
+  .aod__totals-final span:last-child {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .aod__status-banner {
+    box-sizing: border-box;
+    padding: 16px 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--sd-fg2);
+  }
+
+  .aod__tracker-card {
+    box-sizing: border-box;
+    padding: 16px 18px 18px;
+    gap: 16px;
+  }
+  .aod__steps {
+    display: flex;
+    align-items: flex-start;
+    overflow-x: auto;
+    min-width: 0;
+    gap: 4px;
+  }
+  .aod__step {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 90px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .aod__step-row {
+    display: flex;
+    align-items: center;
+  }
+  .aod__step-dot {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-primary-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .aod__step-dot.is-done {
+    border: none;
+    background: var(--sd-primary);
+  }
+  .aod__step-line {
+    flex-grow: 1;
+    height: 2px;
+    margin: 0 6px;
+    border-radius: 1px;
+    background: var(--sd-border);
+  }
+  .aod__step-line.is-done {
+    background: var(--sd-primary);
+  }
+  .aod__step-label-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-right: 8px;
+  }
+  .aod__step-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .aod__step-label.is-done {
+    color: var(--sd-fg);
+  }
+  .aod__step-date {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .aod__side-card {
+    box-sizing: border-box;
+    padding: 16px 18px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .aod__customer-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .aod__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .aod__customer-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .aod__customer-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .aod__customer-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .aod__divider {
+    height: 1px;
+    background: var(--sd-border);
+  }
+  .aod__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .aod__field-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .aod__field-value {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--sd-fg2);
+  }
+  .aod__kv-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 13px;
+  }
+  .aod__kv-value {
+    font-weight: 500;
+  }
+  .aod__side-head-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .aod__dl {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .aod__dl-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .aod__dl-row dt {
+    color: var(--sd-muted-fg);
+  }
+  .aod__dl-row dd {
+    margin: 0;
+    font-weight: 500;
+    text-align: right;
+  }
+  .aod__refund {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .aod__note-box {
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--sd-shell);
+    border: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .aod__note-text {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--sd-fg2);
+  }
+  .aod__note-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .aod__notfound {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .aod__notfound-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .aod__notfound-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Print: a clean order-only document — same scope as the already-
+     approved Sales Order Detail page (see that file's own comment): only
+     screen layout is affected, and only real order data prints. */
+  @media print {
+    :global(.navtop) {
+      display: none !important;
+    }
+    .sd__sidebar,
+    .sd__backdrop {
+      display: none !important;
+    }
+    .aod__no-print {
+      display: none !important;
+    }
+    .sd {
+      display: block;
+      background: #fff;
+      color: #000;
+      min-height: 0;
+    }
+    .sd__panel {
+      margin: 0;
+      border: none;
+      box-shadow: none;
+      border-radius: 0;
+      overflow: visible;
+    }
+    .aod__main {
+      padding: 0;
+      gap: 12px;
+    }
+    .aod__topbar {
+      gap: 6px;
+    }
+    .aod__body {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    .aod__right {
+      width: 100%;
+    }
+    .aod__panel-card,
+    .aod__side-card {
+      box-shadow: none;
+      border: 1px solid #ccc;
+      break-inside: avoid;
+    }
+    .aod__panel-card {
+      overflow-x: visible;
+    }
+    .aod__panel-head,
+    .aod__grid,
+    .aod__totals {
+      min-width: 0;
+    }
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+
+  document.getElementById("aod-print-btn")?.addEventListener("click", () => window.print());
+
+  import { actions } from "astro:actions";
+  import type { OrderStatus } from "../../../lib/types";
+
+  const container = document.querySelector<HTMLDivElement>("#order-status-actions");
+  if (container) {
+    const orderId = container.dataset.orderId!;
+    const cancelMode = container.dataset.cancelMode;
+    const messageEl = document.querySelector<HTMLParagraphElement>("#status-message")!;
+
+    container.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const action = button.dataset.action;
+
+        button.disabled = true;
+        messageEl.textContent = "";
+
+        if (action === "cancel" && cancelMode === "request") {
+          const reason = window.prompt("Reason for requesting cancellation:") ?? "";
+          if (!reason.trim()) {
+            button.disabled = false;
+            return;
+          }
+
+          const { error } = await actions.requestApproval({
+            actionType: "cancel_paid_order",
+            targetTable: "orders",
+            targetId: orderId,
+            reason,
+          });
+
+          if (error) {
+            button.disabled = false;
+            messageEl.textContent = error.message;
+            return;
+          }
+
+          messageEl.textContent = "Cancellation request submitted.";
+          button.remove();
+          return;
+        }
+
+        let reason: string | undefined;
+        if (action === "cancel") {
+          reason = window.prompt("Reason for cancellation:") ?? undefined;
+          if (!reason || !reason.trim()) {
+            button.disabled = false;
+            return;
+          }
+        }
+
+        const newStatus = (action === "cancel" ? "cancelled" : button.dataset.nextStatus!) as OrderStatus;
+        const { error } = await actions.updateOrderStatus({ orderId, newStatus, reason });
+
+        if (error) {
+          button.disabled = false;
+          messageEl.textContent = error.message;
+          return;
+        }
+
+        window.location.reload();
+      });
+    });
+  }
+
+  const refundControl = document.querySelector<HTMLDivElement>("#refund-control");
+  const refundButton = document.querySelector<HTMLButtonElement>("#request-refund-btn");
+  const refundMessageEl = document.querySelector<HTMLParagraphElement>("#refund-message");
+
+  if (refundControl && refundButton && refundMessageEl) {
+    const paymentId = refundControl.dataset.paymentId!;
+
+    refundButton.addEventListener("click", async () => {
+      const reason = window.prompt("Reason for requesting a refund:") ?? "";
+      if (!reason.trim()) return;
+
+      refundButton.disabled = true;
+      refundMessageEl.textContent = "";
+
+      const { error } = await actions.requestApproval({
+        actionType: "refund_payment",
+        targetTable: "payments",
+        targetId: paymentId,
+        reason,
+      });
+
+      if (error) {
+        refundButton.disabled = false;
+        refundMessageEl.textContent = error.message;
+        return;
+      }
+
+      refundMessageEl.textContent = "Refund request submitted.";
+      refundButton.remove();
+    });
+  }
+</script>

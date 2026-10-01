@@ -1,21 +1,67 @@
 ---
-// Matches the Claude Design canvas's Customer "My orders" artboard
-// (project/PageCustOrders.dc.html, imported by CustOrders.dc.html), plus
-// the detailed spend/status/top-products analytics block that used to live
-// on /account itself (Phase 8) — relocated here since /account became a
-// lean dashboard matching the design's Customer portal screen, and this
-// order-history page is the closest thematic home for order analytics.
-// The analytics block, its RPCs and its DateRangeFilter are otherwise
-// completely unchanged from the original /account implementation.
+// Literal recreation of the Claude Design canvas's "My orders" artboard
+// (project/PageCustOrders.dc.html, imported by CustOrders.dc.html) — the
+// supplied design is the visual source of truth, not the app's existing
+// DESIGN.md component system. Reuses the same --cp-* token system and
+// NavCustomer header already approved on Customer Portal/Shop/Product
+// Details/Cart/Checkout. Card/EmptyState/OrderStatusBadge are NOT reused
+// (their visual output doesn't match this artboard) — this page builds its
+// own markup over the same real, unmodified order query (customer-scoped
+// via customer_id = auth.uid(), same RLS as before).
+//
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Real order id (truncated UUID, same display convention as before),
+//    real date, real item count (order_items(count) — a genuine embedded
+//    aggregate over the real order_items table, same RLS-safe pattern
+//    already used for categories(name) elsewhere, not a new capability),
+//    real total, real status (mapped across the full real 7-value
+//    OrderStatus enum, not just the design's 4 example statuses), real
+//    tabs/counts (unchanged filtering logic), real "View" link to the
+//    existing /account/orders/[id] detail route, real "New order" link to
+//    Shop, real "Problem with an order?" support-ticket link.
+//  - Header subtitle "Meera Traders · 42 orders since January · 3 on the
+//    way": no business-name concept in the schema, and "since January"/
+//    "on the way" imply data this app doesn't track that way — replaced
+//    with a real live "{N} orders · {M} in progress" count.
+//  - "Download history" button: no export/CSV capability exists — omitted.
+//  - Toolbar search input + "Last 90 days" date-range button: no order
+//    search or date-range filtering exists on this list (only the real
+//    status tabs do) — per your "existing search/filter functionality
+//    only where it already exists" rule, omitted rather than shown as
+//    non-functional chrome.
+//  - "Your ref MT-121" subtitle under the order number: no customer
+//    reference-number system — omitted.
+//  - Delivery column ("Expected 1 Oct" / "Arriving tomorrow" / "Delivered
+//    26 Sep"): no delivery-date/ETA field or shipment-tracking data
+//    anywhere in the schema — omitted entirely rather than shown as
+//    invented dates, per your explicit "do not fabricate delivery dates"
+//    rule.
+//  - "Track" action: renamed to "View" — there is no real shipment
+//    tracking, only the order's own status/history, so "Track" would
+//    overclaim. Same link target as before (the real order detail page).
+//  - "Reorder" button: explicitly disallowed — no reorder capability
+//    exists — omitted.
+//  - Pagination footer ("Showing 8 of 42 orders · Page 1 of 6" + prev/
+//    next): no pagination exists on this list today (it fetches all of
+//    the customer's own orders, same as before this pass) — showing fake
+//    page numbers would imply a paginator that doesn't work, so this is
+//    replaced with a real "{N} orders" count only.
+//  - "...raise a support ticket with the order number and photos...": the
+//    support-ticket flow has no photo-attachment capability (no storage/
+//    attachment table — see account/support/index.astro's own note) — the
+//    existing, accurate copy ("...raise a support ticket and our team
+//    will get back to you.") is kept instead of the design's literal text.
+//
+// DEVIATION FLAGGED FOR YOUR REVIEW: the real Phase 8 analytics block
+// (spend-over-time / orders-by-status / top-purchased-products charts +
+// DateRangeFilter) that previously lived on this page has been removed —
+// the supplied artboard has no equivalent section, and the instructions
+// for this screen scope real data to order-list fields only. That
+// real, working functionality now has no page. Let me know if you'd like
+// it relocated (e.g. back to /account, or its own screen) on a future
+// turn — nothing has been deleted from the backend, only this page's UI.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
-import ChartCanvas from "../../../components/dashboard/ChartCanvas.astro";
-import DateRangeFilter from "../../../components/dashboard/DateRangeFilter.astro";
-import PublicHeader from "../../../components/layout/PublicHeader.astro";
-import { resolveDashboardRange } from "../../../lib/dashboardRange";
-import { CHART_COLORS } from "../../../lib/chartTheme";
+import NavCustomer from "../../../components/customer/NavCustomer.astro";
 
 const { user } = Astro.locals;
 const userId = user!.id;
@@ -24,7 +70,7 @@ const tab = Astro.url.searchParams.get("tab") ?? "all";
 
 const { data: orderRows } = await Astro.locals.supabase
   .from("orders")
-  .select("id, status, total, created_at")
+  .select("id, status, total, created_at, order_items(count)")
   .eq("customer_id", userId)
   .order("created_at", { ascending: false });
 
@@ -52,191 +98,505 @@ const tabs: { key: string; label: string; count: number }[] = [
   { key: "cancelled", label: "Cancelled", count: cancelledCount },
 ];
 
-// --- Analytics block, unchanged from the original /account implementation ---
-const url = Astro.url;
-const range = resolveDashboardRange(url.searchParams.get("range"));
-
-const [{ data: spendTrend }, { data: ordersByStatus }, { data: topProducts }] = await Promise.all([
-  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
-]);
-
-const spendRows = spendTrend ?? [];
-const statusRows = ordersByStatus ?? [];
-const productRows = topProducts ?? [];
-
-const statusColors: Record<string, string> = {
-  pending: CHART_COLORS.warning,
-  confirmed: CHART_COLORS.mute,
-  processing: CHART_COLORS.mute,
-  shipped: CHART_COLORS.success,
-  delivered: CHART_COLORS.success,
-  cancelled: CHART_COLORS.error,
-  refunded: CHART_COLORS.error,
+const STATUS_TONE: Record<string, "warn" | "info" | "success" | "muted"> = {
+  pending: "warn",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<string, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
 };
 ---
 
-<BaseLayout title="Your orders — Inventory">
-  <PublicHeader backHref="/account" backLabel="Account" />
+<BaseLayout title="My orders — Inventory">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    <h1 class="text-2xl font-bold text-ink">My orders</h1>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-    <div class="mt-md flex flex-wrap gap-xxs">
+    <NavCustomer active="My orders" />
+
+    <main id="main-content" class="cp__main">
+      <div class="ord__header">
+        <div class="ord__heading-col">
+          <h1>My orders</h1>
+          <span class="ord__meta">
+            {orders.length} order{orders.length === 1 ? "" : "s"}
+            {openCount > 0 && <Fragment> · {openCount} in progress</Fragment>}
+          </span>
+        </div>
+        <a href="/products" class="ord__new-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          New order
+        </a>
+      </div>
+
+      <div role="tablist" aria-label="Order status" class="ord__tabs">
+        {
+          tabs.map((t) => (
+            <a href={`/account/orders?tab=${t.key}`} role="tab" aria-selected={tab === t.key} class={tab === t.key ? "is-active" : ""}>
+              {t.label} <span class="ord__tab-count">{t.count}</span>
+            </a>
+          ))
+        }
+      </div>
+
       {
-        tabs.map((t) => (
-          <a
-            href={`/account/orders?tab=${t.key}`}
-            class={`px-md py-xs text-sm rounded-md ${tab === t.key ? "bg-surface-soft font-bold text-ink" : "text-muted hover:text-ink"}`}
-          >
-            {t.label} <span class="text-muted">{t.count}</span>
-          </a>
-        ))
+        visibleOrders.length > 0 ? (
+          <div class="ord__panel">
+            <div class="ord__grid ord__grid-head">
+              <span>Order no.</span>
+              <span>Date</span>
+              <span class="ord__col-right">Items</span>
+              <span class="ord__col-right">Total</span>
+              <span>Status</span>
+              <span class="ord__col-right">Actions</span>
+            </div>
+            {visibleOrders.map((o) => (
+              <div class="ord__grid ord__row">
+                <a href={`/account/orders/${o.id}`} class="ord__id-link">
+                  {o.id.slice(0, 8)}
+                </a>
+                <span class="ord__date">{new Date(o.created_at).toLocaleDateString()}</span>
+                <span class="ord__col-right">{o.order_items?.[0]?.count ?? 0}</span>
+                <span class="ord__col-right ord__total">{formatCurrency(o.total)}</span>
+                <span>
+                  <span class={`ord__pill ord__pill--${STATUS_TONE[o.status] ?? "muted"}`}>
+                    {STATUS_LABEL[o.status] ?? o.status}
+                  </span>
+                </span>
+                <span class="ord__actions">
+                  <a href={`/account/orders/${o.id}`} class="ord__view-btn">
+                    View
+                  </a>
+                </span>
+              </div>
+            ))}
+            <div class="ord__panel-footer">
+              {visibleOrders.length} order{visibleOrders.length === 1 ? "" : "s"}
+            </div>
+          </div>
+        ) : (
+          <div class="ord__empty">
+            <p class="ord__empty-title">No orders</p>
+            <p class="ord__empty-body">Your orders will appear here once you check out.</p>
+            <a href="/products" class="btn-outline-sm">
+              Start shopping
+            </a>
+          </div>
+        )
       }
-    </div>
 
-    {
-      visibleOrders.length > 0 ? (
-        <div class="mt-md overflow-x-auto">
-          <table class="w-full text-sm border-collapse">
-            <thead>
-              <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
-                <th class="py-xs pr-md">Order</th>
-                <th class="py-xs pr-md">Date</th>
-                <th class="py-xs pr-md">Total</th>
-                <th class="py-xs pr-md">Status</th>
-                <th class="py-xs" />
-              </tr>
-            </thead>
-            <tbody>
-              {visibleOrders.map((o) => (
-                <tr class="border-b border-hairline">
-                  <td class="py-sm pr-md text-ink font-bold">{o.id.slice(0, 8)}</td>
-                  <td class="py-sm pr-md text-body">{new Date(o.created_at).toLocaleDateString()}</td>
-                  <td class="py-sm pr-md text-body">{formatCurrency(o.total)}</td>
-                  <td class="py-sm pr-md">
-                    <OrderStatusBadge status={o.status} />
-                  </td>
-                  <td class="py-sm">
-                    <a href={`/account/orders/${o.id}`} class="text-primary font-bold">
-                      View
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <section class="ord__support-card">
+        <div class="ord__support-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4zM12 8v3M12 13.5h.01"></path></svg>
         </div>
-      ) : (
-        <EmptyState class="mt-lg" title="No orders" message="Your orders will appear here once you check out." />
-      )
-    }
-
-    <Card class="mt-lg flex items-center gap-md flex-wrap">
-      <div class="flex-grow">
-        <h2 class="text-sm font-bold text-ink">Problem with an order?</h2>
-        <p class="mt-xxs text-xs text-muted">Damaged, missing or wrong items — raise a support ticket and our team will get back to you.</p>
-      </div>
-      <a href="/account/support" class="h-10 px-md inline-flex items-center border border-hairline text-sm font-bold text-ink hover:border-hairline-strong shrink-0">
-        Raise a support ticket
-      </a>
-    </Card>
-
-    <Card class="mt-lg">
-      <div class="flex items-center justify-between flex-wrap gap-md">
-        <h2 class="text-lg font-bold text-ink">My analytics</h2>
-        <DateRangeFilter current={range.preset} url={url} pathname="/account/orders" />
-      </div>
-      <p class="mt-xs text-xs text-muted">{range.label}</p>
-
-      <div class="mt-md grid grid-cols-1 gap-lg">
-        <div>
-          <h3 class="text-sm font-bold text-ink">Spend over time</h3>
-          <div class="mt-sm">
-            {
-              spendRows.length > 0 ? (
-                <ChartCanvas
-                  id="orders-spend-trend"
-                  type="line"
-                  height={260}
-                  data={{
-                    labels: spendRows.map((r) => r.day),
-                    datasets: [
-                      {
-                        label: "Spend",
-                        data: spendRows.map((r) => Number(r.revenue)),
-                        borderColor: CHART_COLORS.ink,
-                        backgroundColor: "rgba(17,17,17,0.06)",
-                        fill: true,
-                      },
-                    ],
-                  }}
-                  options={{ plugins: { legend: { display: false } } }}
-                />
-              ) : (
-                <EmptyState title="No orders in this range" message="Try another date range." />
-              )
-            }
-          </div>
+        <div class="ord__support-body">
+          <h2>Problem with an order?</h2>
+          <span>Damaged, missing or wrong items — raise a support ticket and our team will get back to you.</span>
         </div>
-
-        <div>
-          <h3 class="text-sm font-bold text-ink">My orders by status</h3>
-          <div class="mt-sm">
-            {
-              statusRows.length > 0 ? (
-                <ChartCanvas
-                  id="orders-status"
-                  type="bar"
-                  height={260}
-                  data={{
-                    labels: statusRows.map((r) => r.status),
-                    datasets: [
-                      {
-                        label: "Orders",
-                        data: statusRows.map((r) => Number(r.order_count)),
-                        backgroundColor: statusRows.map((r) => statusColors[r.status] ?? CHART_COLORS.mute),
-                      },
-                    ],
-                  }}
-                  options={{ plugins: { legend: { display: false } } }}
-                />
-              ) : (
-                <EmptyState title="No orders in this range" message="Try another date range." />
-              )
-            }
-          </div>
-        </div>
-
-        <div>
-          <h3 class="text-sm font-bold text-ink">My top purchased products</h3>
-          <div class="mt-sm">
-            {
-              productRows.length > 0 ? (
-                <ChartCanvas
-                  id="orders-top-products"
-                  type="bar"
-                  height={260}
-                  data={{
-                    labels: productRows.map((r) => r.name),
-                    datasets: [
-                      {
-                        label: "Units",
-                        data: productRows.map((r) => Number(r.units_sold)),
-                        backgroundColor: CHART_COLORS.ink,
-                      },
-                    ],
-                  }}
-                  options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
-                />
-              ) : (
-                <EmptyState title="No purchases in this range" message="Try another date range." />
-              )
-            }
-          </div>
-        </div>
-      </div>
-    </Card>
-  </main>
+        <a href="/account/support" class="ord__support-btn">Raise a support ticket</a>
+      </section>
+    </main>
+  </div>
 </BaseLayout>
+
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-warn-bg: #fef3e2;
+    --cp-warn-fg: #9a3412;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-success-bg: #ecfdf3;
+    --cp-success-fg: #15803d;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-warn-bg: #2e1f0e;
+    --cp-warn-fg: #fdba74;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-success-bg: #0f2a1c;
+    --cp-success-fg: #4ade80;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+  .btn-outline-sm {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ord__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .ord__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ord__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .ord__meta {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+  .ord__new-btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ord__tabs {
+    display: inline-flex;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    gap: 2px;
+    width: fit-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .ord__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .ord__tabs a.is-active {
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    box-shadow: var(--cp-shadow);
+  }
+  .ord__tab-count {
+    color: var(--cp-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .ord__tabs a.is-active .ord__tab-count {
+    color: var(--cp-muted-fg);
+  }
+
+  .ord__panel {
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    overflow-x: auto;
+  }
+  .ord__grid {
+    display: grid;
+    grid-template-columns: 110px 110px 70px 110px 110px 90px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 600px;
+  }
+  .ord__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--cp-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+  }
+  .ord__row {
+    height: 52px;
+    border-bottom: 1px solid var(--cp-border);
+    font-size: 14px;
+  }
+  .ord__col-right {
+    text-align: right;
+  }
+  .ord__id-link {
+    font-weight: 500;
+    color: var(--cp-fg);
+    text-decoration: underline;
+    text-decoration-color: var(--cp-input);
+    text-underline-offset: 3px;
+  }
+  .ord__date {
+    color: var(--cp-fg2);
+  }
+  .ord__total {
+    font-weight: 500;
+  }
+  .ord__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .ord__pill--warn {
+    background: var(--cp-warn-bg);
+    color: var(--cp-warn-fg);
+  }
+  .ord__pill--info {
+    background: var(--cp-info-bg);
+    color: var(--cp-info-fg);
+  }
+  .ord__pill--success {
+    background: var(--cp-success-bg);
+    color: var(--cp-success-fg);
+  }
+  .ord__pill--muted {
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+  }
+  .ord__actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .ord__view-btn {
+    height: 30px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+  }
+  .ord__panel-footer {
+    min-width: 600px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .ord__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .ord__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .ord__empty-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .ord__support-card {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .ord__support-icon {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: var(--cp-muted);
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ord__support-body {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 200px;
+  }
+  .ord__support-body h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .ord__support-body span {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+    line-height: 1.5;
+    max-width: 620px;
+  }
+  .ord__support-btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+</style>
+
+<script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+</script>

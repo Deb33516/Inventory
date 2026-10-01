@@ -1,0 +1,1082 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Product Info
+// screen (project/AdminProductDetail.dc.html -> NavSidebar role="admin"
+// + the plain shared NavTop.astro (section="Inventory" parent="Products")
+// + PageProductDetail, an admin-only, role-agnostic component — unlike
+// PageOrders/PageOrderDetail/PageNewOrder, PageProductDetail.dc.html has
+// no role prop at all; AdminProductDetail.dc.html is its only real
+// consumer). NOTE: at the start of this turn, no Product Info artboard
+// existed anywhere in the design export (checked the full file listing
+// and canvas.json) — the user confirmed the canvas had since been
+// updated, and AdminProductDetail.dc.html/AdminProductDetailDark.dc.html/
+// PageProductDetail.dc.html were re-fetched live from the artifact before
+// writing anything here. This is a genuine Admin-shell route
+// (/admin/products/[id]) — not linked from/to Sales Products & Stock,
+// Inventory Staff Product Lookup, or the old AppShell product-detail form.
+//
+// SCHEMA REALITY vs THE DESIGN — this is the central finding of this
+// screen: PageProductDetail.dc.html assumes a warehouse-management data
+// model this schema does not have — per-bin stock locations, reserved/
+// available-to-promise quantities, a purchase-order/restock-scheduling
+// system (fake "RS-3044" reference + ETA), and a catalog data model with
+// brand/HSN/GST/barcode/physical-dimension fields. None of that exists:
+// `inventory` is one row per product (quantity_on_hand/reorder_level
+// only, no location), `products` has no brand/HSN/GST/barcode/dimension
+// columns, and there is no restock-request/PO table anywhere. Every one
+// of those is omitted below, never invented. Two things turned out to be
+// MORE real than the design's own mockup data, though: `suppliers` has
+// real contact_name/phone columns (the design's own supplier contact line
+// is therefore reproducible for real, not fabricated, once correctly
+// derived), and `inventory_movements` has no stored running-balance
+// column but one is exactly reconstructible from real data — see BALANCE
+// RECONSTRUCTION below.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Header: real product name/SKU, real stock-status pill (full 5-value
+//    real derivation already used everywhere else), real category pill
+//    (or "Uncategorised"), real "{qty} on hand" subtitle (the design's own
+//    subtitle mixes a fabricated supplier name into this line and adds a
+//    complete fabrication — "40 units arriving 3 Oct on restock RS-3044"
+//    — no restock-request/PO system or ETA field exists anywhere; both
+//    dropped, kept only the real on-hand count).
+//  - "Edit" button: real product-editing capability DOES exist
+//    (updateProduct Action, products_update_staff RLS — admin is already
+//    authorized) — but no Claude-Design-shell edit form exists anywhere
+//    in this project (the old /inventory/products/[id].astro form is
+//    old-shell, explicitly not reusable here, same as Admin Products'
+//    own "New product" gap last turn). Per your instruction ("if editing
+//    is not currently implemented [i.e. no real UI for it exists yet],
+//    use an honest unavailable/deferred treatment"), rendered as a real,
+//    visibly-present but honestly disabled button ("Not available yet"),
+//    not omitted outright — the design shows it unconditionally, and a
+//    real backend action for it already exists, unlike "Request restock"
+//    below.
+//  - "Request restock" button: omitted entirely, not just disabled — no
+//    restock-REQUEST workflow exists at all (real restock recording is
+//    `record_inventory_movement()`, a direct staff/admin action, not a
+//    request-and-fulfill flow), and no Admin-shell screen to land on even
+//    exists (no "Admin Receiving" screen anywhere in this project's
+//    13-screen list) — there is no honest destination to defer to.
+//  - Delete/Request deletion: reused verbatim from Admin Products (same
+//    real `deleteProduct` Action for super_admin, same real
+//    `requestApproval({actionType:'delete_product'})` for admin) — the
+//    exact same permission boundary, not broadened. Placed in the header
+//    actions row, matching Admin Order Detail's own convention of real
+//    destructive/request actions living in the page header.
+//  - Image: real `products.image_url` — shown when present, the design's
+//    own honest "No image" placeholder reused verbatim when absent.
+//  - "Details" card (Brand/HSN code/GST/Unit/Barcode/Dimensions): none of
+//    these columns exist anywhere in the schema — the whole card is
+//    replaced with a real equivalent using columns that DO exist and are
+//    not shown anywhere else on this screen: `products.description`
+//    (or an honest "No description on file"), and real Added/Updated
+//    dates (`created_at`/`updated_at`).
+//  - "Pricing" card: real Cost (or "—" when null — never computing a
+//    margin from a fabricated substitute), real Price, real Margin (both
+//    the % and the real ₹ absolute value, only when cost is present).
+//    "excl. GST" subtitle dropped (no GST field/rate anywhere).
+//  - "Supplier" card: real, not fabricated — same "most recent restock
+//    supplier" derivation already proven on Admin Products, now also
+//    showing the supplier's real contact_name/phone (real suppliers
+//    columns) instead of the design's example contact. "Delivery time"
+//    row dropped (no lead-time field on suppliers); "Last restock" kept,
+//    real (the derived movement's own created_at). Honest "No restock
+//    history for this product" empty state when no restock movement with
+//    a supplier exists yet (true for all 5 real products in the live
+//    database today — zero real 'restock' movements exist at all).
+//  - "Stock by location" card: replaced with a real, single-location
+//    "Stock" card (this schema has one inventory row per product, not
+//    per-bin) — real On hand, real Low stock level (reorder_level), real
+//    status pill. No Bin/Reserved/Available columns (no location or
+//    reservation concept exists) and no embedded fabricated restock
+//    banner.
+//  - "Stock level – last 90 days" chart: genuinely real and derivable —
+//    see BALANCE RECONSTRUCTION below — rebuilt as a bespoke inline SVG
+//    (same reasoning as Admin Dashboard's revenue chart: ChartCanvas.astro
+//    uses the old DESIGN.md token system, which would visually clash with
+//    this screen's --sd-* tokens). Honest "No stock movement recorded"
+//    empty state when a product has zero movements ever (true for the
+//    real CLO-TS-001 product today).
+//  - "Movements" table: real Date/Type (full real 5-value movement_type
+//    enum: restock/sale/adjustment/damaged/return, not just the design's
+//    4 example labels)/Reference/Qty/Balance. "Bin" column dropped (no
+//    location data). "Reference" is real and type-dependent: a real order
+//    id (linking to the already-approved /admin/orders/[id]) for
+//    sale/return movements — the real `reference_order_id` column — a
+//    real supplier name for restock, or the real free-text `reason` for
+//    adjustment/damaged, "—" otherwise. "Balance" is a real reconstructed
+//    running total (see below), not fabricated. "View all" button
+//    omitted — every real movement for this product is already shown,
+//    same "real count instead of fake pagination" precedent used
+//    everywhere else in this project.
+//
+// BALANCE RECONSTRUCTION: `inventory_movements` has no stored running-
+// balance column, and this product's very first real quantity was seeded
+// directly into `inventory.quantity_on_hand` at Phase 5, not inserted via
+// a movement row — so summing every real quantity_delta for a product
+// does NOT equal its current quantity_on_hand (verified live via SQL: the
+// two numbers differ by exactly the product's original seeded quantity
+// for every one of the 5 real products). The real, exact starting balance
+// is solved for arithmetically: quantity_on_hand − sum(all real
+// quantity_delta ever) — by definition, walking forward from that number
+// through every real movement in chronological order always lands back
+// on the real current quantity_on_hand. Both the Movements table's
+// "Balance" column and the chart's y-values are this same real,
+// internally-consistent reconstruction — never a fabricated number.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { UserRole } from "../../../lib/types";
+
+const { id } = Astro.params;
+const viewerRoleRaw = Astro.locals.role as UserRole | null;
+const viewerRole = (viewerRoleRaw === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+const { data: product } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, description, category_id, categories(name), price, cost, image_url, is_active, created_at, updated_at")
+  .eq("id", id)
+  .maybeSingle();
+
+if (!product) {
+  Astro.response.status = 404;
+}
+
+const { data: inv } = product
+  ? await Astro.locals.supabase.from("inventory").select("quantity_on_hand, reorder_level").eq("product_id", id).maybeSingle()
+  : { data: null };
+
+const { data: movementRows } = product
+  ? await Astro.locals.supabase
+      .from("inventory_movements")
+      .select("id, movement_type, quantity_delta, reason, supplier_id, reference_order_id, performed_by, created_at, suppliers(name, contact_name, phone)")
+      .eq("product_id", id)
+      .order("created_at", { ascending: true })
+  : { data: null };
+
+function categoryOf(row: { categories: unknown } | null): { name: string } | null {
+  return (row?.categories as unknown as { name: string } | null) ?? null;
+}
+function supplierOf(row: { suppliers: unknown }): { name: string; contact_name: string | null; phone: string | null } | null {
+  return row.suppliers as unknown as { name: string; contact_name: string | null; phone: string | null } | null;
+}
+
+const qty = inv?.quantity_on_hand ?? 0;
+const reorderLevel = inv?.reorder_level ?? 0;
+const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+const cost = product?.cost === null || product?.cost === undefined ? null : Number(product.cost);
+const price = product ? Number(product.price) : 0;
+const marginPct = cost !== null && price > 0 ? Math.round(((price - cost) / price) * 100) : null;
+const marginAbs = cost !== null ? price - cost : null;
+
+const movements = movementRows ?? [];
+
+// --- Real running-balance reconstruction (see BALANCE RECONSTRUCTION above) ---
+const sumOfDeltas = movements.reduce((sum, m) => sum + m.quantity_delta, 0);
+const startingBalance = qty - sumOfDeltas;
+let running = startingBalance;
+const withBalance = movements.map((m) => {
+  running += m.quantity_delta;
+  return { ...m, balanceAfter: running };
+});
+
+// --- Real most-recent-restock supplier (identical derivation to Admin Products) ---
+const lastRestock = [...withBalance].reverse().find((m) => m.movement_type === "restock" && m.supplier_id);
+const restockSupplier = lastRestock ? supplierOf(lastRestock) : null;
+
+// --- Real Movements table rows (most recent first) ---
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatDate = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+const formatDateLong = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+const MOVE_LABEL: Record<string, string> = { restock: "Received", sale: "Sold", adjustment: "Adjusted", damaged: "Damaged", return: "Returned" };
+const MOVE_TONE: Record<string, "success" | "outline" | "info" | "danger" | "warn"> = {
+  restock: "success",
+  sale: "outline",
+  adjustment: "info",
+  damaged: "danger",
+  return: "warn",
+};
+
+const movementRowsDisplay = [...withBalance].reverse().map((m) => {
+  let refLabel = "—";
+  let refHref: string | null = null;
+  if ((m.movement_type === "sale" || m.movement_type === "return") && m.reference_order_id) {
+    refLabel = m.reference_order_id.slice(0, 8);
+    refHref = `/admin/orders/${m.reference_order_id}`;
+  } else if (m.movement_type === "restock") {
+    refLabel = supplierOf(m)?.name ?? "—";
+  } else if (m.reason) {
+    refLabel = m.reason;
+  }
+  return {
+    id: m.id,
+    date: formatDate(m.created_at),
+    type: MOVE_LABEL[m.movement_type] ?? m.movement_type,
+    tone: MOVE_TONE[m.movement_type] ?? "outline",
+    refLabel,
+    refHref,
+    qty: m.quantity_delta,
+    balance: m.balanceAfter,
+  };
+});
+
+// --- Real "Stock level" chart (90-day window) ---
+const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+const windowStart = Date.now() - NINETY_DAYS_MS;
+const balanceAtWindowStart = (() => {
+  let bal = startingBalance;
+  for (const m of withBalance) {
+    if (new Date(m.created_at).getTime() >= windowStart) break;
+    bal = m.balanceAfter;
+  }
+  return bal;
+})();
+const chartMovements = withBalance.filter((m) => new Date(m.created_at).getTime() >= windowStart);
+const hasChartData = movements.length > 0;
+
+const CHART_W = 700;
+const CHART_H = 160;
+const CHART_X_MARGIN = 36;
+const CHART_X_RIGHT_PAD = 20;
+const chartSeries: { t: number; balance: number }[] = [
+  { t: Math.max(windowStart, movements.length > 0 ? new Date(movements[0].created_at).getTime() - NINETY_DAYS_MS : windowStart), balance: balanceAtWindowStart },
+  ...chartMovements.map((m) => ({ t: new Date(m.created_at).getTime(), balance: m.balanceAfter })),
+  { t: Date.now(), balance: qty },
+];
+const chartMaxBalance = Math.max(...chartSeries.map((p) => p.balance), reorderLevel, 1);
+const chartMinT = windowStart;
+const chartMaxT = Date.now();
+const chartXOf = (t: number) => CHART_X_MARGIN + ((Math.max(t, chartMinT) - chartMinT) / (chartMaxT - chartMinT || 1)) * CHART_W;
+const chartYOf = (bal: number) => CHART_H - (bal / chartMaxBalance) * (CHART_H - 10);
+const chartLinePoints = chartSeries.map((p) => `${chartXOf(p.t).toFixed(1)},${chartYOf(p.balance).toFixed(1)}`).join(" ");
+const chartAreaPath = `M${chartXOf(chartSeries[0].t).toFixed(1)},${CHART_H} L${chartLinePoints.split(" ").join(" L")} L${chartXOf(chartSeries[chartSeries.length - 1].t).toFixed(1)},${CHART_H} Z`;
+const chartReorderY = chartYOf(reorderLevel);
+const chartViewboxW = CHART_W + CHART_X_MARGIN + CHART_X_RIGHT_PAD;
+---
+
+<BaseLayout title={product ? `${product.name} — Admin` : "Product not found — Admin"}>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Products" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Inventory" parent="Products" page={product ? product.name : "Not found"} />
+
+      <main id="main-content" class="pi__main">
+        {
+          product ? (
+            <Fragment>
+              <div class="pi__topbar">
+                <a href="/admin/products" class="pi__back">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                  Products
+                </a>
+                <div class="pi__header">
+                  <div class="pi__heading-col">
+                    <div class="pi__heading-row">
+                      <h1>{product.name} <span class="pi__sku">· {product.sku}</span></h1>
+                      <span class={`pi__pill pi__pill--${stockTone}`}>{STOCK_LABEL[stockTone]}</span>
+                      <span class="pi__pill pi__pill--muted">{categoryOf(product)?.name ?? "Uncategorised"}</span>
+                      {!product.is_active && <span class="pi__pill pi__pill--muted">Inactive</span>}
+                    </div>
+                    <span class="pi__meta">{qty} on hand</span>
+                  </div>
+                  <div class="pi__actions">
+                    <button type="button" class="pi__btn" disabled title="Not available yet">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" /></svg>
+                      Edit
+                    </button>
+                    {viewerRole === "super_admin" ? (
+                      <button type="button" class="pi__btn pi__btn--danger" data-action="delete-direct" data-product-id={product.id} data-product-name={product.name}>
+                        Delete
+                      </button>
+                    ) : (
+                      <button type="button" class="pi__btn pi__btn--danger" data-action="delete-request" data-product-id={product.id} data-product-name={product.name}>
+                        Request deletion
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p id="pi-action-message" class="pi__status-message" role="status" />
+              </div>
+
+              <div class="pi__body">
+                <div class="pi__left">
+                  {product.image_url ? (
+                    <img src={product.image_url} alt={product.name} class="pi__image" />
+                  ) : (
+                    <div role="img" aria-label="No product image uploaded" class="pi__image-placeholder">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9" /></svg>
+                      <span>No image</span>
+                    </div>
+                  )}
+
+                  <section class="pi__card">
+                    <span class="pi__card-title">Product</span>
+                    <p class="pi__description">{product.description || "No description on file."}</p>
+                    <div class="pi__kv-row"><span class="pi__kv-label">Added</span><span class="pi__kv-value">{formatDateLong(product.created_at)}</span></div>
+                    <div class="pi__kv-row"><span class="pi__kv-label">Updated</span><span class="pi__kv-value">{formatDateLong(product.updated_at)}</span></div>
+                  </section>
+
+                  <section class="pi__card">
+                    <span class="pi__card-title">Pricing</span>
+                    <div class="pi__kv-row"><span class="pi__kv-label">Cost</span><span class="pi__kv-value">{cost !== null ? formatCurrency(cost) : "—"}</span></div>
+                    <div class="pi__kv-row"><span class="pi__kv-label">Price</span><span class="pi__kv-value">{formatCurrency(price)}</span></div>
+                    <div class="pi__divider" />
+                    <div class="pi__kv-row">
+                      <span class="pi__kv-label">Margin</span>
+                      <span class="pi__margin-value">
+                        {marginPct !== null ? (
+                          <Fragment><span class="pi__margin-pct">{marginPct}%</span> <span class="pi__kv-label">· {formatCurrency(marginAbs!)}</span></Fragment>
+                        ) : (
+                          "—"
+                        )}
+                      </span>
+                    </div>
+                  </section>
+
+                  <section class="pi__card">
+                    <span class="pi__card-title">Supplier</span>
+                    {restockSupplier ? (
+                      <Fragment>
+                        <div class="pi__supplier-head">
+                          <span class="pi__avatar">
+                            {restockSupplier.name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase()).join("")}
+                          </span>
+                          <div class="pi__supplier-identity">
+                            <span class="pi__supplier-name">{restockSupplier.name}</span>
+                            <span class="pi__supplier-contact">{restockSupplier.contact_name ?? "—"}{restockSupplier.phone ? ` · ${restockSupplier.phone}` : ""}</span>
+                          </div>
+                        </div>
+                        <div class="pi__kv-row"><span class="pi__kv-label">Last restock</span><span class="pi__kv-value">{formatDateLong(lastRestock!.created_at)}</span></div>
+                      </Fragment>
+                    ) : (
+                      <p class="pi__empty-note">No restock history for this product.</p>
+                    )}
+                  </section>
+                </div>
+
+                <div class="pi__right">
+                  <div class="pi__right-grid">
+                    <section class="pi__card">
+                      <span class="pi__card-title">Stock</span>
+                      <div class="pi__kv-row"><span class="pi__kv-label">On hand</span><span class="pi__kv-value pi__kv-value--big">{qty}</span></div>
+                      <div class="pi__kv-row"><span class="pi__kv-label">Low stock level</span><span class="pi__kv-value">{reorderLevel}</span></div>
+                      <div class="pi__kv-row"><span class="pi__kv-label">Status</span><span class={`pi__pill pi__pill--${stockTone}`}>{STOCK_LABEL[stockTone]}</span></div>
+                    </section>
+
+                    <section class="pi__card">
+                      <div class="pi__chart-head">
+                        <span class="pi__card-title">Stock level · last 90 days</span>
+                        <span class="pi__chart-sub">Units on hand</span>
+                      </div>
+                      {hasChartData ? (
+                        <Fragment>
+                          <div class="pi__chart-legend">
+                            <span class="pi__legend-item"><span class="pi__legend-swatch pi__legend-swatch--line" /> On hand</span>
+                            <span class="pi__legend-item"><span class="pi__legend-swatch pi__legend-swatch--dash" /> Low stock level ({reorderLevel})</span>
+                          </div>
+                          <svg width="100%" viewBox={`0 0 ${chartViewboxW} ${CHART_H + 24}`} role="img" aria-label={`Stock of ${product.name} over the last 90 days, currently ${qty} on hand`} class="pi__chart-svg">
+                            <path d={chartAreaPath} class="pi__chart-area" />
+                            <line x1={CHART_X_MARGIN} y1={chartReorderY} x2={CHART_X_MARGIN + CHART_W} y2={chartReorderY} class="pi__chart-reorder-line" />
+                            <polyline points={chartLinePoints} class="pi__chart-line" />
+                            <circle cx={chartXOf(chartSeries[chartSeries.length - 1].t)} cy={chartYOf(qty)} r="3.5" class="pi__chart-dot" />
+                          </svg>
+                        </Fragment>
+                      ) : (
+                        <p class="pi__empty-note">No stock movement recorded for this product.</p>
+                      )}
+                    </section>
+                  </div>
+
+                  <section class="pi__panel-card">
+                    <div class="pi__panel-head">
+                      <span class="pi__card-title">Movements</span>
+                      <span class="pi__panel-sub">{movementRowsDisplay.length} movement{movementRowsDisplay.length === 1 ? "" : "s"}</span>
+                    </div>
+                    {movementRowsDisplay.length > 0 ? (
+                      <Fragment>
+                        <div class="pi__grid pi__grid-head">
+                          <span>Date</span><span>Type</span><span>Reference</span><span class="pi__col-right">Qty</span><span class="pi__col-right">Balance</span>
+                        </div>
+                        {movementRowsDisplay.map((m) => (
+                          <div class="pi__grid pi__row">
+                            <span class="pi__muted-cell">{m.date}</span>
+                            <span><span class={`pi__pill pi__pill--${m.tone}`}>{m.type}</span></span>
+                            {m.refHref ? (
+                              <a href={m.refHref} class="pi__ref-link">{m.refLabel}</a>
+                            ) : (
+                              <span class="pi__muted-cell pi__ellipsis">{m.refLabel}</span>
+                            )}
+                            <span class={`pi__col-right pi__qty ${m.qty >= 0 ? "pi__qty--pos" : "pi__qty--neg"}`}>{m.qty >= 0 ? `+${m.qty}` : m.qty}</span>
+                            <span class="pi__col-right pi__balance">{m.balance}</span>
+                          </div>
+                        ))}
+                      </Fragment>
+                    ) : (
+                      <p class="pi__empty-note">No movements recorded for this product.</p>
+                    )}
+                  </section>
+                </div>
+              </div>
+            </Fragment>
+          ) : (
+            <div class="pi__notfound">
+              <p class="pi__notfound-title">Product not found</p>
+              <p class="pi__notfound-body">This product may not exist.</p>
+              <a href="/admin/products" class="pi__btn">Back to Products</a>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-accent-soft: rgba(43, 80, 224, 0.1);
+    --sd-chart2: #d9731f;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-accent-soft: rgba(107, 138, 251, 0.16);
+    --sd-chart2: #e8894a;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .pi__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .pi__main {
+      padding: 16px;
+    }
+  }
+
+  .pi__topbar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pi__back {
+    align-self: flex-start;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .pi__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .pi__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .pi__heading-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .pi__heading-row h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .pi__sku {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+  }
+  .pi__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .pi__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .pi__pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .pi__pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .pi__pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .pi__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+  }
+  .pi__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .pi__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .pi__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .pi__pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .pi__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+
+  .pi__actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .pi__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .pi__btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .pi__btn--danger {
+    color: var(--sd-danger-fg);
+    border-color: var(--sd-danger-fg);
+  }
+  .pi__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .pi__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .pi__body {
+      flex-direction: row;
+    }
+  }
+  .pi__left {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1000px) {
+    .pi__left {
+      width: 320px;
+      flex-shrink: 0;
+    }
+  }
+  .pi__right {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .pi__image {
+    width: 100%;
+    height: 132px;
+    object-fit: cover;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-muted);
+  }
+  .pi__image-placeholder {
+    height: 132px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .pi__card {
+    box-sizing: border-box;
+    padding: 16px 18px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pi__card-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .pi__description {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--sd-fg2);
+  }
+  .pi__kv-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    font-size: 13px;
+  }
+  .pi__kv-label {
+    color: var(--sd-muted-fg);
+  }
+  .pi__kv-value {
+    font-weight: 500;
+    text-align: right;
+  }
+  .pi__kv-value--big {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .pi__divider {
+    height: 1px;
+    background: var(--sd-border);
+  }
+  .pi__margin-value {
+    text-align: right;
+  }
+  .pi__margin-pct {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .pi__supplier-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pi__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pi__supplier-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .pi__supplier-name {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .pi__supplier-contact {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .pi__empty-note {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .pi__right-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  @media (min-width: 700px) {
+    .pi__right-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .pi__chart-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pi__chart-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .pi__chart-legend {
+    display: flex;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .pi__legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pi__legend-swatch {
+    width: 12px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--sd-accent);
+  }
+  .pi__legend-swatch--dash {
+    background: none;
+    border-top: 2px dashed var(--sd-chart2);
+    height: 0;
+  }
+  .pi__chart-svg {
+    display: block;
+    max-width: 100%;
+  }
+  .pi__chart-area {
+    fill: var(--sd-accent);
+    fill-opacity: 0.1;
+    stroke: none;
+  }
+  .pi__chart-line {
+    fill: none;
+    stroke: var(--sd-accent);
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .pi__chart-reorder-line {
+    stroke: var(--sd-chart2);
+    stroke-width: 2;
+    stroke-dasharray: 5 5;
+  }
+  .pi__chart-dot {
+    fill: var(--sd-accent);
+  }
+
+  .pi__panel-card {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .pi__panel-head {
+    min-width: 560px;
+    padding: 14px 18px 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .pi__panel-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .pi__grid {
+    display: grid;
+    grid-template-columns: 70px 100px minmax(0, 1fr) 70px 90px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 18px;
+    min-width: 560px;
+  }
+  .pi__grid-head {
+    height: 36px;
+    margin-top: 8px;
+    background: var(--sd-shell);
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .pi__row {
+    height: 44px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+  }
+  .pi__col-right {
+    text-align: right;
+  }
+  .pi__muted-cell {
+    color: var(--sd-muted-fg);
+  }
+  .pi__ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pi__ref-link {
+    font-weight: 500;
+    color: var(--sd-accent);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pi__qty {
+    font-weight: 500;
+  }
+  .pi__qty--pos {
+    color: var(--sd-success-fg);
+  }
+  .pi__qty--neg {
+    color: var(--sd-danger-fg);
+  }
+  .pi__balance {
+    font-weight: 500;
+  }
+
+  .pi__notfound {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .pi__notfound-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .pi__notfound-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const messageEl = document.getElementById("pi-action-message");
+  document.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const productId = button.dataset.productId!;
+      const productName = button.dataset.productName ?? "this product";
+      const action = button.dataset.action;
+      if (messageEl) messageEl.textContent = "";
+
+      if (action === "delete-direct") {
+        if (!window.confirm(`Delete "${productName}"? This cannot be undone.`)) return;
+        button.disabled = true;
+        const { error } = await actions.deleteProduct({ productId });
+        if (error) {
+          button.disabled = false;
+          if (messageEl) messageEl.textContent = error.message;
+          return;
+        }
+        window.location.href = "/admin/products";
+        return;
+      }
+
+      if (action === "delete-request") {
+        const reason = window.prompt(`Reason for requesting deletion of "${productName}":`) ?? "";
+        if (!reason.trim()) return;
+        button.disabled = true;
+        const { error } = await actions.requestApproval({
+          actionType: "delete_product",
+          targetTable: "products",
+          targetId: productId,
+          reason,
+        });
+        if (error) {
+          button.disabled = false;
+          if (messageEl) messageEl.textContent = error.message;
+          return;
+        }
+        if (messageEl) messageEl.textContent = "Deletion request submitted.";
+        button.textContent = "Requested";
+        button.disabled = true;
+      }
+    });
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

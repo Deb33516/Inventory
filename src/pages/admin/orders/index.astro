@@ -1,0 +1,724 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Sales Orders
+// screen. No distinct "AdminOrders.dc.html" artboard exists in the design
+// export (unlike AdminCustomers.dc.html, which is its own top-level
+// artboard) — the ground truth here is project/PageOrders.dc.html's own
+// `role="admin"` branch (isAdmin=true), composed into the same Admin shell
+// AdminCustomers.dc.html already established: NavSidebar role="admin"
+// (unchanged) + the plain shared NavTop.astro (NOT AdminNavTop.astro,
+// same precedent as Admin Customers — only Admin.dc.html/Dashboard has its
+// own inline header) + PageOrders's isAdmin content. project/SalesOrders.dc.html
+// (NavSidebar role="sales" + PageOrders role="sales") is the sibling
+// composition already built as /sales/orders/index.astro (untouched this
+// turn) — that page already reuses PageOrders' own isAdmin-framed copy for
+// its title/subtitle/stats, since sales_staff and admin share the exact
+// same unscoped orders_select_staff/order_items_select_staff/
+// payments_select_staff RLS visibility (see migrations/0004). This screen
+// is therefore built from the same real orders/order_items/payments query
+// shape as /sales/orders, just rendered inside the Admin shell with the
+// design's genuine isAdmin-only extras (Placed-by column, admin stat
+// slots) reproduced for real where real data supports them.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: order id (truncated UUID), customer name (profiles, two-query
+//    pattern — orders has two FKs to profiles so a single embed would be
+//    ambiguous), real date, real item count (order_items(count)), real
+//    total, real payment status (payments table, one row per order),
+//    real fulfilment status across the full real 7-value order_status enum
+//    (pending/confirmed/processing/shipped/delivered/cancelled/refunded —
+//    not just the design's 6 example rows, same precedent already used on
+//    /sales/orders), real tab counts (store-wide, unfiltered by search).
+//  - "Sales rep" column -> relabeled "Placed by": the design's own isAdmin
+//    branch shows a rep initials/avatar + name, implying per-order sales-
+//    rep ownership. orders.placed_by is real, but per this project's own
+//    documented warning ("orders.placed_by is an audit/process field. Do
+//    not label it as salesperson ownership unless the existing data model
+//    genuinely supports that meaning") and place_order()'s actual behavior
+//    (placed_by = auth.uid() of WHOEVER called place_order — a customer's
+//    own self-checkout sets placed_by = that same customer, not a rep),
+//    showing it as "Sales rep" would misrepresent self-checkout orders as
+//    staff-owned. Relabeled "Placed by" and shows the real, honest value:
+//    "Customer" when placed_by = the order's own customer_id (self-
+//    checkout), otherwise the real staff profile's name. No value here is
+//    invented — same real column Admin Dashboard's "Sales by team member"
+//    panel already reads, just surfaced per-row instead of aggregated.
+//  - Stat strip — reproduced the design's actual isAdmin-branch 4 slots
+//    (not the sales-branch slots /sales/orders substituted in for a
+//    non-admin role), all made real: "Orders · {month}" (real count + real
+//    compact ₹ booked, cancelled excluded, same convention as
+//    dashboard_revenue_trend), "Ready to ship" (real count of orders
+//    currently status='processing' — our real pre-shipment stage, note
+//    "in processing"), "Unpaid" (real ₹ sum + count of orders whose
+//    payment status is pending/failed — "partly paid" isn't a real
+//    payment_status value, same as /sales/orders), "Avg. order value"
+//    (real this-month average, with a REAL month-over-month % computed the
+//    same way as Admin Dashboard's revenue MoM% — from real order totals
+//    both months, honest "No orders in {prevMonth}" fallback when the
+//    prior month has zero orders to compare against, never a fabricated
+//    percentage).
+//  - "Export" button: admin-only in the design's own isAdmin gate, but no
+//    real export capability exists anywhere in this app — omitted, not
+//    invented.
+//  - "New order" button: now links to the real /admin/orders/new route
+//    (Admin New Order, built in a later turn) — previously omitted while
+//    the only real order-creation route was /sales/orders/new (wrong,
+//    Sales-badged shell).
+//  - Order id / row "View": now links to the real /admin/orders/[id]
+//    route (Admin Order Detail, built in a later turn) — previously
+//    rendered as plain non-interactive text while that screen didn't
+//    exist yet, per the same wrong-shell reasoning still documented on
+//    that page's own header comment. The design's trailing "..." row-
+//    actions column remains omitted (no real per-row bulk/quick action
+//    exists outside the detail screen itself).
+//  - Row select-all checkboxes + bulk "Mark as shipped": admin-only in the
+//    design, but no bulk-capable backend action exists — update_order_status()
+//    only ever operates on one order id, and wiring a new bulk-selection UI
+//    that calls it in a loop would be inventing new functionality, not
+//    reusing existing capability. Omitted per your explicit "do not invent
+//    bulk status changes unless the backend already supports them" rule.
+//  - "Delivery" column (due dates like "Due 2 Oct"): no delivery-date/ETA
+//    field exists anywhere in the schema — omitted, same as /sales/orders.
+//  - "Payment"/"Date"/"Sales rep" dashed facet buttons and the grid/list
+//    "View" toggle: no filter-picker or view-mode capability exists
+//    anywhere in this app — omitted, same as /sales/orders.
+//  - Pagination footer ("Rows per page 9"/"Page 1 of 24"): no pagination
+//    exists on this list today — replaced with a real "{N} orders" count
+//    only, same as /sales/orders.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { OrderStatus } from "../../../lib/types";
+
+const url = Astro.url;
+const status = url.searchParams.get("status") ?? "";
+const search = url.searchParams.get("search")?.trim() ?? "";
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+// --- Real, unfiltered-by-status order set (status/search applied in JS so
+// the same fetch can also produce real store-wide tab counts) ---
+const { data: orderRows } = await Astro.locals.supabase
+  .from("orders")
+  .select("id, customer_id, placed_by, status, total, created_at, order_items(count), payments(status)")
+  .order("created_at", { ascending: false });
+
+const orders = orderRows ?? [];
+
+const profileIds = [...new Set(orders.flatMap((o) => [o.customer_id, o.placed_by].filter((id): id is string => Boolean(id))))];
+const { data: profiles } =
+  profileIds.length > 0
+    ? await Astro.locals.supabase.from("profiles").select("id, full_name").in("id", profileIds)
+    : { data: [] };
+const nameById = new Map((profiles ?? []).map((p) => [p.id, p.full_name ?? "Unnamed"]));
+
+function placedByLabel(o: { customer_id: string; placed_by: string | null }): string {
+  if (!o.placed_by) return "—";
+  if (o.placed_by === o.customer_id) return "Customer";
+  return nameById.get(o.placed_by) ?? "—";
+}
+
+type PaymentEmbed = { status: string }[] | { status: string } | null;
+function paymentStatusOf(row: { payments: PaymentEmbed }): string | null {
+  const p = row.payments as unknown as { status: string }[] | null;
+  return p?.[0]?.status ?? null;
+}
+
+const ALL_STATUSES: OrderStatus[] = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"];
+const statusCounts = new Map<string, number>(ALL_STATUSES.map((s) => [s, 0]));
+for (const o of orders) statusCounts.set(o.status, (statusCounts.get(o.status) ?? 0) + 1);
+
+const filtered = orders.filter((o) => {
+  if (status && o.status !== status) return false;
+  if (!search) return true;
+  const needle = search.toLowerCase();
+  return (nameById.get(o.customer_id) ?? "").toLowerCase().includes(needle) || o.id.toLowerCase().startsWith(needle);
+});
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
+};
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/admin/orders?${qs}` : "/admin/orders";
+}
+
+const TABS: { key: string; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "pending", label: "Pending" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "processing", label: "Processing" },
+  { key: "shipped", label: "Shipped" },
+  { key: "delivered", label: "Delivered" },
+  { key: "cancelled", label: "Cancelled" },
+  { key: "refunded", label: "Refunded" },
+];
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+const PAY_TONE: Record<string, "success" | "warn" | "danger" | "muted"> = {
+  paid: "success",
+  pending: "warn",
+  failed: "danger",
+  refunded: "muted",
+};
+const PAY_LABEL: Record<string, string> = {
+  paid: "Paid",
+  pending: "Unpaid",
+  failed: "Failed",
+  refunded: "Refunded",
+};
+
+// --- Real store-wide stat strip (independent of the current search/status filter) ---
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const nowIstShifted = new Date(Date.now() + IST_OFFSET_MS);
+const istYear = nowIstShifted.getUTCFullYear();
+const istMonth = nowIstShifted.getUTCMonth();
+const thisMonthFromUtc = new Date(Date.UTC(istYear, istMonth, 1) - IST_OFFSET_MS);
+const nextMonthFromUtc = new Date(Date.UTC(istYear, istMonth + 1, 1) - IST_OFFSET_MS);
+const prevMonthFromUtc = new Date(Date.UTC(istYear, istMonth - 1, 1) - IST_OFFSET_MS);
+const monthLabel = new Date(Date.UTC(istYear, istMonth, 1)).toLocaleDateString(undefined, { month: "long", timeZone: "UTC" });
+const prevMonthLabel = new Date(Date.UTC(istYear, istMonth - 1, 1)).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" });
+
+const ordersThisMonth = orders.filter((o) => {
+  const t = new Date(o.created_at);
+  return t >= thisMonthFromUtc && t < nextMonthFromUtc;
+});
+const ordersPrevMonth = orders.filter((o) => {
+  const t = new Date(o.created_at);
+  return t >= prevMonthFromUtc && t < thisMonthFromUtc;
+});
+const bookedThisMonth = ordersThisMonth.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + o.total, 0);
+const bookedPrevMonth = ordersPrevMonth.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + o.total, 0);
+
+const readyToShipCount = statusCounts.get("processing") ?? 0;
+
+const unpaidOrders = orders.filter((o) => {
+  const ps = paymentStatusOf(o);
+  return ps === "pending" || ps === "failed";
+});
+const unpaidTotal = unpaidOrders.reduce((sum, o) => sum + o.total, 0);
+
+const avgOrderValueThisMonth = ordersThisMonth.length > 0 ? bookedThisMonth / ordersThisMonth.length : 0;
+const avgOrderValuePrevMonth = ordersPrevMonth.length > 0 ? bookedPrevMonth / ordersPrevMonth.length : 0;
+let avgOrderValueNote: string;
+if (ordersPrevMonth.length === 0) {
+  avgOrderValueNote = `No orders in ${prevMonthLabel}`;
+} else {
+  const pct = ((avgOrderValueThisMonth - avgOrderValuePrevMonth) / avgOrderValuePrevMonth) * 100;
+  avgOrderValueNote = `${pct >= 0 ? "+" : ""}${pct.toFixed(0)}% vs ${prevMonthLabel}`;
+}
+
+const stats = [
+  { label: `Orders · ${monthLabel}`, value: String(ordersThisMonth.length), note: `${formatCompact(bookedThisMonth)} booked` },
+  { label: "Ready to ship", value: String(readyToShipCount), note: "in processing" },
+  { label: "Unpaid", value: formatCompact(unpaidTotal), note: `${unpaidOrders.length} order${unpaidOrders.length === 1 ? "" : "s"}` },
+  { label: "Avg. order value", value: ordersThisMonth.length > 0 ? formatCompact(avgOrderValueThisMonth) : "—", note: avgOrderValueNote },
+];
+---
+
+<BaseLayout title="Sales orders — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Sales orders" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Sales" page="Sales orders" searchAction="/admin/orders" searchName="search" searchValue={search} searchPlaceholder="Filter by order no. or customer…" />
+
+      <main id="main-content" class="ao__main">
+        <div class="ao__header">
+          <div class="ao__heading-col">
+            <h1>Sales orders</h1>
+            <span class="ao__meta">Every customer order · {orders.length} total</span>
+          </div>
+          <a href="/admin/orders/new" class="ao__new-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            New order
+          </a>
+        </div>
+
+        <div class="ao__stats">
+          {stats.map((s) => (
+            <div class="ao__stat-card">
+              <span class="ao__stat-label">{s.label}</span>
+              <div class="ao__stat-body">
+                <span class="ao__stat-value">{s.value}</span>
+                <span class="ao__stat-note">{s.note}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div class="ao__toolbar">
+          <div role="tablist" aria-label="Fulfilment status" class="ao__tabs">
+            {TABS.map((t) => (
+              <a href={buildUrl({ status: t.key || undefined })} role="tab" aria-selected={status === t.key} class={status === t.key ? "is-active" : ""}>
+                {t.label} <span class="ao__tab-count">{t.key ? (statusCounts.get(t.key) ?? 0) : orders.length}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="ao__panel">
+              <div class="ao__grid ao__grid-head">
+                <span>Order</span>
+                <span>Customer</span>
+                <span>Date</span>
+                <span class="ao__col-right">Items</span>
+                <span class="ao__col-right">Total</span>
+                <span>Payment</span>
+                <span>Fulfilment</span>
+                <span>Placed by</span>
+              </div>
+              {filtered.map((o) => (
+                <div class="ao__grid ao__row">
+                  <a href={`/admin/orders/${o.id}`} class="ao__id-link">{o.id.slice(0, 8)}</a>
+                  <span class="ao__ellipsis">{nameById.get(o.customer_id) ?? "—"}</span>
+                  <span class="ao__muted-cell">{new Date(o.created_at).toLocaleDateString()}</span>
+                  <span class="ao__col-right ao__muted-cell">{o.order_items?.[0]?.count ?? 0}</span>
+                  <span class="ao__col-right ao__total">{formatCurrency(o.total)}</span>
+                  <span>
+                    {(() => {
+                      const ps = paymentStatusOf(o) ?? "pending";
+                      return <span class={`ao__pill ao__pill--${PAY_TONE[ps] ?? "muted"}`}>{PAY_LABEL[ps] ?? ps}</span>;
+                    })()}
+                  </span>
+                  <span>
+                    <span class={`ao__pill ao__pill--${STATUS_TONE[o.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[o.status as OrderStatus] ?? o.status}</span>
+                  </span>
+                  <span class="ao__muted-cell ao__ellipsis">{placedByLabel(o)}</span>
+                </div>
+              ))}
+              <div class="ao__panel-footer">{filtered.length} order{filtered.length === 1 ? "" : "s"}</div>
+            </div>
+          ) : (
+            <div class="ao__empty">
+              <p class="ao__empty-title">No orders found</p>
+              <p class="ao__empty-body">Try a different search or status.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .ao__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .ao__main {
+      padding: 16px;
+    }
+  }
+
+  .ao__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .ao__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ao__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .ao__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .ao__new-btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ao__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .ao__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .ao__stats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .ao__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ao__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .ao__stat-body {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .ao__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .ao__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .ao__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .ao__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    max-width: 100%;
+  }
+  .ao__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .ao__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .ao__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .ao__tabs a.is-active .ao__tab-count {
+    color: var(--sd-muted-fg);
+  }
+
+  .ao__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .ao__grid {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr) 92px 56px 104px 92px 100px minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 880px;
+  }
+  .ao__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .ao__row {
+    height: 50px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .ao__col-right {
+    text-align: right;
+  }
+  .ao__id-link {
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: underline;
+    text-decoration-color: var(--sd-input);
+    text-underline-offset: 3px;
+  }
+  .ao__ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ao__muted-cell {
+    color: var(--sd-fg2);
+  }
+  .ao__total {
+    font-weight: 500;
+  }
+  .ao__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .ao__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .ao__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .ao__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .ao__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .ao__pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .ao__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .ao__panel-footer {
+    min-width: 880px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .ao__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .ao__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .ao__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

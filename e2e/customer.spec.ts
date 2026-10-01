@@ -75,18 +75,54 @@ test("signed-in customer sees the customer header everywhere, not the signed-out
 }) => {
   await loginAsCustomer(page);
 
-  for (const path of ["/", "/products", "/account"]) {
-    await page.goto(path);
-    const header = page.locator("header");
-    await expect(header.getByRole("link", { name: "Cart" })).toBeVisible();
-    // "My account" is now an avatar link (initials, no literal "My
-    // account" text) matching the Claude Design canvas's NavCustomer.
-    await expect(header.getByRole("link", { name: "My profile" })).toBeVisible();
-    await expect(header.getByRole("button", { name: "Sign out" })).toBeVisible();
-    await expect(header.getByRole("link", { name: "Sign in" })).toHaveCount(0);
-    await expect(header.getByRole("link", { name: "Create an account" })).toHaveCount(0);
-    await expect(header.getByRole("link", { name: "Go to dashboard" })).toHaveCount(0);
-  }
+  // "/" excluded here: the Claude Design canvas's Landing artboard is a
+  // distinct pre-auth marketing nav (Log in/Sign Up only, no Cart/avatar/
+  // Sign out) — it never carried the storefront's PublicHeader, even
+  // before this pass, and the design itself doesn't have an authenticated
+  // state for this screen. A signed-in visitor still gets a real "My
+  // account" link there instead of "Log in"/"Sign Up" (see the landing
+  // page's own dedicated test below).
+  //
+  // "/account" also excluded from this specific loop: it now renders the
+  // Claude Design canvas's own NavCustomer (project/NavCustomer.dc.html),
+  // not PublicHeader — same real Cart/My profile links, but genuinely no
+  // Sign out control there (the design has none; that action lives on
+  // /account/profile, same as it already did before this pass). Covered
+  // by its own test below instead of this shared PublicHeader assertion.
+  await page.goto("/products");
+  const header = page.locator("header");
+  await expect(header.getByRole("link", { name: "Cart" })).toBeVisible();
+  // "My account" is now an avatar link (initials, no literal "My
+  // account" text) matching the Claude Design canvas's NavCustomer.
+  await expect(header.getByRole("link", { name: "My profile" })).toBeVisible();
+  await expect(header.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+  await expect(header.getByRole("link", { name: "Create an account" })).toHaveCount(0);
+  await expect(header.getByRole("link", { name: "Go to dashboard" })).toHaveCount(0);
+});
+
+test("signed-in customer sees a real 'My account' link on the landing page's own nav", async ({ page }) => {
+  await loginAsCustomer(page);
+  await page.goto("/");
+  const header = page.locator("header");
+  await expect(header.getByRole("link", { name: "My account" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "Log in" })).toHaveCount(0);
+  await expect(header.getByRole("link", { name: "Sign Up" })).toHaveCount(0);
+});
+
+test("Customer Portal (/account) shows the real NavCustomer chrome — Home/Shop/My orders/Support tabs, Cart, My profile", async ({
+  page,
+}) => {
+  await loginAsCustomer(page);
+  await page.goto("/account");
+  const header = page.locator("header");
+  await expect(header.getByRole("link", { name: "Home", exact: true })).toBeVisible();
+  await expect(header.getByRole("link", { name: "Shop", exact: true })).toBeVisible();
+  await expect(header.getByRole("link", { name: "My orders" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "Support", exact: true })).toBeVisible();
+  await expect(header.getByRole("link", { name: "Cart" })).toBeVisible();
+  await expect(header.getByRole("link", { name: "My profile" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Welcome back/ })).toBeVisible();
 });
 
 test("cart badge updates immediately after Add to cart and persists across pages", async ({ page }) => {

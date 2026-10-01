@@ -1,279 +1,1092 @@
 ---
+// Literal recreation of the Claude Design canvas's Admin Dashboard screen
+// (project/Admin.dc.html / AdminDark.dc.html -> NavSidebar role="admin" +
+// this artboard's own inline top bar, extracted as AdminNavTop.astro) —
+// this REPLACES the old AppShell/DESIGN.md admin dashboard that used to
+// live at this same route (/admin, unchanged). Own dedicated shell, not
+// Sales'/Inventory Staff's NavTop — the Admin artboard's own header
+// (search width, breadcrumb, +New/Export placement) genuinely differs, per
+// your explicit "do not assume the Admin shell should be identical"
+// instruction; only NavSidebar.astro is shared (role="admin" branch added
+// there, see that file's own header comment), since the design's own
+// NavSidebar.dc.html source confirms Admin uses the exact same sidebar
+// component, just a different role config.
+//
+// PERMISSIONS: unchanged — /admin is already gated to admin/super_admin by
+// src/middleware.ts (ROLE_GATED_PREFIXES, from lib/roles.ts), not touched
+// this turn. admin and super_admin share this identical dashboard (see
+// ROLE_DASHBOARD) — no new role, no widened access for any other role.
+//
+// NO-FABRICATION DECISIONS — every KPI/chart/table value below is real,
+// computed from existing tables/views/RPCs already used elsewhere in this
+// project (dashboard_revenue_trend, inventory_value_summary, orders,
+// support_tickets, inventory, products, profiles — zero new RPCs/views/
+// migrations). Where the design shows a number/concept this schema
+// genuinely has no equivalent for, it is either honestly omitted or
+// relabeled to what it actually is — never copied from the demo, never
+// silently reinterpreted:
+//  - "Revenue this month" / "▲ 8.2% vs Aug" / sparkline: real IST
+//    calendar-month-to-date revenue (dashboard_revenue_trend RPC, same
+//    real function every other dashboard uses — excludes cancelled orders,
+//    same as everywhere else). The month-over-month % is real when last
+//    month had any revenue to compare against; the live data right now
+//    has zero orders in August, so an honest "No orders last month" is
+//    shown instead of a divide-by-zero/fabricated percentage. The
+//    sparkline is a real inline SVG polyline over this month's actual
+//    per-day revenue points (only rendered once ≥2 real days of data
+//    exist — a single point can't form a line, and a flat placeholder
+//    line would misrepresent "no trend yet" as "flat revenue").
+//  - "Open orders" / "46 orders" / "12 to ship this week": real count +
+//    real total value of orders in pending/confirmed/processing/shipped
+//    (i.e. not yet delivered, and not cancelled/refunded) — labeled
+//    honestly as exactly that set, not "to ship". "12 to ship this week"
+//    has no real equivalent (no expected-ship-date field exists anywhere
+//    in this schema) — replaced with a real per-status breakdown instead
+//    (e.g. "3 pending · 1 processing"), which is genuinely more
+//    informative and, unlike the demo line, entirely real.
+//  - "Inventory value" / "3,418 SKUs · 4 categories": real
+//    inventory_value_summary.inventory_value (retail price × on-hand,
+//    active products only — same view Phase 8 already built), real active
+//    product count, real category count.
+//  - "Low-stock items" / "17" / "4 out of stock · 3 restocks due": real
+//    count of active products with quantity_on_hand <= reorder_level
+//    (inclusive of fully out-of-stock — a broader definition than the
+//    "low" KPI on Warehouse Tasks/Stock Adjustments, which excludes
+//    out-of-stock; disclosed via the card's own sublabel so the two
+//    numbers are never confused), real out-of-stock sub-count. "3
+//    restocks due" has no real equivalent (no expected-restock-date field
+//    exists) — omitted rather than invented.
+//  - "Sales vs target" chart: renamed "Revenue trend" — the dashed
+//    "Target" line is fabricated (no sales-target/quota entity exists
+//    anywhere in this schema) and is not reproduced at all, not even as a
+//    placeholder. The solid line/area is real: actual monthly revenue for
+//    the trailing 12 real IST calendar months (zero-filled for months
+//    with genuinely no orders — a real, true zero, not an invented one),
+//    same dashboard_revenue_trend RPC bucketed by month here instead of
+//    by day.
+//  - "Support queue": real support_tickets counts by status
+//    (support_tickets_select_admin already grants admin unscoped read —
+//    same RLS every other admin query on this table relies on).
+//    "Resolved this week" is relabeled "Resolved in the last 7 days" (real
+//    resolved/closed count with updated_at in that real window, same 7d
+//    IST convention as every other dashboard) rather than claiming a
+//    literal calendar-week boundary this component doesn't actually
+//    compute. The "latest ticket" line shows the real most-recently-
+//    updated ticket's real subject (never a fabricated "TK-####" id, same
+//    reasoning already established on Inventory Staff's own ticket
+//    screens) and its real assignee's real name — admin genuinely can see
+//    any profile (profiles_select_all_for_admin), unlike inventory_staff —
+//    or an honest "Not yet assigned" when assigned_to is null (which it
+//    genuinely is for the current real latest ticket). No link to an
+//    "Open queue"/ticket detail — Admin Support Tickets/Ticket Detail
+//    aren't built this turn, and linking to a route that doesn't exist
+//    yet would be worse than no link.
+//  - "Stock alerts" table: same real low/out-of-stock product set as the
+//    KPI card above, SKU/name/on-hand/reorder-at/status all real.
+//    "Location" column: no warehouse/bin/location field exists anywhere in
+//    this schema (same as every other screen's own honest "—" for this
+//    exact gap) — column kept (matches the design's grid shape), value
+//    honestly "—". "View all"/"Request restock" links omitted — their
+//    real destinations (Admin Stock) don't exist yet this turn.
+//  - "Sales team vs target": renamed "Sales by team member" — no
+//    sales-target/quota entity exists (same reasoning as the chart above).
+//    Real data instead: every real sales_staff profile (admin can see all
+//    profiles) joined against orders.placed_by (a real column — the
+//    sales_staff who placed that order via Sales' own New Order flow),
+//    summed to a real per-rep total. Bars are scaled relative to the
+//    top-performing real rep this period, not to any target — no
+//    percentage-of-target label, since there is no target.
+//  - Header "+ New" button, search ("⌘K"), notifications unread dot: see
+//    AdminNavTop.astro's own header comment — all either omitted or
+//    rendered honestly disabled there.
+//  - "Export" button: no export/report-generation capability exists
+//    anywhere in this project — omitted.
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import EmptyState from "../../components/catalog/EmptyState.astro";
-import KpiCard from "../../components/dashboard/KpiCard.astro";
-import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import DateRangeFilter from "../../components/dashboard/DateRangeFilter.astro";
-import { resolveDashboardRange } from "../../lib/dashboardRange";
-import AppShell from "../../components/layout/AppShell.astro";
-import Card from "../../components/ui/Card.astro";
-import { CHART_COLORS } from "../../lib/chartTheme";
+import NavSidebar from "../../components/staff/NavSidebar.astro";
+import AdminNavTop from "../../components/staff/AdminNavTop.astro";
+import { resolveDashboardRange, DASHBOARD_RANGE_PRESETS, buildDashboardRangeUrl } from "../../lib/dashboardRange";
+
+// dashboard_revenue_trend's real return shape (day/revenue/order_count) —
+// not present in the generated Supabase types (RPC return rows come back
+// untyped), so annotated explicitly here to satisfy strict mode.
+interface RevenueTrendRow {
+  day: string;
+  revenue: number;
+  order_count: number;
+}
 
 const url = Astro.url;
 const range = resolveDashboardRange(url.searchParams.get("range"));
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
 
-const isSuperAdmin = Astro.locals.role === "super_admin";
+// Same IST-anchoring technique dashboardRange.ts already uses (see that
+// file's own header comment), generalized to calendar-month boundaries —
+// needed here because dashboardRange.ts only exports fixed day-count/YTD
+// presets, not month boundaries.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+function istMonthBoundsUtc(year: number, month0: number): { from: string; to: string } {
+  const fromUtcMs = Date.UTC(year, month0, 1) - IST_OFFSET_MS;
+  const toUtcMs = Date.UTC(year, month0 + 1, 1) - IST_OFFSET_MS;
+  return { from: new Date(fromUtcMs).toISOString(), to: new Date(toUtcMs).toISOString() };
+}
+const nowIst = new Date(Date.now() + IST_OFFSET_MS);
+const curYear = nowIst.getUTCFullYear();
+const curMonth0 = nowIst.getUTCMonth();
+const thisMonth = istMonthBoundsUtc(curYear, curMonth0);
+const prevMonthRef = new Date(Date.UTC(curYear, curMonth0 - 1, 1));
+const prevMonth = istMonthBoundsUtc(prevMonthRef.getUTCFullYear(), prevMonthRef.getUTCMonth());
+const twelveMoStart = istMonthBoundsUtc(curYear, curMonth0 - 11).from;
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const OPEN_STATUSES = ["pending", "confirmed", "processing", "shipped"] as const;
+const LOW_STOCK_WINDOW = resolveDashboardRange("7d");
 
 const [
-  { data: revenueTrend },
-  { data: ordersByStatus },
-  { data: topProducts },
-  { data: movementSummary },
-  { data: customerGrowth },
+  { data: mtdRevenueRows },
+  { data: prevMonthRevenueRows },
+  { data: trend12moRows },
   { data: inventoryValueRow },
-  { data: customerMetricsRows },
   { count: activeProductCount },
+  { count: categoryCount },
   { data: inventoryRows },
+  { data: openOrderRows },
+  { data: salesStaffRows },
+  { data: ticketRows },
 ] = await Promise.all([
-  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_orders_by_status", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_top_products", { p_from: range.from, p_to: range.to, p_limit: 5 }),
-  Astro.locals.supabase.rpc("dashboard_inventory_movement_summary", { p_from: range.from, p_to: range.to }),
-  Astro.locals.supabase.rpc("dashboard_customer_growth", { p_from: range.from, p_to: range.to }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: thisMonth.from, p_to: thisMonth.to }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: prevMonth.from, p_to: prevMonth.to }),
+  Astro.locals.supabase.rpc("dashboard_revenue_trend", { p_from: twelveMoStart, p_to: thisMonth.to }),
   Astro.locals.supabase.from("inventory_value_summary").select("inventory_value").maybeSingle(),
-  Astro.locals.supabase.from("customer_metrics").select("order_count"),
   Astro.locals.supabase.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
+  Astro.locals.supabase.from("categories").select("id", { count: "exact", head: true }),
   Astro.locals.supabase
-    .from("inventory")
-    .select("quantity_on_hand, reorder_level, products!inner(is_active)")
-    .eq("products.is_active", true),
+    .from("products")
+    .select("sku, name, inventory(quantity_on_hand, reorder_level)")
+    .eq("is_active", true),
+  Astro.locals.supabase.from("orders").select("status, total").in("status", OPEN_STATUSES as unknown as string[]),
+  Astro.locals.supabase.from("profiles").select("id, full_name").eq("role", "sales_staff"),
+  Astro.locals.supabase.from("support_tickets").select("id, subject, status, assigned_to, updated_at").order("updated_at", { ascending: false }),
 ]);
 
-let pendingApprovalCount = 0;
-let auditLogCount = 0;
-if (isSuperAdmin) {
-  const [{ count: approvals }, { count: audits }] = await Promise.all([
-    Astro.locals.supabase.from("approval_requests").select("id", { count: "exact", head: true }),
-    Astro.locals.supabase.from("audit_logs").select("id", { count: "exact", head: true }),
-  ]);
-  pendingApprovalCount = approvals ?? 0;
-  auditLogCount = audits ?? 0;
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+
+// --- Revenue this month + MoM ---
+const mtdRows = (mtdRevenueRows ?? []) as RevenueTrendRow[];
+const prevMonthRows = (prevMonthRevenueRows ?? []) as RevenueTrendRow[];
+const mtdRevenue = mtdRows.reduce((sum: number, r: RevenueTrendRow) => sum + Number(r.revenue), 0);
+const prevMonthRevenue = prevMonthRows.reduce((sum: number, r: RevenueTrendRow) => sum + Number(r.revenue), 0);
+const momChangePct = prevMonthRevenue > 0 ? ((mtdRevenue - prevMonthRevenue) / prevMonthRevenue) * 100 : null;
+const prevMonthLabel = MONTH_LABELS[prevMonthRef.getUTCMonth()];
+
+// Real per-day sparkline points (only days with real revenue — the RPC
+// doesn't zero-fill within a month, same as everywhere else it's used).
+const sparkPoints = mtdRows.map((r: RevenueTrendRow) => Number(r.revenue));
+const sparkMax = Math.max(...sparkPoints, 1);
+const sparkSvgPoints = sparkPoints
+  .map((v: number, i: number) => {
+    const x = sparkPoints.length > 1 ? (i / (sparkPoints.length - 1)) * 96 : 0;
+    const y = 34 - (v / sparkMax) * 32;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  })
+  .join(" ");
+
+// --- Open orders ---
+const openOrders = openOrderRows ?? [];
+const openOrdersValue = openOrders.reduce((sum, r) => sum + Number(r.total), 0);
+const openByStatus = new Map<string, number>();
+for (const r of openOrders) openByStatus.set(r.status, (openByStatus.get(r.status) ?? 0) + 1);
+const OPEN_STATUS_LABEL: Record<string, string> = { pending: "pending", confirmed: "confirmed", processing: "processing", shipped: "shipped" };
+const openBreakdown = OPEN_STATUSES.filter((s) => (openByStatus.get(s) ?? 0) > 0)
+  .map((s) => `${openByStatus.get(s)} ${OPEN_STATUS_LABEL[s]}`)
+  .join(" · ");
+
+// --- Inventory value + low stock ---
+const inventoryValue = Number(inventoryValueRow?.inventory_value ?? 0);
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+const stockRows = (inventoryRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  return { sku: p.sku as string, name: p.name as string, qty: inv?.quantity_on_hand ?? 0, reorder: inv?.reorder_level ?? 0 };
+});
+const alertRows = stockRows
+  .filter((r) => r.qty <= r.reorder)
+  .sort((a, b) => a.qty - b.qty)
+  .slice(0, 8);
+const outOfStockCount = stockRows.filter((r) => r.qty === 0).length;
+const lowStockCount = stockRows.filter((r) => r.qty <= r.reorder).length;
+
+// --- Revenue trend, 12 real calendar months (zero-filled — a real zero
+// for a month with genuinely no orders, not an invented number) ---
+const revenueByMonth = new Map<string, number>();
+for (const r of trend12moRows ?? []) {
+  const ym = String(r.day).slice(0, 7);
+  revenueByMonth.set(ym, (revenueByMonth.get(ym) ?? 0) + Number(r.revenue));
+}
+const trendMonths = Array.from({ length: 12 }, (_, i) => {
+  const d = new Date(Date.UTC(curYear, curMonth0 - 11 + i, 1));
+  const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  return { label: MONTH_LABELS[d.getUTCMonth()], value: revenueByMonth.get(ym) ?? 0 };
+});
+const trendMax = Math.max(...trendMonths.map((m) => m.value), 1);
+const CHART_W = 700;
+const CHART_H = 190;
+const CHART_X_MARGIN = 40;
+// Extra right-side room so the last month's center-anchored label doesn't
+// clip against the viewBox edge (the last data point sits exactly at
+// CHART_X_MARGIN + CHART_W).
+const CHART_X_RIGHT_PAD = 24;
+// x/y already include the left axis-label margin, so the SVG markup below
+// can use these points directly with no further offset math.
+const trendLinePoints = trendMonths.map((m, i) => ({
+  x: CHART_X_MARGIN + (i / (trendMonths.length - 1)) * CHART_W,
+  y: CHART_H - (m.value / trendMax) * CHART_H,
+}));
+const trendAreaPath =
+  `M ${trendLinePoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L ")}` +
+  ` L ${(CHART_W + CHART_X_MARGIN).toFixed(1)},${CHART_H} L ${CHART_X_MARGIN},${CHART_H} Z`;
+const latestTrendMonth = trendMonths[trendMonths.length - 1];
+
+// --- Support queue ---
+const tickets = ticketRows ?? [];
+const ticketCounts = { open: 0, in_progress: 0, waiting: 0 };
+for (const t of tickets) {
+  if (t.status === "open") ticketCounts.open++;
+  else if (t.status === "in_progress") ticketCounts.in_progress++;
+  else if (t.status === "waiting") ticketCounts.waiting++;
+}
+const activeTicketCount = ticketCounts.open + ticketCounts.in_progress + ticketCounts.waiting;
+const resolvedRecentCount = tickets.filter(
+  (t) =>
+    (t.status === "resolved" || t.status === "closed") &&
+    LOW_STOCK_WINDOW.from &&
+    (t.updated_at as string) >= LOW_STOCK_WINDOW.from
+).length;
+const queueRows = [
+  { label: "Open", n: ticketCounts.open },
+  { label: "In progress", n: ticketCounts.in_progress },
+  { label: "Waiting", n: ticketCounts.waiting },
+];
+const queueMax = Math.max(...queueRows.map((r) => r.n), 1);
+
+const latestTicket = tickets[0] ?? null;
+let latestTicketAssigneeName: string | null = null;
+if (latestTicket?.assigned_to) {
+  const { data: assigneeProfile } = await Astro.locals.supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", latestTicket.assigned_to)
+    .maybeSingle();
+  latestTicketAssigneeName = assigneeProfile?.full_name ?? null;
 }
 
-const revenueRows = revenueTrend ?? [];
-const statusRows = ordersByStatus ?? [];
-const productRows = topProducts ?? [];
-const movementRows = movementSummary ?? [];
-const growthRows = customerGrowth ?? [];
+// --- Sales by team member (real orders.placed_by attribution, no target) ---
+const { data: repOrderRows } = await Astro.locals.supabase.from("orders").select("placed_by, total").not("placed_by", "is", null);
+const repTotals = new Map<string, number>();
+for (const r of repOrderRows ?? []) {
+  const id = r.placed_by as string;
+  repTotals.set(id, (repTotals.get(id) ?? 0) + Number(r.total));
+}
+const reps = (salesStaffRows ?? [])
+  .map((s) => ({ id: s.id as string, name: (s.full_name as string) || "—", amount: repTotals.get(s.id as string) ?? 0 }))
+  .sort((a, b) => b.amount - a.amount);
+const repMax = Math.max(...reps.map((r) => r.amount), 1);
 
-const totalRevenue = revenueRows.reduce((sum, r) => sum + Number(r.revenue), 0);
-const totalOrders = revenueRows.reduce((sum, r) => sum + Number(r.order_count), 0);
-const aov = totalOrders > 0 ? totalRevenue / totalOrders : null;
-const newCustomers = growthRows.reduce((sum, r) => sum + Number(r.new_customers), 0);
-
-const inventoryValue = Number(inventoryValueRow?.inventory_value ?? 0);
-const totalCustomers = (customerMetricsRows ?? []).length;
-const lowStockCount = (inventoryRows ?? []).filter(
-  (r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level
-).length;
-
-const formatCurrency = (value: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
-
-const statusColors: Record<string, string> = {
-  pending: CHART_COLORS.warning,
-  confirmed: CHART_COLORS.mute,
-  processing: CHART_COLORS.mute,
-  shipped: CHART_COLORS.success,
-  delivered: CHART_COLORS.success,
-  cancelled: CHART_COLORS.error,
-  refunded: CHART_COLORS.error,
-};
-
-const movementColors: Record<string, string> = {
-  restock: CHART_COLORS.success,
-  sale: CHART_COLORS.ink,
-  adjustment: CHART_COLORS.mute,
-  damaged: CHART_COLORS.error,
-  return: CHART_COLORS.warning,
-};
+const currentMonthLabel = new Date(thisMonth.from).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
 ---
 
-<BaseLayout title="Admin dashboard">
-  <AppShell active="dashboard">
-    <div class="flex items-center justify-between flex-wrap gap-md">
-      <div class="flex items-center gap-lg flex-wrap">
-        <h1 class="text-2xl font-bold text-ink">Dashboard</h1>
-        <nav aria-label="Admin sections" class="flex items-center gap-md text-sm">
-          <a href="/admin/staff" class="text-primary font-bold hover:underline">Staff</a>
-          <a href="/admin/approvals" class="text-primary font-bold hover:underline">Approvals</a>
-        </nav>
-      </div>
-      <DateRangeFilter current={range.preset} url={url} pathname="/admin" />
-    </div>
-    <p class="mt-xs text-xs text-muted">{range.label}</p>
+<BaseLayout title="Business overview — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-    <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-lg">
-      <KpiCard label="Revenue" value={formatCurrency(totalRevenue)} />
-      <KpiCard label="Orders" value={String(totalOrders)} />
-      <KpiCard label="Average order value" value={aov !== null ? formatCurrency(aov) : "—"} />
-      <KpiCard label="New customers" value={String(newCustomers)} />
-      <KpiCard label="Inventory value" value={formatCurrency(inventoryValue)} sublabel="at retail price · current" />
-      <KpiCard href="/inventory/stock?status=low" label="Low stock" value={String(lowStockCount)} tone="warning" />
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Dashboard" role="admin" viewerRole={viewerRole} />
     </div>
 
-    <div class="mt-lg grid grid-cols-1 lg:grid-cols-2 gap-lg">
-      <Card>
-        <h2 class="text-sm font-bold text-ink">Revenue trend</h2>
-        <div class="mt-sm">
-          {
-            revenueRows.length > 0 ? (
-              <ChartCanvas
-                id="admin-revenue-trend"
-                type="line"
-                data={{
-                  labels: revenueRows.map((r) => r.day),
-                  datasets: [
-                    {
-                      label: "Revenue",
-                      data: revenueRows.map((r) => Number(r.revenue)),
-                      borderColor: CHART_COLORS.ink,
-                      backgroundColor: "rgba(17,17,17,0.06)",
-                      fill: true,
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No revenue in this range" message="Place an order to see it here." />
-            )
-          }
-        </div>
-      </Card>
+    <div class="sd__panel">
+      <AdminNavTop section="Dashboard" page="Overview" />
 
-      <Card>
-        <h2 class="text-sm font-bold text-ink">Orders by status</h2>
-        <div class="mt-sm">
-          {
-            statusRows.length > 0 ? (
-              <ChartCanvas
-                id="admin-orders-status"
-                type="bar"
-                data={{
-                  labels: statusRows.map((r) => r.status),
-                  datasets: [
-                    {
-                      label: "Orders",
-                      data: statusRows.map((r) => Number(r.order_count)),
-                      backgroundColor: statusRows.map((r) => statusColors[r.status] ?? CHART_COLORS.mute),
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No orders in this range" message="Try another date range." />
-            )
-          }
-        </div>
-      </Card>
-
-      <Card>
-        <h2 class="text-sm font-bold text-ink">Top products by revenue</h2>
-        <div class="mt-sm">
-          {
-            productRows.length > 0 ? (
-              <ChartCanvas
-                id="admin-top-products"
-                type="bar"
-                data={{
-                  labels: productRows.map((r) => r.name),
-                  datasets: [
-                    {
-                      label: "Revenue",
-                      data: productRows.map((r) => Number(r.revenue)),
-                      backgroundColor: CHART_COLORS.ink,
-                    },
-                  ],
-                }}
-                options={{ indexAxis: "y", plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No product sales in this range" message="Try another date range." />
-            )
-          }
-        </div>
-      </Card>
-
-      <Card>
-        <h2 class="text-sm font-bold text-ink">Inventory movements</h2>
-        <div class="mt-sm">
-          {
-            movementRows.length > 0 ? (
-              <ChartCanvas
-                id="admin-movements"
-                type="bar"
-                data={{
-                  labels: movementRows.map((r) => r.movement_type),
-                  datasets: [
-                    {
-                      label: "Units",
-                      data: movementRows.map((r) => Number(r.total_quantity)),
-                      backgroundColor: movementRows.map((r) => movementColors[r.movement_type] ?? CHART_COLORS.mute),
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No inventory movements in this range" message="Try another date range." />
-            )
-          }
-        </div>
-      </Card>
-
-      <Card class="lg:col-span-2">
-        <h2 class="text-sm font-bold text-ink">Customer growth</h2>
-        <div class="mt-sm">
-          {
-            growthRows.length > 0 ? (
-              <ChartCanvas
-                id="admin-customer-growth"
-                type="bar"
-                data={{
-                  labels: growthRows.map((r) => r.day),
-                  datasets: [
-                    {
-                      label: "New customers",
-                      data: growthRows.map((r) => Number(r.new_customers)),
-                      backgroundColor: CHART_COLORS.ink,
-                    },
-                  ],
-                }}
-                options={{ plugins: { legend: { display: false } } }}
-              />
-            ) : (
-              <EmptyState title="No new customers in this range" message="Try another date range." />
-            )
-          }
-        </div>
-      </Card>
-    </div>
-
-    {
-      isSuperAdmin && (
-        <div class="mt-xl">
-          <h2 class="text-lg font-bold text-ink">System</h2>
-          <p class="mt-xs text-xs text-muted">Visible only to super admin.</p>
-          <div class="mt-sm grid grid-cols-1 sm:grid-cols-2 gap-lg">
-            <KpiCard
-              label="Pending approvals"
-              value={String(pendingApprovalCount)}
-              sublabel={
-                pendingApprovalCount === 0
-                  ? "Approval workflow not yet implemented — planned for a future phase."
-                  : undefined
-              }
-            />
-            <KpiCard
-              label="Audit log entries"
-              value={String(auditLogCount)}
-              sublabel={auditLogCount === 0 ? "No audit activity recorded yet." : undefined}
-            />
+      <main id="main-content" class="ad__main">
+        <div class="ad__header">
+          <div class="ad__heading-col">
+            <h1>Business overview</h1>
+            <span class="ad__subtitle">Store-wide · {currentMonthLabel}</span>
+          </div>
+          <div role="group" aria-label="Period" class="ad__period">
+            {DASHBOARD_RANGE_PRESETS.map((p) => (
+              <a href={buildDashboardRangeUrl(url, "/admin", p.value)} class={`ad__period-btn ${range.preset === p.value ? "is-active" : ""}`}>
+                {p.label}
+              </a>
+            ))}
           </div>
         </div>
-      )
-    }
-  </AppShell>
+
+        <div class="ad__kpis">
+          <div class="ad__kpi-card">
+            <span class="ad__kpi-label">Revenue this month</span>
+            <div class="ad__kpi-row">
+              <div class="ad__kpi-col">
+                <span class="ad__kpi-value">{formatCurrency(mtdRevenue)}</span>
+                <span class="ad__kpi-note">
+                  {momChangePct !== null ? (
+                    <Fragment>
+                      <span class={momChangePct >= 0 ? "ad__delta-up" : "ad__delta-down"}>
+                        {momChangePct >= 0 ? "▲" : "▼"} {Math.abs(momChangePct).toFixed(1)}%
+                      </span>{" "}
+                      vs {prevMonthLabel}
+                    </Fragment>
+                  ) : (
+                    `No orders in ${prevMonthLabel}`
+                  )}
+                </span>
+              </div>
+              {sparkPoints.length > 1 && (
+                <svg width="96" height="36" viewBox="0 0 96 36" aria-hidden="true" class="ad__sparkline">
+                  <polyline points={sparkSvgPoints} fill="none" stroke="var(--sd-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              )}
+            </div>
+          </div>
+
+          <div class="ad__kpi-card">
+            <span class="ad__kpi-label">Open orders</span>
+            <div class="ad__kpi-row">
+              <div class="ad__kpi-col">
+                <span class="ad__kpi-value">{openOrders.length} order{openOrders.length === 1 ? "" : "s"}</span>
+                <span class="ad__kpi-note">{formatCurrency(openOrdersValue)}{openBreakdown ? ` · ${openBreakdown}` : ""}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ad__kpi-card">
+            <span class="ad__kpi-label">Inventory value</span>
+            <div class="ad__kpi-row">
+              <div class="ad__kpi-col">
+                <span class="ad__kpi-value">{formatCurrency(inventoryValue)}</span>
+                <span class="ad__kpi-note">{activeProductCount ?? 0} SKUs · {categoryCount ?? 0} categories</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ad__kpi-card">
+            <div class="ad__kpi-top">
+              <span class="ad__kpi-label">Stock needing attention</span>
+              {lowStockCount > 0 && <span class="ad__needs-action">Needs action</span>}
+            </div>
+            <div class="ad__kpi-col">
+              <span class="ad__kpi-value">{lowStockCount}</span>
+              <span class="ad__kpi-note">{outOfStockCount} out of stock · {lowStockCount - outOfStockCount} low</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ad__charts">
+          <section class="ad__chart-card">
+            <div class="ad__section-head">
+              <div class="ad__section-head-col">
+                <h2>Revenue trend</h2>
+                <span class="ad__section-sub">Last 12 months · real orders, cancelled excluded</span>
+              </div>
+              <span class="ad__legend"><span class="ad__legend-swatch"></span>Revenue</span>
+            </div>
+            <svg width="100%" height="222" viewBox={`0 0 ${CHART_W + CHART_X_MARGIN + CHART_X_RIGHT_PAD} 222`} role="img" aria-label={`Revenue by month, last 12 months, latest ${latestTrendMonth.label} ${formatCurrency(latestTrendMonth.value)}`} class="ad__trend-svg">
+              <g stroke="var(--sd-border)" stroke-width="1">
+                <path d={`M40 10H${CHART_W + 40}M40 55H${CHART_W + 40}M40 100H${CHART_W + 40}M40 145H${CHART_W + 40}`} />
+              </g>
+              <path d={`M40 ${CHART_H}H${CHART_W + 40}`} stroke="var(--sd-input)" stroke-width="1" />
+              <path d={trendAreaPath} fill="var(--sd-accent)" fill-opacity="0.1" />
+              <polyline points={trendLinePoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")} fill="none" stroke="var(--sd-accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+              {trendLinePoints.map((p, i) => (
+                <text x={p.x} y="212" text-anchor="middle" font-size="11" fill="var(--sd-muted-fg)">{trendMonths[i].label}</text>
+              ))}
+            </svg>
+          </section>
+
+          <section class="ad__side-card">
+            <div class="ad__section-head">
+              <div class="ad__section-head-col">
+                <h2>Support queue</h2>
+                <span class="ad__section-sub">{activeTicketCount} active ticket{activeTicketCount === 1 ? "" : "s"} · by status</span>
+              </div>
+            </div>
+            <div class="ad__queue">
+              {queueRows.map((r) => (
+                <div class="ad__queue-row">
+                  <div class="ad__queue-row-top">
+                    <span>{r.label}</span>
+                    <span><span class="ad__queue-n">{r.n}</span> <span class="ad__queue-unit">{r.n === 1 ? "ticket" : "tickets"}</span></span>
+                  </div>
+                  <div class="ad__queue-bar-track"><div class="ad__queue-bar" style={`width:${(r.n / queueMax) * 100}%`}></div></div>
+                </div>
+              ))}
+              <div class="ad__queue-row">
+                <div class="ad__queue-row-top">
+                  <span>Resolved (last 7 days)</span>
+                  <span><span class="ad__queue-n">{resolvedRecentCount}</span></span>
+                </div>
+                <div class="ad__queue-bar-track"><div class="ad__queue-bar ad__queue-bar--resolved" style={`width:${Math.min(100, (resolvedRecentCount / queueMax) * 100)}%`}></div></div>
+              </div>
+            </div>
+            <div class="ad__spacer" />
+            {latestTicket && (
+              <div class="ad__latest-ticket">
+                <span class="ad__latest-dot" />
+                <span class="ad__latest-text">
+                  <strong>{latestTicket.subject}</strong>{" "}
+                  {latestTicketAssigneeName ? `assigned to ${latestTicketAssigneeName}` : "not yet assigned"}
+                </span>
+                <span class="ad__latest-date">{new Date(latestTicket.updated_at as string).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <div class="ad__bottom">
+          <section class="ad__stock-card">
+            <div class="ad__section-head ad__section-head--padded">
+              <h2>Stock alerts</h2>
+              <span class="ad__section-sub">{lowStockCount} product{lowStockCount === 1 ? "" : "s"} at or below reorder level</span>
+            </div>
+            {
+              alertRows.length > 0 ? (
+                <Fragment>
+                  <div class="ad__stock-grid ad__stock-grid--head">
+                    <span>SKU</span><span>Product</span><span>Location</span><span class="ad__col-right">On hand</span><span class="ad__col-right">Reorder at</span><span>Status</span>
+                  </div>
+                  {alertRows.map((a) => (
+                    <div class="ad__stock-grid ad__stock-row">
+                      <span class="ad__stock-sku">{a.sku}</span>
+                      <span class="ad__stock-name">{a.name}</span>
+                      <span class="ad__stock-loc">—</span>
+                      <span class="ad__col-right ad__stock-qty">{a.qty}</span>
+                      <span class="ad__col-right ad__stock-reorder">{a.reorder}</span>
+                      <span><span class={`ad__stock-pill ${a.qty === 0 ? "ad__stock-pill--out" : "ad__stock-pill--low"}`}>{a.qty === 0 ? "Out" : "Low"}</span></span>
+                    </div>
+                  ))}
+                </Fragment>
+              ) : (
+                <p class="ad__empty">No products at or below their reorder level.</p>
+              )
+            }
+          </section>
+
+          <section class="ad__reps-card">
+            <div class="ad__section-head">
+              <h2>Sales by team member</h2>
+              <span class="ad__section-sub">{currentMonthLabel.split(" ")[0]} · lifetime</span>
+            </div>
+            {
+              reps.length > 0 ? (
+                reps.map((r) => (
+                  <div class="ad__rep-row">
+                    <div class="ad__rep-avatar">{r.name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "?"}</div>
+                    <div class="ad__rep-col">
+                      <div class="ad__rep-top">
+                        <span class="ad__rep-name">{r.name}</span>
+                        <span class="ad__rep-amount">{formatCurrency(r.amount)}</span>
+                      </div>
+                      <div class="ad__rep-bar-track"><div class="ad__rep-bar" style={`width:${(r.amount / repMax) * 100}%`}></div></div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p class="ad__empty">No sales staff yet.</p>
+              )
+            }
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
 </BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .ad__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .ad__main {
+      padding: 16px;
+    }
+  }
+
+  .ad__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .ad__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ad__heading-col h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .ad__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .ad__period {
+    display: flex;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    flex-wrap: wrap;
+  }
+  .ad__period-btn {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+  }
+  .ad__period-btn.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font-weight: 600;
+    box-shadow: var(--sd-shadow);
+  }
+
+  .ad__kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .ad__kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 520px) {
+    .ad__kpis {
+      grid-template-columns: 1fr;
+    }
+  }
+  .ad__kpi-card {
+    min-height: 118px;
+    box-sizing: border-box;
+    padding: 18px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .ad__kpi-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .ad__kpi-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .ad__needs-action {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .ad__kpi-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .ad__kpi-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .ad__kpi-value {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  .ad__kpi-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .ad__delta-up {
+    color: var(--sd-success-fg);
+    font-weight: 600;
+  }
+  .ad__delta-down {
+    color: var(--sd-danger-fg);
+    font-weight: 600;
+  }
+  .ad__sparkline {
+    flex-shrink: 0;
+  }
+
+  .ad__charts {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .ad__charts {
+      flex-direction: row;
+      height: 300px;
+    }
+  }
+  .ad__chart-card {
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  @media (min-width: 1100px) {
+    .ad__chart-card {
+      width: 62%;
+      flex-shrink: 0;
+    }
+  }
+  .ad__side-card {
+    flex-grow: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .ad__section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .ad__section-head--padded {
+    padding: 0 20px 12px;
+  }
+  .ad__section-head-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .ad__section-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .ad__section-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .ad__legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--sd-fg2);
+    flex-shrink: 0;
+  }
+  .ad__legend-swatch {
+    width: 14px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--sd-accent);
+  }
+  .ad__trend-svg {
+    flex-grow: 1;
+    min-height: 0;
+  }
+
+  .ad__queue {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ad__queue-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .ad__queue-row-top {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+  }
+  .ad__queue-n {
+    font-weight: 600;
+  }
+  .ad__queue-unit {
+    color: var(--sd-muted-fg);
+  }
+  .ad__queue-bar-track {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--sd-border);
+  }
+  .ad__queue-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--sd-accent);
+  }
+  .ad__queue-bar--resolved {
+    background: var(--sd-success-fg);
+  }
+  .ad__spacer {
+    flex-grow: 1;
+  }
+  .ad__latest-ticket {
+    padding-top: 12px;
+    border-top: 1px solid var(--sd-border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .ad__latest-dot {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-info-fg);
+  }
+  .ad__latest-text {
+    flex-grow: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ad__latest-date {
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+
+  .ad__bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .ad__bottom {
+      flex-direction: row;
+    }
+  }
+  .ad__stock-card {
+    box-sizing: border-box;
+    padding: 20px 0 8px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow-x: auto;
+    min-width: 0;
+  }
+  @media (min-width: 1100px) {
+    .ad__stock-card {
+      width: 62%;
+      flex-shrink: 0;
+    }
+  }
+  .ad__stock-grid {
+    display: grid;
+    grid-template-columns: 84px minmax(140px, 1fr) 90px 80px 90px 80px;
+    gap: 8px;
+    padding: 0 20px;
+    align-items: center;
+    min-width: 560px;
+  }
+  .ad__stock-grid--head {
+    height: 34px;
+    background: var(--sd-shell);
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .ad__stock-row {
+    height: 44px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .ad__stock-sku {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .ad__stock-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ad__stock-loc {
+    color: var(--sd-fg2);
+  }
+  .ad__col-right {
+    text-align: right;
+  }
+  .ad__stock-qty {
+    font-weight: 600;
+  }
+  .ad__stock-reorder {
+    color: var(--sd-muted-fg);
+  }
+  .ad__stock-pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .ad__stock-pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .ad__stock-pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .ad__empty {
+    margin: 0;
+    padding: 24px 20px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .ad__reps-card {
+    flex-grow: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .ad__rep-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ad__rep-avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-border);
+    color: var(--sd-fg2);
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ad__rep-col {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ad__rep-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .ad__rep-name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ad__rep-amount {
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .ad__rep-bar-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sd-border);
+  }
+  .ad__rep-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sd-accent);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

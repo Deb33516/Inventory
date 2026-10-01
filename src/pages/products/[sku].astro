@@ -1,27 +1,42 @@
 ---
-// Matches the Claude Design canvas's Customer Product Detail artboard
+// Literal recreation of the Claude Design canvas's Product Detail artboard
 // (project/PageCustProductDetail.dc.html, imported by
-// CustProductDetail.dc.html). The design's Specifications grid (wattage,
-// size, colour temperature, warranty, pack size) has no backing columns —
-// products only has sku/name/description/price/category/image_url —
-// omitted entirely rather than fabricated; the real fields (SKU, category,
-// price) already appear elsewhere on this page.
+// CustProductDetail.dc.html) — the supplied design is the visual source
+// of truth, not the app's existing DESIGN.md component system. Reuses the
+// same --cp-* token system and NavCustomer header already approved on the
+// Customer Portal and Shop. ProductCard.astro/AddToCartButton.astro are
+// NOT reused (their current visual output doesn't match this artboard,
+// and they're shared with Landing/Cart/Checkout, none of which have had
+// their own redo turn) — this page builds its own markup, wired to the
+// same real, unmodified cart logic (src/lib/cart.ts), same pattern as Shop.
 //
-// No stock badge / out-of-stock gating here (or anywhere customer-facing):
-// `inventory` RLS (0005_inventory.sql, inventory_select_staff) only grants
-// SELECT to sales_staff/inventory_staff/admin/super_admin — a customer or
-// anonymous visitor gets zero rows back, not an error, so this was
-// silently hiding "Add to cart" for every real shopper until caught by the
-// e2e suite. Showing customers their own live stock would need a new,
-// narrowly-scoped RLS policy (or a public-safe view exposing only
-// quantity_on_hand) — a real schema/RLS change, not made without your
-// sign-off, so this page stays as it was: Add to cart is always shown,
-// and place_order() remains the actual stock enforcement point.
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Product name/SKU/price/category/description, Add to cart, quantity
+//    stepper, Buy now, related products ("You may also need", same
+//    category, real query): all real, same logic as before this pass.
+//  - Gallery: the design shows a main image plus 3 thumbnail "angles" —
+//    products has a single `image_url` column, no multi-image support —
+//    so only the one real image renders (or the existing "No image"
+//    placeholder), no fabricated thumbnail row.
+//  - Stock badge ("In stock · 240" / delivery estimate): omitted.
+//    `inventory` RLS (0005_inventory.sql, inventory_select_staff) only
+//    grants SELECT to staff roles — a customer has no live stock figure
+//    at all, and none was added per your explicit instruction.
+//  - MRP / discount % / "Your dealer price · GST extra" / pack-size
+//    ("box of 4") / delivery estimate: no backing columns anywhere in the
+//    schema — omitted rather than invented. The bottom subtotal line is
+//    real (qty × real price, live-computed), with no "before GST" framing
+//    since no tax computation exists anywhere in this app (same call
+//    already made on Cart/Checkout).
+//  - Specifications grid (wattage, size, colour temperature, warranty,
+//    pack size, category): omitted entirely rather than reproduced with
+//    fake fields — products has no specification/attribute columns at
+//    all, and Category (the one row that could be "real") is already
+//    shown via the breadcrumb and badge, so a near-empty 1-row
+//    "specifications" table would be more misleading than not having the
+//    section.
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import EmptyState from "../../components/catalog/EmptyState.astro";
-import AddToCartButton from "../../components/cart/AddToCartButton.astro";
-import PublicHeader from "../../components/layout/PublicHeader.astro";
-import ProductCard from "../../components/catalog/ProductCard.astro";
+import NavCustomer from "../../components/customer/NavCustomer.astro";
 
 const { sku } = Astro.params;
 
@@ -47,101 +62,648 @@ const { data: relatedProducts } =
         .limit(4)
     : { data: null };
 
-const formattedPrice = product
-  ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(product.price)
-  : "";
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+const formattedPrice = product ? formatCurrency(product.price) : "";
 ---
 
 <BaseLayout title={product ? `${product.name} — Inventory` : "Product not found — Inventory"}>
-  <PublicHeader />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    <a href="/products" class="text-xs uppercase tracking-[0.5px] font-bold text-muted hover:text-ink">
-      ← Back to products
-    </a>
-    {
-      product ? (
-        <div class="mt-lg grid grid-cols-1 md:grid-cols-2 gap-xl">
-          <div class="aspect-square bg-surface-card flex items-center justify-center overflow-hidden">
-            {product.image_url ? (
-              <img src={product.image_url} alt={product.name} class="w-full h-full object-cover" />
-            ) : (
-              <span class="text-sm uppercase tracking-[0.5px] text-muted-soft">No image</span>
-            )}
-          </div>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-          <div>
-            {product.categories?.name && (
-              <p class="text-xs uppercase tracking-[0.5px] text-muted mb-xs">{product.categories.name}</p>
-            )}
-            <h1 class="text-3xl font-bold text-ink">{product.name}</h1>
-            <p class="mt-xs text-sm text-muted">SKU: {product.sku}</p>
-            <p class="mt-md text-2xl font-bold text-ink">{formattedPrice}</p>
-            {product.description && (
-              <p class="mt-lg text-sm font-light text-body leading-relaxed">{product.description}</p>
-            )}
-            <div class="mt-lg flex flex-col sm:flex-row gap-sm max-w-md">
-              <AddToCartButton
-                productId={product.id}
-                sku={product.sku}
-                name={product.name}
-                price={product.price}
-                showStepper
-                class="flex-grow"
-              />
-              <a
-                id="buy-now-btn"
-                href="/checkout"
-                data-product-id={product.id}
-                data-sku={product.sku}
-                data-name={product.name}
-                data-price={product.price}
-                class="h-10 px-md inline-flex items-center justify-center border border-hairline-strong text-sm font-bold text-ink hover:border-ink"
-              >
-                Buy now
+    <NavCustomer active="Shop" />
+
+    <main id="main-content" class="cp__main">
+      {
+        product ? (
+          <Fragment>
+            <div class="pd__crumbs">
+              <a href="/products" class="pd__back">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg>
+                Shop
               </a>
+              <span class="pd__crumb-path">
+                Shop / {product.categories?.name && <Fragment>{product.categories.name} / </Fragment>}{product.name}
+              </span>
+            </div>
+
+            <div class="pd__top">
+              <div class="pd__gallery">
+                <div class="pd__gallery-main" role="img" aria-label={product.image_url ? product.name : `${product.name} — no image available`}>
+                  {product.image_url ? (
+                    <img src={product.image_url} alt={product.name} />
+                  ) : (
+                    <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"></path></svg>
+                  )}
+                </div>
+              </div>
+
+              <div class="pd__buybox-col">
+                <section class="pd__buybox">
+                  <div class="pd__buybox-head">
+                    {product.categories?.name && <span class="pd__category-pill">{product.categories.name}</span>}
+                    <h1>{product.name}</h1>
+                    <span class="pd__sku">SKU: {product.sku}</span>
+                  </div>
+
+                  <div class="pd__price-row">
+                    <span class="pd__price">{formattedPrice}</span>
+                  </div>
+
+                  {product.description && <p class="pd__description">{product.description}</p>}
+
+                  <div class="pd__divider" />
+
+                  <div class="pd__buy-row">
+                    <div class="pd__stepper" data-stepper>
+                      <button type="button" class="pd__stepper-btn" data-dec aria-label="Decrease quantity">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg>
+                      </button>
+                      <span class="pd__stepper-value" data-qty="1">1</span>
+                      <button type="button" class="pd__stepper-btn" data-inc aria-label="Increase quantity">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      id="pd-add-btn"
+                      class="pd__add-btn"
+                      data-product-id={product.id}
+                      data-sku={product.sku}
+                      data-name={product.name}
+                      data-price={product.price}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h2l2.4 11h11l2-8H6.2M9 20a1 1 0 1 0 2 0a1 1 0 1 0-2 0M17 20a1 1 0 1 0 2 0a1 1 0 1 0-2 0"></path></svg>
+                      Add to cart
+                    </button>
+                    <a
+                      href="/checkout"
+                      id="pd-buy-now-btn"
+                      class="pd__buy-now-btn"
+                      data-product-id={product.id}
+                      data-sku={product.sku}
+                      data-name={product.name}
+                      data-price={product.price}
+                    >
+                      Buy now
+                    </a>
+                  </div>
+                  <p class="pd__subtotal">
+                    <span data-qty-label>1</span> × {formattedPrice} = <span data-subtotal>{formattedPrice}</span>
+                  </p>
+                  <p id="pd-message" class="pd__message" role="status" />
+                </section>
+              </div>
+            </div>
+          </Fragment>
+        ) : (
+          <div class="pd__notfound">
+            <p class="pd__notfound-title">Product not found</p>
+            <p class="pd__notfound-body">This product may be unavailable or no longer exists.</p>
+            <a href="/products" class="btn-outline-sm">Back to Shop</a>
+          </div>
+        )
+      }
+
+      {
+        relatedProducts && relatedProducts.length > 0 && (
+          <div class="pd__related">
+            <h2>You may also need</h2>
+            <div class="pd__related-grid">
+              {relatedProducts.map((r) => (
+                <a href={`/products/${r.sku}`} class="pd__related-card">
+                  <span class="pd__related-thumb">
+                    {r.image_url ? (
+                      <img src={r.image_url} alt={r.name} />
+                    ) : (
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"></path></svg>
+                    )}
+                  </span>
+                  <span class="pd__related-body">
+                    <span class="pd__related-name">{r.name}</span>
+                    <span class="pd__related-sku">{r.sku}</span>
+                    <span class="pd__related-price">{formatCurrency(r.price)}</span>
+                  </span>
+                </a>
+              ))}
             </div>
           </div>
-        </div>
-      ) : (
-        <EmptyState class="mt-lg" title="Product not found" message="This product may be unavailable or no longer exists." />
-      )
-    }
-
-    {
-      relatedProducts && relatedProducts.length > 0 && (
-        <div class="mt-xxl">
-          <h2 class="text-lg font-bold text-ink mb-md">You may also need</h2>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
-            {relatedProducts.map((r) => (
-              <ProductCard
-                productId={r.id}
-                sku={r.sku}
-                name={r.name}
-                price={r.price}
-                imageUrl={r.image_url}
-                categoryName={r.categories?.name}
-              />
-            ))}
-          </div>
-        </div>
-      )
-    }
-  </main>
+        )
+      }
+    </main>
+  </div>
 </BaseLayout>
 
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+  .btn-outline-sm {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pd__crumbs {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .pd__back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--cp-fg2);
+    text-decoration: none;
+  }
+  .pd__crumb-path {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .pd__top {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  @media (min-width: 1000px) {
+    .pd__top {
+      flex-direction: row;
+    }
+  }
+
+  .pd__gallery {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1000px) {
+    .pd__gallery {
+      width: 520px;
+      flex-shrink: 0;
+    }
+  }
+  .pd__gallery-main {
+    height: 380px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  @media (min-width: 1000px) {
+    .pd__gallery-main {
+      height: 520px;
+    }
+  }
+  .pd__gallery-main img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .pd__buybox-col {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .pd__buybox {
+    box-sizing: border-box;
+    padding: 24px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .pd__buybox-head {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pd__category-pill {
+    align-self: flex-start;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--cp-muted);
+    color: var(--cp-fg2);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .pd__buybox-head h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .pd__sku {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+  .pd__price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .pd__price {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .pd__description {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--cp-fg2);
+  }
+  .pd__divider {
+    height: 1px;
+    background: var(--cp-border);
+  }
+  .pd__buy-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .pd__stepper {
+    display: flex;
+    align-items: center;
+    height: 40px;
+    box-sizing: border-box;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-card);
+    flex-shrink: 0;
+  }
+  .pd__stepper-btn {
+    width: 36px;
+    height: 38px;
+    border: 0;
+    background: transparent;
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .pd__stepper-value {
+    min-width: 40px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .pd__add-btn {
+    flex-grow: 1;
+    min-width: 160px;
+    height: 40px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .pd__buy-now-btn {
+    flex-grow: 1;
+    min-width: 120px;
+    height: 40px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pd__subtotal {
+    margin: 0;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .pd__message {
+    margin: 0;
+    min-height: 18px;
+    font-size: 13px;
+    color: var(--cp-accent);
+  }
+  .pd__message a {
+    margin-left: 4px;
+    color: var(--cp-accent);
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .pd__notfound {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .pd__notfound-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .pd__notfound-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .pd__related {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .pd__related h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .pd__related-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (min-width: 700px) {
+    .pd__related-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  .pd__related-card {
+    box-sizing: border-box;
+    padding: 12px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+    color: inherit;
+  }
+  .pd__related-thumb {
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .pd__related-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .pd__related-body {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pd__related-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pd__related-sku {
+    font-size: 11px;
+    color: var(--cp-muted-fg);
+  }
+  .pd__related-price {
+    font-size: 13px;
+    font-weight: 600;
+  }
+</style>
+
 <script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
   import { addToCart } from "../../lib/cart";
 
-  const buyNowBtn = document.querySelector<HTMLAnchorElement>("#buy-now-btn");
-  buyNowBtn?.addEventListener("click", () => {
-    const productId = buyNowBtn.dataset.productId!;
-    const qtyEl = document.getElementById(`qty-${productId}`);
-    const quantity = Number(qtyEl?.dataset.qty ?? "1");
+  const stepper = document.querySelector<HTMLElement>("[data-stepper]");
+  const qtyValueEl = stepper?.querySelector<HTMLSpanElement>("[data-qty]");
+  const qtyLabelEl = document.querySelector<HTMLSpanElement>("[data-qty-label]");
+  const subtotalEl = document.querySelector<HTMLSpanElement>("[data-subtotal]");
+  const unitPrice = Number(document.getElementById("pd-add-btn")?.dataset.price ?? "0");
 
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+  function syncQuantityDisplay() {
+    const qty = Number(qtyValueEl?.dataset.qty ?? "1");
+    if (qtyLabelEl) qtyLabelEl.textContent = String(qty);
+    if (subtotalEl) subtotalEl.textContent = formatCurrency(unitPrice * qty);
+  }
+
+  stepper?.querySelector("[data-dec]")?.addEventListener("click", () => {
+    const next = Math.max(1, Number(qtyValueEl?.dataset.qty ?? "1") - 1);
+    if (qtyValueEl) {
+      qtyValueEl.dataset.qty = String(next);
+      qtyValueEl.textContent = String(next);
+    }
+    syncQuantityDisplay();
+  });
+  stepper?.querySelector("[data-inc]")?.addEventListener("click", () => {
+    const next = Number(qtyValueEl?.dataset.qty ?? "1") + 1;
+    if (qtyValueEl) {
+      qtyValueEl.dataset.qty = String(next);
+      qtyValueEl.textContent = String(next);
+    }
+    syncQuantityDisplay();
+  });
+
+  const addBtn = document.getElementById("pd-add-btn");
+  const messageEl = document.getElementById("pd-message");
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  addBtn?.addEventListener("click", () => {
+    const quantity = Number(qtyValueEl?.dataset.qty ?? "1");
     addToCart(
       {
-        productId,
+        productId: addBtn.dataset.productId!,
+        sku: addBtn.dataset.sku!,
+        name: addBtn.dataset.name!,
+        price: Number(addBtn.dataset.price),
+      },
+      quantity
+    );
+
+    if (messageEl) {
+      messageEl.replaceChildren();
+      const added = document.createElement("span");
+      added.textContent = "Added to cart";
+      const viewCart = document.createElement("a");
+      viewCart.href = "/cart";
+      viewCart.textContent = "View cart";
+      messageEl.append(added, " ", viewCart);
+    }
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => messageEl?.replaceChildren(), 6000);
+
+    window.dispatchEvent(new CustomEvent("cart-updated"));
+  });
+
+  const buyNowBtn = document.getElementById("pd-buy-now-btn");
+  buyNowBtn?.addEventListener("click", () => {
+    const quantity = Number(qtyValueEl?.dataset.qty ?? "1");
+    addToCart(
+      {
+        productId: buyNowBtn.dataset.productId!,
         sku: buyNowBtn.dataset.sku!,
         name: buyNowBtn.dataset.name!,
         price: Number(buyNowBtn.dataset.price),

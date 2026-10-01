@@ -1,22 +1,96 @@
 ---
+// Literal recreation of the Claude Design canvas's Sales Order Detail
+// screen (project/SalesOrderDetail.dc.html -> NavSidebar + NavTop +
+// PageOrderDetail with role="sales") — the supplied design is the visual
+// source of truth, not the app's existing DESIGN.md/AppShell component
+// system. Reuses the same --sd-* token system + NavSidebar.astro/
+// NavTop.astro already established by the approved Sales Dashboard/
+// Contacts/Orders screens (none touched this turn beyond the earlier,
+// already-reported NavTop theme-toggle fix). OrderLineItems/
+// OrderStatusActions/OrderStatusBadge are NOT reused (their visual output
+// doesn't match this artboard) — every value below comes from the same
+// real, unchanged orders/order_items/payments/profiles queries, and the
+// exact same real updateOrderStatus/requestApproval actions the old
+// (Tailwind-styled) version of this page already called — only the
+// markup and styling changed.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: order id (truncated UUID), real payment-status pill and
+//    fulfilment-status pill (full 7-value order_status enum), real
+//    customer name/phone (profiles), real line items (SKU/name/qty/unit
+//    price/line subtotal from order_items+products), real item/unit
+//    counts, real Subtotal/Tax/Shipping/Total exactly as stored (no
+//    invented 18% GST or "Free" shipping — this app's tax/shipping are
+//    genuinely 0 by design, shown as such), real shipping address
+//    (orders.shipping_address.formatted — the address actually used for
+//    THIS order, more accurate than the design's generic company
+//    address), real payment method/status/amount/paid_at, real order
+//    notes (orders.notes — the customer's own note from checkout, shown
+//    read-only), real status actions restricted to exactly what Sales
+//    Staff (or an admin/super_admin also permitted onto this route) is
+//    authorized to do today: advance to the next legal status, and either
+//    a direct cancel (super_admin only) or a request-approval cancel
+//    (sales_staff/admin) — identical underlying updateOrderStatus/
+//    requestApproval('cancel_paid_order') calls as before, and the same
+//    real requestApproval('refund_payment') control for a cancelled+paid
+//    order. "Print order" is real (window.print() — genuinely prints the
+//    real page, no fabricated PDF/invoice capability implied).
+//  - Header subtitle: the design's sales-branch copy ("placed by you on
+//    {date}") and admin-branch copy ("placed {date} by {rep}") both
+//    narrate orders.placed_by as a person. orders.placed_by is an
+//    audit/process field, not sales-rep attribution, and the viewer here
+//    isn't necessarily who placed it anyway — shown as plain
+//    "{customer} · placed {date}" instead, no name attribution.
+//  - "Cancel order"/"Download" header buttons: the design's admin-only
+//    "Cancel order" button is replaced by the real, role-correct
+//    advance/cancel controls described above (shown to every authorized
+//    viewer, not just admin — sales_staff's own real capability). Download
+//    (PDF/invoice): no export capability exists anywhere in this app —
+//    omitted.
+//  - "Bin" column, "Shipped" column, and the header's "5 items · 202
+//    units · LED panels delivered 27 Sep, rest due 30 Sep" line: no
+//    warehouse-bin field, no per-item partial-shipment tracking, and no
+//    per-item delivery narrative exist anywhere in the schema (order
+//    status is order-level only) — all omitted; the header line is
+//    replaced with a real "{N} items · {M} units" count.
+//  - "Shipment" card (BlueDart, AWB number, parcel weight, "Track
+//    parcel", 5-step tracker with per-step ETA/completion dates): no
+//    carrier/tracking data exists anywhere in the schema — replaced with
+//    the same honest 5-step status tracker already approved on the
+//    Customer Order Detail page (Placed/Confirmed/Processing/Shipped/
+//    Delivered, driven only by the real order.status, only the "Placed"
+//    step carrying a real date from order.created_at), restyled with
+//    --sd-* tokens. A cancelled/refunded order gets a plain status banner
+//    instead, same as the customer page.
+//  - "Billing address" / GSTIN / "Sales staff: Arjun Mehta": no separate
+//    per-order billing address, no tax-id field, and orders.placed_by
+//    must not be shown as sales-rep attribution (explicit rule) — all
+//    three omitted. Only the real shipping address remains.
+//  - "Gross margin" card: admin-only in the design's own isAdmin gate
+//    (sales never sees it), and would need a real product-cost field that
+//    doesn't exist anyway — omitted, matches the artboard for this role.
+//  - "Support tickets for this order" link: admin-only in the design's own
+//    gate, and support_tickets has no order_id column at all (confirmed
+//    on the Support Ticket Detail screen) — omitted regardless.
+//  - "Internal notes" card: the design shows an existing fabricated note
+//    with an invented author/date plus a free-text input implying staff
+//    can add notes. There is no order_notes table and no real write path
+//    for staff notes on an order — inventing one would mean a new
+//    migration, which this turn is explicitly not authorized to add. The
+//    one real, read-only equivalent (orders.notes, the customer's own
+//    checkout note) is shown instead, honestly labelled, with no add-note
+//    input.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
-import OrderLineItems from "../../../components/orders/OrderLineItems.astro";
-import OrderStatusActions from "../../../components/orders/OrderStatusActions.astro";
-import AppShell from "../../../components/layout/AppShell.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import type { OrderStatus } from "../../../lib/types";
 
 const { id } = Astro.params;
-const created = Astro.url.searchParams.get("created");
-
 const viewerRole = Astro.locals.role;
-const canDirectCancel = viewerRole === "super_admin";
-const canRequestRefund = viewerRole === "sales_staff" || viewerRole === "admin";
 
 const { data: order } = await Astro.locals.supabase
   .from("orders")
-  .select("id, status, subtotal, tax, shipping_fee, total, shipping_address, notes, created_at, customer_id")
+  .select("id, customer_id, status, subtotal, tax, shipping_fee, total, shipping_address, notes, created_at")
   .eq("id", id)
   .maybeSingle();
 
@@ -25,114 +99,1015 @@ if (!order) {
 }
 
 const { data: customer } = order
-  ? await Astro.locals.supabase.from("profiles").select("full_name").eq("id", order.customer_id).maybeSingle()
+  ? await Astro.locals.supabase.from("profiles").select("full_name, phone").eq("id", order.customer_id).maybeSingle()
   : { data: null };
 
-const { data: items } = order
+const { data: itemRows } = order
   ? await Astro.locals.supabase
       .from("order_items")
       .select("id, quantity, unit_price, subtotal, products(sku, name)")
       .eq("order_id", id)
   : { data: null };
 
+function productOf(row: { products: unknown }): { sku: string; name: string } | null {
+  return row.products as unknown as { sku: string; name: string } | null;
+}
+
 const { data: payment } = order
-  ? await Astro.locals.supabase
-      .from("payments")
-      .select("id, status, method, paid_at")
-      .eq("order_id", id)
-      .maybeSingle()
+  ? await Astro.locals.supabase.from("payments").select("id, status, method, paid_at").eq("order_id", id).maybeSingle()
   : { data: null };
 
-const canShowRefundControl = canRequestRefund && order?.status === "cancelled" && payment?.status === "paid";
+const items = itemRows ?? [];
+const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0);
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatDate = (value: string) =>
+  new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+const PAY_TONE: Record<string, "success" | "warn" | "danger" | "muted"> = {
+  paid: "success",
+  pending: "warn",
+  failed: "danger",
+  refunded: "muted",
+};
+const PAY_LABEL: Record<string, string> = { paid: "Paid", pending: "Unpaid", failed: "Failed", refunded: "Refunded" };
+const PAY_METHOD_LABEL: Record<string, string> = { upi: "UPI", card: "Card", bank_transfer: "Net banking", cash: "Cash on delivery" };
+
+const FORWARD_STATUSES = ["pending", "confirmed", "processing", "shipped", "delivered"];
+const currentIndex = order ? FORWARD_STATUSES.indexOf(order.status) : -1;
+const isTerminalOffRamp = order ? order.status === "cancelled" || order.status === "refunded" : false;
+const TRACKER_STEPS = [
+  { key: "pending", label: "Placed" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "processing", label: "Processing" },
+  { key: "shipped", label: "Shipped" },
+  { key: "delivered", label: "Delivered" },
+];
+
+// --- Real status-action authorization — identical logic to the previous
+// OrderStatusActions component (viewerRole="staff"), just re-derived
+// inline so the markup below can be styled fresh.
+const nextStatus: Record<string, string> = { pending: "confirmed", confirmed: "processing", processing: "shipped", shipped: "delivered" };
+const canAdvance = !!order && order.status in nextStatus;
+const canCancel = !!order && ["pending", "confirmed", "processing"].includes(order.status);
+const canDirectCancel = viewerRole === "super_admin";
+const canRequestRefund = viewerRole === "sales_staff" || viewerRole === "admin";
+const canShowRefundControl = !!order && canRequestRefund && order.status === "cancelled" && payment?.status === "paid";
 ---
 
 <BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Sales` : "Order not found — Sales"}>
-  <AppShell active="sales" backHref="/sales/orders" backLabel="Orders">
-    {
-      order ? (
-        <>
-          {created && (
-            <p class="mb-md text-sm text-success" role="status">
-              Order created.
-            </p>
-          )}
-          <div class="flex items-center justify-between flex-wrap gap-md">
-            <div>
-              <h1 class="text-2xl font-bold text-ink">Order {order.id.slice(0, 8)}</h1>
-              <p class="text-sm text-muted">
-                {customer?.full_name ?? "Unknown customer"} · {new Date(order.created_at).toLocaleString()}
-              </p>
-              <a href={`/crm/customers/${order.customer_id}`} class="text-xs text-primary font-bold">
-                View customer in CRM
-              </a>
-            </div>
-            <OrderStatusBadge status={order.status} />
-          </div>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-          <Card class="mt-lg">
-            <OrderLineItems
-              items={items ?? []}
-              subtotal={order.subtotal}
-              tax={order.tax}
-              shippingFee={order.shipping_fee}
-              total={order.total}
-            />
-          </Card>
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
 
-          <Card class="mt-lg">
-            <p class="text-xs uppercase tracking-[0.5px] text-muted">Payment</p>
-            <p class="mt-xs text-sm text-body capitalize">
-              {payment?.method ?? "—"} — {payment?.status ?? "—"}
-            </p>
-            {
-              canShowRefundControl && (
-                <div class="mt-md" id="refund-control" data-payment-id={payment!.id}>
-                  <button
-                    type="button"
-                    id="request-refund-btn"
-                    class="h-12 px-lg bg-canvas text-error border border-error font-bold text-sm"
-                  >
-                    Request refund
-                  </button>
-                  <p id="refund-message" class="mt-xs text-sm" role="status" />
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Orders" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Selling" parent="Orders" page={order ? order.id.slice(0, 8) : "Not found"} />
+
+      <main id="main-content" class="sod__main">
+        {
+          order ? (
+            <Fragment>
+              <div class="sod__topbar">
+                <a href="/sales/orders" class="sod__back sod__no-print">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                  Orders
+                </a>
+                <div class="sod__header">
+                  <div class="sod__heading-col">
+                    <div class="sod__heading-row">
+                      <h1>{order.id.slice(0, 8)}</h1>
+                      {payment && <span class={`sod__pill sod__pill--${PAY_TONE[payment.status] ?? "muted"}`}>{PAY_LABEL[payment.status] ?? payment.status}</span>}
+                      <span class={`sod__pill sod__pill--${STATUS_TONE[order.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[order.status as OrderStatus] ?? order.status}</span>
+                    </div>
+                    <span class="sod__meta">{customer?.full_name ?? "Unnamed customer"} · placed {formatDate(order.created_at)}</span>
+                  </div>
+                  <div id="order-status-actions" data-order-id={order.id} data-cancel-mode={viewerRole === "super_admin" ? "direct" : "request"} class="sod__actions sod__no-print">
+                    {canAdvance && (
+                      <button type="button" data-action="advance" data-next-status={nextStatus[order.status]} class="sod__btn sod__btn--primary">
+                        Mark as {STATUS_LABEL[nextStatus[order.status] as OrderStatus]}
+                      </button>
+                    )}
+                    {canCancel && (
+                      <button type="button" data-action="cancel" class="sod__btn sod__btn--danger">
+                        {canDirectCancel ? "Cancel order" : "Request cancellation"}
+                      </button>
+                    )}
+                    <button type="button" id="sod-print-btn" class="sod__btn">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5M7 17H4v-9h16v9h-3M7 14h10v7H7z" /></svg>
+                      Print order
+                    </button>
+                  </div>
                 </div>
-              )
-            }
-          </Card>
+                <p id="status-message" class="sod__status-message sod__no-print" role="status" />
+              </div>
 
-          <div class="mt-lg">
-            <OrderStatusActions
-              orderId={order.id}
-              status={order.status}
-              viewerRole="staff"
-              canDirectCancel={canDirectCancel}
-            />
-          </div>
-        </>
-      ) : (
-        <EmptyState title="Order not found" />
-      )
-    }
-  </AppShell>
+              <div class="sod__body">
+                <div class="sod__left">
+                  <section class="sod__panel-card">
+                    <div class="sod__panel-head">
+                      <span class="sod__panel-title">Line items</span>
+                      <span class="sod__panel-sub">{items.length} item{items.length === 1 ? "" : "s"} · {totalUnits} unit{totalUnits === 1 ? "" : "s"}</span>
+                    </div>
+                    <div class="sod__grid sod__grid-head">
+                      <span>SKU</span><span>Item</span><span class="sod__col-right">Qty</span><span class="sod__col-right">Price</span><span class="sod__col-right">Total</span>
+                    </div>
+                    {items.map((item) => (
+                      <div class="sod__grid sod__row">
+                        <span class="sod__muted-cell">{productOf(item)?.sku ?? "—"}</span>
+                        <span class="sod__item-name">{productOf(item)?.name ?? "—"}</span>
+                        <span class="sod__col-right">{item.quantity}</span>
+                        <span class="sod__col-right sod__muted-cell">{formatCurrency(item.unit_price)}</span>
+                        <span class="sod__col-right sod__item-total">{formatCurrency(item.subtotal)}</span>
+                      </div>
+                    ))}
+                    <div class="sod__totals">
+                      <div class="sod__totals-row"><span>Subtotal</span><span>{formatCurrency(order.subtotal)}</span></div>
+                      <div class="sod__totals-row"><span>Tax</span><span>{formatCurrency(order.tax)}</span></div>
+                      <div class="sod__totals-row"><span>Shipping</span><span>{formatCurrency(order.shipping_fee)}</span></div>
+                      <div class="sod__totals-row sod__totals-final"><span>Total</span><span>{formatCurrency(order.total)}</span></div>
+                    </div>
+                  </section>
+
+                  {isTerminalOffRamp ? (
+                    <section class="sod__status-banner sod__no-print">
+                      <span class={`sod__pill sod__pill--${STATUS_TONE[order.status as OrderStatus] ?? "muted"}`}>{STATUS_LABEL[order.status as OrderStatus] ?? order.status}</span>
+                      <span>{order.status === "cancelled" ? "This order was cancelled." : "This order was refunded."}</span>
+                    </section>
+                  ) : (
+                    <section class="sod__panel-card sod__tracker-card sod__no-print">
+                      <span class="sod__panel-title">Order status</span>
+                      <div class="sod__steps">
+                        {TRACKER_STEPS.map((step, i) => {
+                          const done = currentIndex >= i;
+                          const isLast = i === TRACKER_STEPS.length - 1;
+                          return (
+                            <div class="sod__step">
+                              <div class="sod__step-row">
+                                <span class={`sod__step-dot ${done ? "is-done" : ""}`}>
+                                  {done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg>}
+                                </span>
+                                {!isLast && <span class={`sod__step-line ${currentIndex > i ? "is-done" : ""}`} />}
+                              </div>
+                              <div class="sod__step-label-col">
+                                <span class={`sod__step-label ${done ? "is-done" : ""}`}>{step.label}</span>
+                                {step.key === "pending" && <span class="sod__step-date">{formatDate(order.created_at)}</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                </div>
+
+                <div class="sod__right">
+                  <section class="sod__side-card">
+                    <div class="sod__customer-head">
+                      <span class="sod__avatar sod__no-print">
+                        {(customer?.full_name ?? "?").split(" ").filter(Boolean).slice(0, 2).map((p: string) => p[0]!.toUpperCase()).join("")}
+                      </span>
+                      <div class="sod__customer-identity">
+                        <span class="sod__customer-name">{customer?.full_name ?? "Unnamed customer"}</span>
+                        <span class="sod__customer-sub">{customer?.phone ?? "No phone on file"}</span>
+                      </div>
+                    </div>
+                    <div class="sod__divider" />
+                    <div class="sod__field-col">
+                      <span class="sod__field-label">Shipping address</span>
+                      <span class="sod__field-value">{(order.shipping_address as { formatted?: string } | null)?.formatted ?? "No address on file."}</span>
+                    </div>
+                  </section>
+
+                  <section class="sod__side-card">
+                    <div class="sod__side-head-row">
+                      <span class="sod__panel-title">Payment</span>
+                      {payment && <span class={`sod__pill sod__pill--${PAY_TONE[payment.status] ?? "muted"}`}>{PAY_LABEL[payment.status] ?? payment.status}</span>}
+                    </div>
+                    <dl class="sod__dl">
+                      <div class="sod__dl-row"><dt>Amount</dt><dd>{formatCurrency(order.total)}</dd></div>
+                      <div class="sod__dl-row">
+                        <dt>Method</dt>
+                        <dd>
+                          {payment ? (PAY_METHOD_LABEL[payment.method] ?? payment.method) : "—"}
+                          {payment?.paid_at && <Fragment> · {new Date(payment.paid_at).toLocaleString()}</Fragment>}
+                        </dd>
+                      </div>
+                    </dl>
+                    {canShowRefundControl && (
+                      <div class="sod__refund sod__no-print" id="refund-control" data-payment-id={payment!.id}>
+                        <button type="button" id="request-refund-btn" class="sod__btn sod__btn--danger sod__btn--full">Request refund</button>
+                        <p id="refund-message" class="sod__status-message" role="status" />
+                      </div>
+                    )}
+                  </section>
+
+                  {order.notes && (
+                    <section class="sod__side-card sod__no-print">
+                      <span class="sod__panel-title">Order notes</span>
+                      <div class="sod__note-box">
+                        <span class="sod__note-text">{order.notes}</span>
+                        <span class="sod__note-meta">From the customer at checkout</span>
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </div>
+            </Fragment>
+          ) : (
+            <div class="sod__notfound">
+              <p class="sod__notfound-title">Order not found</p>
+              <p class="sod__notfound-body">This order may not exist.</p>
+              <a href="/sales/orders" class="sod__btn">Back to Orders</a>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
 </BaseLayout>
 
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .sod__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .sod__main {
+      padding: 16px;
+    }
+  }
+
+  .sod__topbar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sod__back {
+    align-self: flex-start;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .sod__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .sod__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sod__heading-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sod__heading-row h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .sod__meta {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .sod__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .sod__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .sod__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .sod__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .sod__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .sod__pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .sod__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .sod__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sod__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sod__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .sod__btn--danger {
+    color: var(--sd-danger-fg);
+    border-color: var(--sd-danger-fg);
+  }
+  .sod__btn--full {
+    width: 100%;
+    justify-content: center;
+  }
+  .sod__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sod__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .sod__body {
+      flex-direction: row;
+    }
+  }
+
+  .sod__left {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .sod__right {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1000px) {
+    .sod__right {
+      width: 340px;
+      flex-shrink: 0;
+    }
+  }
+
+  .sod__panel-card {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .sod__panel-head {
+    min-width: 500px;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .sod__panel-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sod__panel-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .sod__grid {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr) 60px 100px 110px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 500px;
+  }
+  .sod__grid-head {
+    height: 40px;
+    background: var(--sd-shell);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .sod__row {
+    height: 48px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .sod__col-right {
+    text-align: right;
+  }
+  .sod__muted-cell {
+    color: var(--sd-fg2);
+    font-size: 13px;
+  }
+  .sod__item-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sod__item-total {
+    font-weight: 500;
+    color: var(--sd-fg);
+  }
+  .sod__totals {
+    min-width: 500px;
+    margin-top: auto;
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .sod__totals-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 24px;
+  }
+  .sod__totals-row span:first-child {
+    color: var(--sd-muted-fg);
+  }
+  .sod__totals-row span:last-child {
+    width: 120px;
+    text-align: right;
+    font-weight: 500;
+  }
+  .sod__totals-final {
+    padding-top: 8px;
+    border-top: 1px solid var(--sd-border);
+  }
+  .sod__totals-final span:first-child {
+    font-weight: 600;
+    color: var(--sd-fg);
+  }
+  .sod__totals-final span:last-child {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .sod__status-banner {
+    box-sizing: border-box;
+    padding: 16px 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--sd-fg2);
+  }
+
+  .sod__tracker-card {
+    box-sizing: border-box;
+    padding: 16px 18px 18px;
+    gap: 16px;
+  }
+  .sod__steps {
+    display: flex;
+    align-items: flex-start;
+    overflow-x: auto;
+    min-width: 0;
+    gap: 4px;
+  }
+  .sod__step {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 90px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sod__step-row {
+    display: flex;
+    align-items: center;
+  }
+  .sod__step-dot {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-primary-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sod__step-dot.is-done {
+    border: none;
+    background: var(--sd-primary);
+  }
+  .sod__step-line {
+    flex-grow: 1;
+    height: 2px;
+    margin: 0 6px;
+    border-radius: 1px;
+    background: var(--sd-border);
+  }
+  .sod__step-line.is-done {
+    background: var(--sd-primary);
+  }
+  .sod__step-label-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-right: 8px;
+  }
+  .sod__step-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .sod__step-label.is-done {
+    color: var(--sd-fg);
+  }
+  .sod__step-date {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sod__side-card {
+    box-sizing: border-box;
+    padding: 16px 18px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sod__customer-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sod__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sod__customer-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .sod__customer-name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .sod__customer-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .sod__divider {
+    height: 1px;
+    background: var(--sd-border);
+  }
+  .sod__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sod__field-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .sod__field-value {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--sd-fg2);
+  }
+  .sod__side-head-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sod__dl {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .sod__dl-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .sod__dl-row dt {
+    color: var(--sd-muted-fg);
+  }
+  .sod__dl-row dd {
+    margin: 0;
+    font-weight: 500;
+    text-align: right;
+  }
+  .sod__refund {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sod__note-box {
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--sd-shell);
+    border: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sod__note-text {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--sd-fg2);
+  }
+  .sod__note-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .sod__notfound {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .sod__notfound-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .sod__notfound-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Print: a clean order-only document. Screen layout above is completely
+     unaffected — everything here is scoped to @media print. Hides the
+     sidebar, top nav/breadcrumb/search, back link, status-action buttons,
+     the visual status tracker (redundant with the header's own status
+     pill, which stays), refund control, and the order-notes card (not
+     part of the requested print field set) — leaving only real order
+     data: number, date, customer name, status/payment pills, line items,
+     totals, and shipping address. */
+  @media print {
+    :global(.navtop) {
+      display: none !important;
+    }
+    .sd__sidebar,
+    .sd__backdrop {
+      display: none !important;
+    }
+    .sod__no-print {
+      display: none !important;
+    }
+    .sd {
+      display: block;
+      background: #fff;
+      color: #000;
+      min-height: 0;
+    }
+    .sd__panel {
+      margin: 0;
+      border: none;
+      box-shadow: none;
+      border-radius: 0;
+      overflow: visible;
+    }
+    .sod__main {
+      padding: 0;
+      gap: 12px;
+    }
+    .sod__topbar {
+      gap: 6px;
+    }
+    .sod__body {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    .sod__right {
+      width: 100%;
+    }
+    .sod__panel-card,
+    .sod__side-card {
+      box-shadow: none;
+      border: 1px solid #ccc;
+      break-inside: avoid;
+    }
+    .sod__panel-card {
+      overflow-x: visible;
+    }
+    .sod__panel-head,
+    .sod__grid,
+    .sod__totals {
+      min-width: 0;
+    }
+  }
+</style>
+
 <script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+
+  document.getElementById("sod-print-btn")?.addEventListener("click", () => window.print());
+
   import { actions } from "astro:actions";
+  import type { OrderStatus } from "../../../lib/types";
 
-  const control = document.querySelector<HTMLDivElement>("#refund-control");
-  const button = document.querySelector<HTMLButtonElement>("#request-refund-btn");
-  const messageEl = document.querySelector<HTMLParagraphElement>("#refund-message");
+  const container = document.querySelector<HTMLDivElement>("#order-status-actions");
+  if (container) {
+    const orderId = container.dataset.orderId!;
+    const cancelMode = container.dataset.cancelMode;
+    const messageEl = document.querySelector<HTMLParagraphElement>("#status-message")!;
 
-  if (control && button && messageEl) {
-    const paymentId = control.dataset.paymentId!;
+    container.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const action = button.dataset.action;
 
-    button.addEventListener("click", async () => {
+        button.disabled = true;
+        messageEl.textContent = "";
+
+        if (action === "cancel" && cancelMode === "request") {
+          const reason = window.prompt("Reason for requesting cancellation:") ?? "";
+          if (!reason.trim()) {
+            button.disabled = false;
+            return;
+          }
+
+          const { error } = await actions.requestApproval({
+            actionType: "cancel_paid_order",
+            targetTable: "orders",
+            targetId: orderId,
+            reason,
+          });
+
+          if (error) {
+            button.disabled = false;
+            messageEl.textContent = error.message;
+            return;
+          }
+
+          messageEl.textContent = "Cancellation request submitted.";
+          button.remove();
+          return;
+        }
+
+        let reason: string | undefined;
+        if (action === "cancel") {
+          reason = window.prompt("Reason for cancellation:") ?? undefined;
+          if (!reason || !reason.trim()) {
+            button.disabled = false;
+            return;
+          }
+        }
+
+        const newStatus = (action === "cancel" ? "cancelled" : button.dataset.nextStatus!) as OrderStatus;
+        const { error } = await actions.updateOrderStatus({ orderId, newStatus, reason });
+
+        if (error) {
+          button.disabled = false;
+          messageEl.textContent = error.message;
+          return;
+        }
+
+        window.location.reload();
+      });
+    });
+  }
+
+  const refundControl = document.querySelector<HTMLDivElement>("#refund-control");
+  const refundButton = document.querySelector<HTMLButtonElement>("#request-refund-btn");
+  const refundMessageEl = document.querySelector<HTMLParagraphElement>("#refund-message");
+
+  if (refundControl && refundButton && refundMessageEl) {
+    const paymentId = refundControl.dataset.paymentId!;
+
+    refundButton.addEventListener("click", async () => {
       const reason = window.prompt("Reason for requesting a refund:") ?? "";
       if (!reason.trim()) return;
 
-      button.disabled = true;
-      messageEl.textContent = "";
-      messageEl.classList.remove("text-error", "text-success");
+      refundButton.disabled = true;
+      refundMessageEl.textContent = "";
 
       const { error } = await actions.requestApproval({
         actionType: "refund_payment",
@@ -142,15 +1117,13 @@ const canShowRefundControl = canRequestRefund && order?.status === "cancelled" &
       });
 
       if (error) {
-        button.disabled = false;
-        messageEl.textContent = error.message;
-        messageEl.classList.add("text-error");
+        refundButton.disabled = false;
+        refundMessageEl.textContent = error.message;
         return;
       }
 
-      messageEl.textContent = "Refund request submitted.";
-      messageEl.classList.add("text-success");
-      button.remove();
+      refundMessageEl.textContent = "Refund request submitted.";
+      refundButton.remove();
     });
   }
 </script>

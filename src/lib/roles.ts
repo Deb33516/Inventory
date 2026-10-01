@@ -14,6 +14,15 @@ export const APP_SECTIONS: {
   { key: "inventory", label: "Inventory", href: "/inventory", roles: ["inventory_staff", "admin", "super_admin"] },
   { key: "crm", label: "CRM", href: "/crm", roles: ["sales_staff", "admin", "super_admin"] },
   { key: "admin", label: "Admin", href: "/admin", roles: ["admin", "super_admin"] },
+  // Super Admin's own application area — deliberately NOT ["admin",
+  // "super_admin"] like /admin above: super_admin is still separately
+  // authorized to visit /admin (that grant is untouched), but /super
+  // itself is super_admin-only. admin must never gain /super access.
+  // No pages exist under /super yet (routing/shell foundation only, see
+  // NavSidebar.astro's SUPER_NAV) — middleware.ts's PROTECTED_PREFIXES
+  // still needs its own separate "/super" entry for the unauthenticated
+  // case, since that array isn't derived from this one.
+  { key: "super", label: "Super Admin", href: "/super", roles: ["super_admin"] },
 ];
 
 // Derived from APP_SECTIONS so middleware's role gate can't drift from the
@@ -24,14 +33,21 @@ export const ROLE_GATED_PREFIXES: Record<string, UserRole[]> = Object.fromEntrie
 
 // Where a staff/admin role's own "home" lives — used by PublicHeader's
 // "Go to dashboard" link (for a staff member who ends up on a customer
-// page) and by middleware's customer-only route guard below. admin and
-// super_admin share the same /admin area — there is no separate
-// super-admin-only route anywhere in this project.
+// page), by middleware's customer-only route guard below, and by
+// actions/index.ts's signIn action to compute the post-login redirect.
+// admin -> /admin, super_admin -> /super: two genuinely separate
+// application areas as of this turn (previously both pointed at /admin —
+// that was the root cause of super_admin rendering the Admin shell/badge
+// post-login; see the routing/shell-separation audit). super_admin keeps
+// its existing, unrelated authorization to also visit /admin directly
+// (ROLE_GATED_PREFIXES["/admin"] still includes it) — this map only
+// decides where a bare "go to your dashboard" action lands, not who may
+// access what.
 export const ROLE_DASHBOARD: Record<Exclude<UserRole, "customer">, string> = {
   sales_staff: "/sales",
   inventory_staff: "/inventory",
   admin: "/admin",
-  super_admin: "/admin",
+  super_admin: "/super",
 };
 
 // Routes that are part of the customer purchase flow only. A staff/admin

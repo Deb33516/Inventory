@@ -1,0 +1,631 @@
+---
+// Literal recreation of the Claude Design canvas's Sales Product & Stock
+// screen (project/SalesProducts.dc.html -> NavSidebar + NavTop +
+// PageProducts.dc.html with role="sales") — the supplied design is the
+// visual source of truth, not the app's existing DESIGN.md/AppShell/
+// inventory-staff UI. Reuses the same --sd-* token system +
+// NavSidebar.astro/NavTop.astro already established by every approved
+// Sales screen. The existing /inventory/products (staff CRUD) page is
+// NOT reused (its visual output doesn't match this artboard, and it
+// exposes mutation controls sales_staff must never see) — this is a
+// brand-new, read-only page over real, already-authorized SELECT access.
+//
+// PERMISSION DECISION (locked by your instruction): sales_staff is
+// READ-ONLY here. No create/edit/delete/restock/adjust/damage controls
+// exist anywhere on this page — confirmed by omission, not by a disabled
+// button (a disabled mutation control would still visually imply the
+// capability exists). Verified no RLS/schema change was needed:
+// products_select_staff and inventory_select_staff (0003_catalog.sql /
+// 0005_inventory.sql) already grant sales_staff real SELECT on both
+// tables — this turn added zero new policies. Verified no middleware
+// change was needed either: /sales/products falls under the existing
+// "/sales" prefix (already gated to sales_staff/admin/super_admin in
+// src/lib/roles.ts's APP_SECTIONS) — src/middleware.ts itself is
+// untouched. The one necessary wiring change is
+// src/components/staff/NavSidebar.astro's "Products & stock" item,
+// previously disabled with href=null because no real route existed yet
+// (its own prior comment said exactly that) — now pointed at this real
+// page. No other nav entry, no other screen, changed.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: active products (products_select_staff — same real RLS every
+//    other Sales screen already relies on), SKU, name, real category
+//    (categories.name via the existing category_id FK), real price, real
+//    inventory.quantity_on_hand, real stock status derived from
+//    quantity_on_hand vs reorder_level (identical in/low/out convention
+//    already approved on the Sales Dashboard and New Order — 0 = out,
+//    <= reorder_level = low, else in stock), real category tabs with
+//    real per-category counts, real working name/SKU search, a real
+//    "Availability" filter (All/In stock/Low stock/Out of stock — a
+//    genuine filter over the same real stock computation, not a
+//    fabricated facet), the "Read-only" badge next to the title (matches
+//    the design's own isSales branch — literally true), real "Add to
+//    order" link to the existing, unmodified /sales/orders/new route
+//    (does not pre-select the product — that route has no
+//    product-preselection param and New Order is explicitly out of scope
+//    to modify this turn, same disclosed limitation already established
+//    on Contacts's "New order" links).
+//  - "Avail. to promise" column (on hand − reserved): no reservation/hold
+//    concept exists anywhere in the schema — omitted rather than
+//    computed against a fabricated "reserved" number.
+//  - "Next restock" column: no incoming-shipment/purchase-order/expected-
+//    delivery data exists anywhere — omitted.
+//  - "Supplier" column/facet: suppliers are associated with individual
+//    inventory_movements (nullable, restock-specific), not with a
+//    product's or inventory row's fixed "primary supplier" — there is no
+//    real single-supplier-per-product concept to show — omitted.
+//  - "Scan barcode" button (isStaff-only in the design, not shown to
+//    sales anyway) and "Manage categories" (isAdmin-only): both already
+//    excluded from the sales branch by the design's own role gates —
+//    matches the artboard exactly, not a deviation.
+//  - Product name/SKU: the design's own sales branch renders this as
+//    plain non-linked text (only the isAdmin branch links to a detail
+//    page) — kept exactly as the artboard shows it, no link added.
+//  - "View" grid/list toggle: no view-mode capability exists — omitted.
+//  - Footer pagination ("Rows per page 9" / "Page 1 of 380" / prev/next):
+//    no pagination exists on this brand-new page — same "{N} products"
+//    honest-count precedent already used on /account/orders and
+//    /sales/orders, rather than fake page controls.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const category = url.searchParams.get("category") ?? "";
+const availability = url.searchParams.get("availability") ?? "";
+
+const { data: productRows } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, price, category_id, categories(name), inventory(quantity_on_hand, reorder_level)")
+  .eq("is_active", true)
+  .order("name");
+
+function categoryOf(row: { categories: unknown }): { name: string } | null {
+  return row.categories as unknown as { name: string } | null;
+}
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+
+const allProducts = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+  return {
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    price: p.price,
+    categoryId: p.category_id,
+    categoryName: categoryOf(p)?.name ?? "Uncategorised",
+    qty,
+    stockTone,
+  };
+});
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+// --- Real category tabs (counts over the full real active-product set, unaffected by search/availability) ---
+const categoryCounts = new Map<string, { name: string; count: number }>();
+for (const p of allProducts) {
+  if (!p.categoryId) continue;
+  const existing = categoryCounts.get(p.categoryId);
+  if (existing) existing.count += 1;
+  else categoryCounts.set(p.categoryId, { name: p.categoryName, count: 1 });
+}
+const categoryTabs = [...categoryCounts.entries()]
+  .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+const AVAILABILITY_TABS: { key: string; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "in", label: "In stock" },
+  { key: "low", label: "Low stock" },
+  { key: "out", label: "Out of stock" },
+];
+const availabilityCounts = new Map<string, number>([
+  ["in", allProducts.filter((p) => p.stockTone === "in").length],
+  ["low", allProducts.filter((p) => p.stockTone === "low").length],
+  ["out", allProducts.filter((p) => p.stockTone === "out").length],
+]);
+
+const filtered = allProducts.filter((p) => {
+  if (category && p.categoryId !== category) return false;
+  if (availability && p.stockTone !== availability) return false;
+  if (!search) return true;
+  const needle = search.toLowerCase();
+  return p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle);
+});
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/sales/products?${qs}` : "/sales/products";
+}
+---
+
+<BaseLayout title="Products & stock — Sales">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Products & stock" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Tools" page="Products & stock" searchAction="/sales/products" searchName="search" searchValue={search} searchPlaceholder="Filter by name or SKU…" />
+
+      <main id="main-content" class="ps__main">
+        <div class="ps__header">
+          <div class="ps__heading-col">
+            <div class="ps__heading-row">
+              <h1>Products &amp; stock</h1>
+              <span class="ps__readonly-badge">Read-only</span>
+            </div>
+            <span class="ps__subtitle">Prices and what you can promise today</span>
+          </div>
+        </div>
+
+        <div class="ps__toolbar">
+          <div role="tablist" aria-label="Category" class="ps__tabs">
+            <a href={buildUrl({ category: undefined })} role="tab" aria-selected={!category} class={!category ? "is-active" : ""}>
+              All <span class="ps__tab-count">{allProducts.length}</span>
+            </a>
+            {categoryTabs.map((t) => (
+              <a href={buildUrl({ category: t.id })} role="tab" aria-selected={category === t.id} class={category === t.id ? "is-active" : ""}>
+                {t.name} <span class="ps__tab-count">{t.count}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div class="ps__toolbar">
+          <div class="ps__facets">
+            {AVAILABILITY_TABS.map((a) => (
+              <a href={buildUrl({ availability: a.key || undefined })} class={`ps__facet ${availability === a.key ? "is-active" : ""}`}>
+                {a.label}
+                {a.key && <span class="ps__facet-count">{availabilityCounts.get(a.key)}</span>}
+              </a>
+            ))}
+          </div>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="ps__panel">
+              <div class="ps__grid ps__grid-head">
+                <span>Product</span>
+                <span>Category</span>
+                <span class="ps__col-right">Price</span>
+                <span class="ps__col-right">On hand</span>
+                <span>Status</span>
+                <span></span>
+              </div>
+              {filtered.map((p) => (
+                <div class="ps__grid ps__row">
+                  <div class="ps__product-cell">
+                    <span class="ps__product-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9" /></svg>
+                    </span>
+                    <span class="ps__product-name-col">
+                      <span class="ps__product-name">{p.name}</span>
+                      <span class="ps__product-sku">{p.sku}</span>
+                    </span>
+                  </div>
+                  <span class="ps__muted-cell">{p.categoryName}</span>
+                  <span class="ps__col-right ps__total">{formatCurrency(p.price)}</span>
+                  <span class="ps__col-right ps__muted-cell">{p.qty}</span>
+                  <span>
+                    <span class={`ps__pill ps__pill--${p.stockTone}`}>{STOCK_LABEL[p.stockTone]}</span>
+                  </span>
+                  <a href="/sales/orders/new" class="ps__view-link">Add to order</a>
+                </div>
+              ))}
+              <div class="ps__panel-footer">{filtered.length} of {allProducts.length} product{allProducts.length === 1 ? "" : "s"}</div>
+            </div>
+          ) : (
+            <div class="ps__empty">
+              <p class="ps__empty-title">No products found</p>
+              <p class="ps__empty-body">Try a different search or filter.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .ps__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .ps__main {
+      padding: 16px;
+    }
+  }
+
+  .ps__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .ps__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ps__heading-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ps__heading-row h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .ps__readonly-badge {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-fg2);
+  }
+  .ps__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .ps__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .ps__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    max-width: 100%;
+  }
+  .ps__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .ps__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .ps__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .ps__tabs a.is-active .ps__tab-count {
+    color: var(--sd-muted-fg);
+  }
+
+  .ps__facets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ps__facet {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ps__facet.is-active {
+    border-style: solid;
+    background: var(--sd-muted);
+  }
+  .ps__facet-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+  }
+
+  .ps__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .ps__grid {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.8fr) 130px 100px 90px 110px 110px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 780px;
+  }
+  .ps__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .ps__row {
+    height: 58px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .ps__product-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .ps__product-icon {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ps__product-name-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .ps__product-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ps__product-sku {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .ps__col-right {
+    text-align: right;
+  }
+  .ps__muted-cell {
+    color: var(--sd-fg2);
+  }
+  .ps__total {
+    font-weight: 500;
+  }
+  .ps__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .ps__pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .ps__pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .ps__pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .ps__view-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-accent);
+    text-decoration: none;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .ps__panel-footer {
+    min-width: 780px;
+    box-sizing: border-box;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .ps__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .ps__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .ps__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

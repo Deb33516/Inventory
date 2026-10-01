@@ -1,27 +1,60 @@
 ---
-// Matches the Claude Design canvas's Customer Support Ticket artboard
-// (project/PageCustTicket.dc.html, imported by CustTicket.dc.html).
+// Literal recreation of the Claude Design canvas's Support Ticket artboard
+// (project/PageCustTicket.dc.html, imported by CustTicket.dc.html) — the
+// supplied design is the visual source of truth, not the app's existing
+// DESIGN.md component system. Reuses the same --cp-* token system and
+// NavCustomer header already approved on every other Customer screen
+// (active="Support", same tab as the Support list page). Card/Badge/
+// EmptyState are NOT reused (their visual output doesn't match this
+// artboard) — this page rebuilds fresh markup over the same real,
+// unchanged support_tickets query and RLS.
 //
-// Real: subject/description (rendered as the customer's own opening
-// message), status, resolution once set, and a Created/current-status
-// timeline built from created_at/updated_at.
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Real: ticket id (truncated UUID, same display convention as
+//    elsewhere — no fake "TK-1191" reference scheme), subject, status
+//    (full real 5-value enum), "Created {date}", the customer's own
+//    opening message (rendered as the first real conversation card, body
+//    = ticket.description, timestamp = created_at), a second real
+//    conversation card for the resolution IF ticket.resolution is set
+//    (body = ticket.resolution, timestamp = updated_at, labelled
+//    "Support team"), the real Created→current-status→Resolved timeline
+//    (built from created_at/updated_at/status, same honest logic this
+//    page already had before this pass).
+//  - Metadata row: the design shows "TK-1191 · Order issue · Related
+//    order SO-10482 · Created 28 Sep 2026, 10:12" — only "Created {date}"
+//    has any real backing. "Order issue" (category) and "Related order"
+//    have no columns on support_tickets at all (no category, no
+//    order_id) — both omitted rather than invented.
+//  - Conversation thread / follow-up composer / photo attachments: the
+//    design shows a live multi-message thread with staff replies, a
+//    reply composer, and attachment chips. support_tickets is a single
+//    row (subject/description/status/resolution), not a message thread —
+//    there is no support_ticket_messages table, no order_id relation, no
+//    attachment storage, and customer-role RLS on this table grants
+//    SELECT only (support_tickets_select_own_customer) — there is no
+//    UPDATE/INSERT policy for the customer role at all, so even a real
+//    composer would have no write path to call. Per your explicit
+//    instruction, the composer is kept visually present (textarea +
+//    "Attach photos" + "Send", matching the design's layout) but
+//    disabled, with an honest inline note that replying/attachments
+//    aren't available yet — nothing here pretends to save.
+//  - Fabricated staff replies, fake follow-up messages, fake attachment
+//    files, fake order numbers, fake staff names, fake message
+//    timestamps: none added. The only two conversation cards possible are
+//    the real description and the real resolution (if set).
 //
-// Deliberately deferred, not fabricated: the design's live conversation
-// thread (staff replies, a follow-up composer, photo attachments, and a
-// "related order" link) has no backing data model — support_tickets is a
-// single row (subject/description/status/resolution), not a message
-// thread, and has no order-reference column. RLS also gives the customer
-// SELECT only on this table (support_tickets_select_own_customer) — no
-// UPDATE policy exists for the customer role at all, so even if a reply
-// composer were built here, there's no write path for it to call. Rather
-// than invent a ticket_messages table or a customer-write RLS policy
-// without approval, this page shows the real single-message ticket
-// honestly and omits the composer entirely.
+// BACKEND CAPABILITY GAP (flagged, not silently built): a faithful
+// version of this design's conversation thread + composer + attachments
+// + "related order" link would require: a support_ticket_messages table
+// (message-level thread), a support_ticket_attachments table (or storage
+// bucket) with matching RLS, an order_id column on support_tickets (or a
+// join table) for the "related order" link, and a customer-scoped
+// INSERT/UPDATE RLS policy so a customer could actually post a follow-up.
+// None of that has been added this turn — this page stays visual-only
+// for those sections, per your explicit "STOP and report" instruction
+// instead of silently migrating.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import Badge from "../../../components/ui/Badge.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import PublicHeader from "../../../components/layout/PublicHeader.astro";
+import NavCustomer from "../../../components/customer/NavCustomer.astro";
 import type { TicketStatus } from "../../../lib/types";
 
 const { id } = Astro.params;
@@ -38,93 +71,679 @@ if (!ticket) {
   Astro.response.status = 404;
 }
 
-const statusTone: Record<TicketStatus, "success" | "warning" | "error" | "neutral"> = {
-  open: "neutral",
-  in_progress: "warning",
-  waiting: "warning",
+const STATUS_TONE: Record<TicketStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  open: "outline",
+  in_progress: "info",
+  waiting: "warn",
   resolved: "success",
-  closed: "neutral",
+  closed: "muted",
 };
-const statusLabel: Record<TicketStatus, string> = {
+const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
-  in_progress: "In progress",
+  in_progress: "In Progress",
   waiting: "Waiting",
   resolved: "Resolved",
   closed: "Closed",
 };
+
 const isDone = ticket ? ["resolved", "closed"].includes(ticket.status) : false;
+
+const formatDateTime = (value: string) =>
+  new Date(value).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 ---
 
 <BaseLayout title={ticket ? `${ticket.subject} — Support` : "Ticket not found — Inventory"}>
-  <PublicHeader backHref="/account/support" backLabel="My tickets" />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    {
-      ticket ? (
-        <>
-          <div class="flex items-center gap-sm flex-wrap">
-            <h1 class="text-2xl font-bold text-ink">{ticket.subject}</h1>
-            <Badge tone={statusTone[ticket.status as TicketStatus]}>{statusLabel[ticket.status as TicketStatus]}</Badge>
-          </div>
-          <p class="mt-xs text-sm text-muted">Created {new Date(ticket.created_at).toLocaleString()}</p>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-          <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-lg items-start">
-            <Card>
-              <div class="flex gap-md">
-                <span class="w-8 h-8 rounded-full bg-surface-soft text-xs font-bold text-muted flex items-center justify-center shrink-0">You</span>
-                <div class="flex-grow min-w-0">
-                  <p class="text-sm font-bold text-ink">You</p>
-                  <p class="mt-xxs text-sm text-body whitespace-pre-line">{ticket.description}</p>
-                </div>
-              </div>
+    <NavCustomer active="Support" />
 
-              {ticket.resolution && (
-                <div class="mt-md pt-md border-t border-hairline flex gap-md">
-                  <span class="w-8 h-8 rounded-full bg-surface-strong text-xs font-bold text-ink flex items-center justify-center shrink-0">
-                    ST
+    <main id="main-content" class="cp__main">
+      {
+        ticket ? (
+          <Fragment>
+            <div class="tk__header">
+              <a href="/account/support" class="tk__back">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                My tickets
+              </a>
+              <div class="tk__title-block">
+                <div class="tk__title-row">
+                  <h1>{ticket.subject}</h1>
+                  <span class={`tk__pill tk__pill--${STATUS_TONE[ticket.status as TicketStatus] ?? "muted"}`}>
+                    {STATUS_LABEL[ticket.status as TicketStatus] ?? ticket.status}
                   </span>
-                  <div class="flex-grow min-w-0">
-                    <p class="text-sm font-bold text-ink">Support team</p>
-                    <p class="mt-xxs text-sm text-body whitespace-pre-line">{ticket.resolution}</p>
-                  </div>
                 </div>
-              )}
-
-              <p class="mt-lg pt-md border-t border-hairline text-xs text-muted">
-                Replying isn't available on this page yet. If you have more details to add, create a new ticket and mention this
-                one's subject.
-              </p>
-            </Card>
-
-            <Card>
-              <h2 class="text-sm font-bold text-ink">Status</h2>
-              <div class="mt-md space-y-md">
-                <div class="flex gap-sm">
-                  <span class="w-2.5 h-2.5 mt-1 rounded-full bg-ink shrink-0" />
-                  <div>
-                    <p class="text-sm font-bold text-ink">Created</p>
-                    <p class="text-xs text-muted">{new Date(ticket.created_at).toLocaleString()}</p>
-                  </div>
-                </div>
-                <div class="flex gap-sm">
-                  <span class={`w-2.5 h-2.5 mt-1 rounded-full shrink-0 ${isDone ? "bg-ink" : "bg-hairline-strong"}`} />
-                  <div>
-                    <p class={`text-sm font-bold ${isDone ? "text-ink" : "text-muted"}`}>
-                      {isDone ? statusLabel[ticket.status as TicketStatus] : "In progress"}
-                    </p>
-                    <p class="text-xs text-muted">{new Date(ticket.updated_at).toLocaleString()}</p>
-                  </div>
-                </div>
+                <span class="tk__meta">
+                  <span class="tk__meta-id">{ticket.id.slice(0, 8)}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Created {formatDateTime(ticket.created_at)}</span>
+                </span>
               </div>
-              {!isDone && (
-                <p class="mt-md pt-md border-t border-hairline text-xs text-muted">You'll see the resolution here once resolved.</p>
-              )}
-            </Card>
+            </div>
+
+            <div class="tk__body">
+              <section aria-label="Conversation" class="tk__conversation">
+                <div class="tk__thread">
+                  <article class="tk__message">
+                    <span class="tk__avatar tk__avatar--customer">You</span>
+                    <div class="tk__message-body">
+                      <div class="tk__message-head">
+                        <span class="tk__message-name">You</span>
+                        <span class="tk__message-role">Customer</span>
+                        <span class="tk__message-time">{formatDateTime(ticket.created_at)}</span>
+                      </div>
+                      <p class="tk__message-text">{ticket.description}</p>
+                    </div>
+                  </article>
+
+                  {ticket.resolution && (
+                    <article class="tk__message">
+                      <span class="tk__avatar tk__avatar--staff">ST</span>
+                      <div class="tk__message-body">
+                        <div class="tk__message-head">
+                          <span class="tk__message-name">Support team</span>
+                          <span class="tk__message-role">Staff</span>
+                          <span class="tk__message-time">{formatDateTime(ticket.updated_at)}</span>
+                        </div>
+                        <p class="tk__message-text">{ticket.resolution}</p>
+                      </div>
+                    </article>
+                  )}
+                </div>
+
+                <div class="tk__composer">
+                  <label for="followup">Add a follow-up</label>
+                  <textarea id="followup" placeholder="Replying isn't available on this ticket page yet." disabled />
+                  <div class="tk__composer-actions">
+                    <button type="button" class="tk__attach-btn" disabled>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5"></path></svg>
+                      Attach photos
+                    </button>
+                    <div class="tk__composer-spacer" />
+                    <button type="button" class="tk__send-btn" disabled>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12 20 4l-6 16-3-7z"></path></svg>
+                      Send
+                    </button>
+                  </div>
+                  <p class="tk__composer-note">
+                    Replying and attachments aren't available on this page yet. If you have more details to add, create a new ticket and mention this one's subject.
+                  </p>
+                </div>
+              </section>
+
+              <section aria-label="Ticket status" class="tk__status-card">
+                <div class="tk__status-head">
+                  <h2>Status</h2>
+                  <span>How your ticket is progressing</span>
+                </div>
+                <ol class="tk__timeline">
+                  <li class="tk__timeline-step">
+                    <span class="tk__timeline-rail">
+                      <span class="tk__timeline-dot tk__timeline-dot--done" />
+                      <span class="tk__timeline-line" />
+                    </span>
+                    <span class="tk__timeline-text">
+                      <span class="tk__timeline-label tk__timeline-label--done">Created</span>
+                      <span class="tk__timeline-time">{formatDateTime(ticket.created_at)}</span>
+                    </span>
+                  </li>
+                  {!isDone && (
+                    <li class="tk__timeline-step">
+                      <span class="tk__timeline-rail">
+                        <span class="tk__timeline-dot tk__timeline-dot--done" />
+                        <span class="tk__timeline-line" />
+                      </span>
+                      <span class="tk__timeline-text">
+                        <span class="tk__timeline-label tk__timeline-label--done">{STATUS_LABEL[ticket.status as TicketStatus] ?? ticket.status}</span>
+                        <span class="tk__timeline-time">{formatDateTime(ticket.updated_at)}</span>
+                      </span>
+                    </li>
+                  )}
+                  <li class="tk__timeline-step tk__timeline-step--last">
+                    <span class="tk__timeline-rail">
+                      <span class={`tk__timeline-dot ${isDone ? "tk__timeline-dot--done" : ""}`} />
+                    </span>
+                    <span class="tk__timeline-text">
+                      <span class={`tk__timeline-label ${isDone ? "tk__timeline-label--done" : ""}`}>
+                        {isDone ? (STATUS_LABEL[ticket.status as TicketStatus] ?? ticket.status) : "Resolved"}
+                      </span>
+                      <span class="tk__timeline-time">{isDone ? formatDateTime(ticket.updated_at) : "Pending"}</span>
+                    </span>
+                  </li>
+                </ol>
+                {!isDone && (
+                  <div class="tk__status-note">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 11v5M12 8h.01"></path></svg>
+                    <span>You'll see the resolution here once resolved.</span>
+                  </div>
+                )}
+              </section>
+            </div>
+          </Fragment>
+        ) : (
+          <div class="tk__notfound">
+            <p class="tk__notfound-title">Ticket not found</p>
+            <p class="tk__notfound-body">This ticket may not exist, or may belong to a different account.</p>
+            <a href="/account/support" class="btn-outline-sm">Back to My tickets</a>
           </div>
-        </>
-      ) : (
-        <EmptyState title="Ticket not found" />
-      )
-    }
-  </main>
+        )
+      }
+    </main>
+  </div>
 </BaseLayout>
+
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-warn-bg: #fef3e2;
+    --cp-warn-fg: #9a3412;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-success-bg: #ecfdf3;
+    --cp-success-fg: #15803d;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-warn-bg: #2e1f0e;
+    --cp-warn-fg: #fdba74;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-success-bg: #0f2a1c;
+    --cp-success-fg: #4ade80;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+  .btn-outline-sm {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .tk__header {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .tk__back {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+    text-decoration: none;
+  }
+  .tk__title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .tk__title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .tk__title-row h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .tk__meta {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tk__meta-id {
+    font-weight: 500;
+    color: var(--cp-fg2);
+  }
+
+  .tk__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tk__pill--outline {
+    border: 1px solid var(--cp-input);
+    color: var(--cp-fg);
+  }
+  .tk__pill--warn {
+    background: var(--cp-warn-bg);
+    color: var(--cp-warn-fg);
+  }
+  .tk__pill--info {
+    background: var(--cp-info-bg);
+    color: var(--cp-info-fg);
+  }
+  .tk__pill--success {
+    background: var(--cp-success-bg);
+    color: var(--cp-success-fg);
+  }
+  .tk__pill--muted {
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+  }
+
+  .tk__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1100px) {
+    .tk__body {
+      flex-direction: row;
+    }
+  }
+
+  .tk__conversation {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .tk__thread {
+    padding: 20px;
+    background: var(--cp-panel);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .tk__message {
+    box-sizing: border-box;
+    padding: 12px 14px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    display: flex;
+    gap: 12px;
+  }
+  .tk__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tk__avatar--customer {
+    background: var(--cp-muted);
+    color: var(--cp-fg2);
+  }
+  .tk__avatar--staff {
+    background: var(--cp-info-bg);
+    color: var(--cp-info-fg);
+  }
+  .tk__message-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tk__message-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 20px;
+  }
+  .tk__message-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .tk__message-role {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .tk__message-time {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+    white-space: nowrap;
+  }
+  .tk__message-text {
+    margin: 0;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--cp-fg);
+    white-space: pre-line;
+  }
+
+  .tk__composer {
+    box-sizing: border-box;
+    padding: 16px 20px;
+    border-top: 1px solid var(--cp-border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .tk__composer label {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .tk__composer textarea {
+    height: 88px;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--cp-input);
+    border-radius: 8px;
+    background: var(--cp-shell);
+    font: inherit;
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+    resize: none;
+  }
+  .tk__composer textarea:disabled {
+    cursor: not-allowed;
+  }
+  .tk__composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tk__composer-spacer {
+    flex-grow: 1;
+  }
+  .tk__attach-btn {
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-muted-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tk__send-btn {
+    height: 36px;
+    padding: 0 16px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 0;
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tk__attach-btn:disabled,
+  .tk__send-btn:disabled {
+    cursor: not-allowed;
+  }
+  .tk__composer-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+    line-height: 1.5;
+  }
+
+  .tk__status-card {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1100px) {
+    .tk__status-card {
+      width: 320px;
+      flex-shrink: 0;
+    }
+  }
+  .tk__status-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tk__status-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .tk__status-head span {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .tk__timeline {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+  }
+  .tk__timeline-step {
+    display: flex;
+    gap: 12px;
+  }
+  .tk__timeline-rail {
+    width: 16px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .tk__timeline-dot {
+    width: 10px;
+    height: 10px;
+    margin-top: 4px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 2px solid var(--cp-input);
+    background: var(--cp-card);
+  }
+  .tk__timeline-dot--done {
+    border: none;
+    background: var(--cp-primary);
+  }
+  .tk__timeline-line {
+    width: 2px;
+    flex-grow: 1;
+    margin: 4px 0;
+    background: var(--cp-border);
+  }
+  .tk__timeline-text {
+    padding-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tk__timeline-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+  }
+  .tk__timeline-label--done {
+    color: var(--cp-fg);
+  }
+  .tk__timeline-time {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .tk__status-note {
+    box-sizing: border-box;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--cp-fg2);
+    display: flex;
+    gap: 8px;
+  }
+  .tk__status-note svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--cp-muted-fg);
+  }
+
+  .tk__notfound {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .tk__notfound-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .tk__notfound-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+</style>
+
+<script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+</script>

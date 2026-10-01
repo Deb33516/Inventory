@@ -1,0 +1,804 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Products screen.
+// No distinct "AdminProducts.dc.html" artboard exists in the design
+// export (same situation as every other Admin screen so far) — the
+// ground truth is project/PageProducts.dc.html's own `role="admin"`
+// branch, composed into the established Admin shell: NavSidebar
+// role="admin" + the plain shared NavTop.astro (section="Inventory",
+// matching ADMIN_NAV's own "Inventory" group label — the same section
+// name the sibling /inventory/products screen already uses for this
+// exact same design). project/StaffLookup.dc.html's own role="staff"
+// composition (already built as /inventory/products/index.astro) proved
+// the real query/derivation techniques reused below — same real
+// products/categories/inventory data, same real supplier-from-restock
+// derivation, same real stock-status computation — just with the design's
+// genuinely different isAdmin column set (Cost/Price/Margin, not
+// Location·bin/Supplier-as-column) and admin-specific real capabilities
+// layered on top.
+//
+// ROUTE REUSE / SHELL WARNING: /inventory/products/new.astro and
+// /inventory/products/[id].astro are real, still-functioning product
+// create/edit forms (inventory_staff/admin/super_admin genuinely retain
+// products_insert_staff/products_update_staff RLS) — but they render the
+// OLD AppShell/DESIGN.md visual system, not this Claude Design shell.
+// Per your explicit "do not reuse Sales/Inventory page markup" and
+// "Admin shell experience" instructions, and the same wrong-shell
+// reasoning already applied throughout this project (Inventory Staff's
+// Support Tickets, Admin Customers' preview panel, Admin Sales Orders'
+// New order button before Admin New Order existed), this screen does NOT
+// link to either of those old-shell forms. Same for /inventory/categories
+// (also real, also old-shell) — not linked to either.
+//
+// CREATE / EDIT SCOPE: the design's "New product" button and each
+// product-name link both point to a single "AdminProductDetail" screen
+// (detailHref) that serves as both the create form and the edit/view
+// screen — that screen is explicitly out of scope this turn ("Do not
+// implement: Admin Product Info"). Building a full inline create/edit
+// form directly on this list screen instead would be inventing that same
+// screen under a different name, so — same precedent as Admin Sales
+// Orders' "New order" button and order-id link before Admin Order
+// Detail/Admin New Order existed — both are OMITTED this turn, not routed
+// anywhere fake, and will become real once Admin Product Info is
+// approved. "Manage categories" is omitted for the identical reason
+// (genuine category CRUD exists, but only via the old-shell
+// /inventory/categories UI — building a new Admin-shell category
+// subsystem is explicitly out of scope: "otherwise do not create a new
+// category-management subsystem in this turn," and no Claude Design
+// screen for it exists in this project's 13-screen list either).
+//
+// DELETE SCOPE: unlike create/edit, delete needs no form — a real,
+// role-correct delete action was wired directly into this screen's own
+// row-actions slot (no new screen needed), reusing the exact same
+// backend Admin Order Detail's cancel/refund controls already proved:
+// super_admin gets the real, direct `deleteProduct` Action (real
+// products_delete_super_admin RLS); admin gets the real
+// `requestApproval({actionType:'delete_product'})` flow (Phase 9's
+// existing approval workflow — admin is already one of the five
+// action-type-authorized requester roles for delete_product). Neither
+// role gets more than it already has — admin was NEVER given direct
+// delete, exactly preserving products_delete_super_admin's existing
+// boundary. create_approval_request()'s own real validation (rejects a
+// product with any order_items/inventory_movements history, rejects a
+// duplicate pending request) surfaces its real error message unchanged.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: SKU, name, real category (categories join), real price, real
+//    cost (nullable — "—" shown honestly when absent, same as the design
+//    admin branch would need for any product without a recorded cost),
+//    real Margin (only computed when cost is present — (price−cost)/price,
+//    never fabricated when cost is null), real inventory on-hand, real
+//    reorder level ("Low at"), real stock-status pill (In stock/Low/Out —
+//    identical qty<=reorder_level computation used everywhere else in
+//    this project), real category tabs with real counts, real name/SKU
+//    search, real "Status" facet (in/low/out — same real facet mapping
+//    already proven on /inventory/products, not repurposed to mean
+//    something else), real "Supplier" facet (same real most-recent-
+//    restock derivation already proven on /inventory/products — the only
+//    place a supplier is ever actually attached to a product in this
+//    schema).
+//  - Admin-specific real addition beyond the sibling staff/sales screens:
+//    this screen shows the FULL real catalog (active AND inactive), not
+//    just active products — products_select_staff RLS already grants
+//    admin (and every staff role) unscoped product visibility regardless
+//    of is_active; /sales/products and /inventory/products simply choose
+//    not to exercise that for their own read-only/lookup purposes. A
+//    small real "Inactive" tag renders next to the product name only when
+//    is_active is false (0 real rows currently exercise this, but the
+//    field and its real value are genuinely used, not fabricated).
+//  - Product name now links to the real /admin/products/[id] (Admin
+//    Product Info, built in a later turn) — previously plain text while
+//    that screen didn't exist yet.
+//  - "New product" button, "Manage categories": still omitted — see
+//    CREATE / EDIT SCOPE / DELETE SCOPE above (unchanged this turn).
+//  - "Import" header action: admin-only in the design, but no real bulk-
+//    import capability exists anywhere in this app — omitted, not
+//    invented (same precedent as Admin Customers' own "Import" button).
+//  - Row checkboxes + any bulk action: no real bulk product action exists
+//    — omitted (same "do not invent bulk actions" precedent as every
+//    other Admin list screen).
+//  - "..." row-actions dots: replaced with the one real action this
+//    schema and RLS actually support per-row without a new screen —
+//    Delete/Request deletion (see DELETE SCOPE above) — not a fake menu.
+//  - "View" grid/list toggle, pagination footer ("Page 1 of 380"): no
+//    view-mode or pagination capability exists — omitted, replaced with a
+//    real "{N} of {M} products" count, same precedent as every other
+//    Admin/Sales/Staff list screen.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const category = url.searchParams.get("category") ?? "";
+const status = url.searchParams.get("status") ?? "";
+const supplier = url.searchParams.get("supplier") ?? "";
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+// --- Real full catalog (active AND inactive — see header comment) ---
+const { data: productRows } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, price, cost, is_active, category_id, categories(name), inventory(quantity_on_hand, reorder_level)")
+  .order("name");
+
+// Real "most recent restock supplier" per product — identical derivation
+// already proven on /inventory/products.
+const { data: restockRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("product_id, created_at, suppliers(name)")
+  .eq("movement_type", "restock")
+  .not("supplier_id", "is", null)
+  .order("created_at", { ascending: false });
+
+const supplierByProduct = new Map<string, string>();
+for (const r of restockRows ?? []) {
+  if (supplierByProduct.has(r.product_id as string)) continue;
+  const name = (r.suppliers as unknown as { name: string } | null)?.name;
+  if (name) supplierByProduct.set(r.product_id as string, name);
+}
+
+function categoryOf(row: { categories: unknown }): { name: string } | null {
+  return row.categories as unknown as { name: string } | null;
+}
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+
+const allProducts = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+  const cost = p.cost === null ? null : Number(p.cost);
+  const price = Number(p.price);
+  const margin = cost !== null && price > 0 ? Math.round(((price - cost) / price) * 100) : null;
+  return {
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    isActive: p.is_active,
+    categoryId: p.category_id as string | null,
+    categoryName: categoryOf(p)?.name ?? "Uncategorised",
+    price,
+    cost,
+    margin,
+    qty,
+    reorderLevel,
+    stockTone,
+    supplier: supplierByProduct.get(p.id) ?? null,
+  };
+});
+
+const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+// Real category tabs (counts over the full real catalog, unaffected by
+// search/status/supplier — same convention as /inventory/products).
+const categoryCounts = new Map<string, { name: string; count: number }>();
+for (const p of allProducts) {
+  if (!p.categoryId) continue;
+  const existing = categoryCounts.get(p.categoryId);
+  if (existing) existing.count += 1;
+  else categoryCounts.set(p.categoryId, { name: p.categoryName, count: 1 });
+}
+const categoryTabs = [...categoryCounts.entries()]
+  .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+const STATUS_OPTIONS = [
+  { value: "", label: "All statuses" },
+  { value: "in", label: "In stock" },
+  { value: "low", label: "Low stock" },
+  { value: "out", label: "Out of stock" },
+];
+
+const supplierOptions = [...new Set(allProducts.map((p) => p.supplier).filter((s): s is string => !!s))].sort((a, b) =>
+  a.localeCompare(b)
+);
+
+const filtered = allProducts.filter((p) => {
+  if (category && p.categoryId !== category) return false;
+  if (status && p.stockTone !== status) return false;
+  if (supplier && p.supplier !== supplier) return false;
+  if (!search) return true;
+  const needle = search.toLowerCase();
+  return p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle);
+});
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/admin/products?${qs}` : "/admin/products";
+}
+
+// --- Real subtitle stats (independent of the current search/filter) ---
+const lowOnStockCount = allProducts.filter((p) => p.stockTone === "low" || p.stockTone === "out").length;
+---
+
+<BaseLayout title="Products — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Products" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Inventory" page="Products" searchAction="/admin/products" searchName="search" searchValue={search} searchPlaceholder="Filter by name or SKU…" />
+
+      <main id="main-content" class="ap__main">
+        <div class="ap__header">
+          <div class="ap__heading-col">
+            <h1>Products</h1>
+            <span class="ap__subtitle">{allProducts.length} SKU{allProducts.length === 1 ? "" : "s"} in {categoryTabs.length} categor{categoryTabs.length === 1 ? "y" : "ies"} · {lowOnStockCount} low on stock</span>
+          </div>
+        </div>
+
+        <div class="ap__toolbar">
+          <div role="tablist" aria-label="Category" class="ap__tabs">
+            <a href={buildUrl({ category: undefined })} role="tab" aria-selected={!category} class={!category ? "is-active" : ""}>
+              All <span class="ap__tab-count">{allProducts.length}</span>
+            </a>
+            {categoryTabs.map((t) => (
+              <a href={buildUrl({ category: t.id })} role="tab" aria-selected={category === t.id} class={category === t.id ? "is-active" : ""}>
+                {t.name} <span class="ap__tab-count">{t.count}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div class="ap__toolbar">
+          <select id="ap-status-filter" class="ap__facet-select" aria-label="Filter by status">
+            {STATUS_OPTIONS.map((o) => (
+              <option value={buildUrl({ status: o.value || undefined })} selected={status === o.value}>
+                {o.value ? o.label : "+ Status"}
+              </option>
+            ))}
+          </select>
+          <select id="ap-supplier-filter" class="ap__facet-select" aria-label="Filter by supplier">
+            <option value={buildUrl({ supplier: undefined })} selected={!supplier}>+ Supplier</option>
+            {supplierOptions.map((s) => (
+              <option value={buildUrl({ supplier: s })} selected={supplier === s}>{s}</option>
+            ))}
+          </select>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="ap__panel">
+              <div class="ap__grid ap__grid-head">
+                <span>Product</span>
+                <span>Category</span>
+                <span class="ap__col-right">Cost</span>
+                <span class="ap__col-right">Price</span>
+                <span class="ap__col-right">Margin</span>
+                <span class="ap__col-right">On hand</span>
+                <span class="ap__col-right">Low at</span>
+                <span>Status</span>
+                <span></span>
+              </div>
+              {filtered.map((p) => (
+                <div class="ap__grid ap__row">
+                  <div class="ap__product-cell">
+                    <span class="ap__product-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9" /></svg>
+                    </span>
+                    <a href={`/admin/products/${p.id}`} class="ap__product-name-col">
+                      <span class="ap__product-name-row">
+                        <span class="ap__product-name">{p.name}</span>
+                        {!p.isActive && <span class="ap__inactive-tag">Inactive</span>}
+                      </span>
+                      <span class="ap__product-sku">{p.sku}</span>
+                    </a>
+                  </div>
+                  <span class="ap__muted-cell">{p.categoryName}</span>
+                  <span class="ap__col-right ap__muted-cell">{p.cost !== null ? formatCurrency(p.cost) : "—"}</span>
+                  <span class="ap__col-right ap__price-cell">{formatCurrency(p.price)}</span>
+                  <span class="ap__col-right ap__muted-cell">{p.margin !== null ? `${p.margin}%` : "—"}</span>
+                  <span class="ap__col-right ap__on-hand">{p.qty}</span>
+                  <span class="ap__col-right ap__muted-cell">{p.reorderLevel}</span>
+                  <span>
+                    <span class={`ap__pill ap__pill--${p.stockTone}`}>{STOCK_LABEL[p.stockTone]}</span>
+                  </span>
+                  <span class="ap__row-action">
+                    {viewerRole === "super_admin" ? (
+                      <button type="button" class="ap__delete-btn" data-action="delete-direct" data-product-id={p.id} data-product-name={p.name}>
+                        Delete
+                      </button>
+                    ) : (
+                      <button type="button" class="ap__delete-btn" data-action="delete-request" data-product-id={p.id} data-product-name={p.name}>
+                        Request deletion
+                      </button>
+                    )}
+                  </span>
+                </div>
+              ))}
+              <div class="ap__panel-footer">
+                <span class="ap__panel-footer-count">{filtered.length} of {allProducts.length} product{allProducts.length === 1 ? "" : "s"}</span>
+                <p id="ap-row-message" class="ap__row-message" role="status" />
+              </div>
+            </div>
+          ) : (
+            <div class="ap__empty">
+              <p class="ap__empty-title">No products found</p>
+              <p class="ap__empty-body">Try a different search or filter.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .ap__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .ap__main {
+      padding: 16px;
+    }
+  }
+
+  .ap__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .ap__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ap__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .ap__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  .ap__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .ap__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+    max-width: 100%;
+  }
+  .ap__tabs a {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .ap__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .ap__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .ap__tabs a.is-active .ap__tab-count {
+    color: var(--sd-muted-fg);
+  }
+
+  .ap__facet-select {
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .ap__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .ap__grid {
+    display: grid;
+    grid-template-columns: minmax(200px, 1.8fr) 100px 90px 90px 70px 80px 70px 100px 130px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 980px;
+  }
+  .ap__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .ap__row {
+    height: 58px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .ap__product-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .ap__product-icon {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ap__product-name-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    text-decoration: none;
+    color: inherit;
+  }
+  .ap__product-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .ap__product-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ap__inactive-tag {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .ap__product-sku {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .ap__col-right {
+    text-align: right;
+  }
+  .ap__muted-cell {
+    color: var(--sd-fg2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ap__price-cell {
+    font-weight: 500;
+  }
+  .ap__on-hand {
+    font-weight: 500;
+  }
+  .ap__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .ap__pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .ap__pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .ap__pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .ap__row-action {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .ap__delete-btn {
+    height: 30px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    color: var(--sd-danger-fg);
+    cursor: pointer;
+  }
+  .ap__panel-footer {
+    min-width: 980px;
+    box-sizing: border-box;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .ap__panel-footer-count {
+    line-height: 1.4;
+  }
+  .ap__row-message {
+    margin: 0;
+    font-size: 13px;
+    min-height: 0;
+  }
+
+  .ap__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .ap__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .ap__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  // Status/Supplier filters — each <option>'s value is already the full
+  // real, server-built target URL (see buildUrl() in the frontmatter),
+  // same real pattern already established by /inventory/products.
+  document.getElementById("ap-status-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+  document.getElementById("ap-supplier-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+
+  // --- Real per-row delete / request-deletion — see DELETE SCOPE in the
+  // header comment. Exactly one of the two data-action variants is ever
+  // rendered per row (server-decided by the real viewer role), so this
+  // single listener handles both real, already-authorized paths.
+  const messageEl = document.getElementById("ap-row-message");
+  document.querySelectorAll<HTMLButtonElement>(".ap__delete-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const productId = button.dataset.productId!;
+      const productName = button.dataset.productName ?? "this product";
+      const action = button.dataset.action;
+      if (messageEl) messageEl.textContent = "";
+
+      if (action === "delete-direct") {
+        if (!window.confirm(`Delete "${productName}"? This cannot be undone.`)) return;
+        button.disabled = true;
+        const { error } = await actions.deleteProduct({ productId });
+        if (error) {
+          button.disabled = false;
+          if (messageEl) messageEl.textContent = error.message;
+          return;
+        }
+        window.location.reload();
+        return;
+      }
+
+      // delete-request (admin)
+      const reason = window.prompt(`Reason for requesting deletion of "${productName}":`) ?? "";
+      if (!reason.trim()) return;
+      button.disabled = true;
+      const { error } = await actions.requestApproval({
+        actionType: "delete_product",
+        targetTable: "products",
+        targetId: productId,
+        reason,
+      });
+      if (error) {
+        button.disabled = false;
+        if (messageEl) messageEl.textContent = error.message;
+        return;
+      }
+      if (messageEl) messageEl.textContent = "Deletion request submitted.";
+      button.textContent = "Requested";
+      button.disabled = true;
+    });
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

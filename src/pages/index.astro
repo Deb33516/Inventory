@@ -1,235 +1,1562 @@
 ---
+// Literal recreation of the Claude Design canvas's Landing artboard
+// (project/Landing.dc.html / LandingDark.dc.html) — the supplied design is
+// the visual source of truth for this screen, not the app's existing
+// DESIGN.md component system. Structure, copy, spacing and the light/dark
+// toggle are ported as closely as possible from that artboard.
+//
+// Real vs. simplified, disclosed:
+//  - Nav "Log in" / "Sign Up", hero CTAs, role-card links, footer "Log in"
+//    all point at real routes (/login, /register).
+//  - The hero's "product frame" in the design is a live, scaled-down
+//    render of the Admin dashboard artboard (Admin.dc.html) — that screen
+//    hasn't been rebuilt under this same literal-recreation pass yet, so
+//    a decorative wireframe placeholder (no numbers, no invented data)
+//    stands in for it until Admin is redone; the frame chrome itself
+//    (border, radius, shadow, size) matches the design exactly.
+//  - Pricing section reproduced exactly as supplied, including the
+//    design's own unfilled "₹[price]" placeholder — per your explicit
+//    instruction to include it as-is rather than invent real numbers.
+//  - FAQ accordion uses native <details>/<summary> (same open/closed
+//    visual result as the design's JS-driven version, simpler and more
+//    robust than reimplementing per-item React-style state by hand).
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Button from "../components/ui/Button.astro";
-import ProductCard from "../components/catalog/ProductCard.astro";
-import EmptyState from "../components/catalog/EmptyState.astro";
-import PublicHeader from "../components/layout/PublicHeader.astro";
 
 const user = Astro.locals.user;
 
-const { data: categories } = await Astro.locals.supabase
-  .from("categories")
-  .select("name, slug")
-  .order("name")
-  .limit(6);
+const industries = [
+  { label: "Electrical", icon: "M13 2 4 14h7l-1 8 9-12h-7z" },
+  { label: "Hardware", icon: "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z" },
+  { label: "Building materials", icon: "M3 5h18v14H3zM3 12h18M9 5v7M15 12v7" },
+  { label: "FMCG wholesale", icon: "M3 4h2l2.4 11h11l2-8H6.2M9 20a1 1 0 1 0 2 0a1 1 0 1 0-2 0M17 20a1 1 0 1 0 2 0a1 1 0 1 0-2 0" },
+  { label: "Auto parts", icon: "M5 16h14M6 16l1.5-5h9L18 16M4 16v3h3v-3M17 16v3h3v-3" },
+  { label: "Pharma distribution", icon: "M10.5 20.5a4.95 4.95 0 0 1-7-7l6-6a4.95 4.95 0 0 1 7 7zM7 10l7 7" },
+];
 
-const { data: featuredProducts } = await Astro.locals.supabase
-  .from("products")
-  .select("id, sku, name, price, image_url, categories(name)")
-  .eq("is_active", true)
-  .order("created_at", { ascending: false })
-  .limit(8);
+const roles = [
+  {
+    name: "Super admin",
+    icon: "M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6zM9 12l2 2 4-4",
+    desc: "Owns users, roles and system settings.",
+    points: ["Users and invites", "Roles and permissions", "Audit log"],
+    href: user ? "/admin" : "/login",
+  },
+  {
+    name: "Admin",
+    icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+    desc: "Runs the business day to day.",
+    points: ["Orders and customers", "Products and stock", "Support ticket queue"],
+    href: user ? "/admin" : "/login",
+  },
+  {
+    name: "Sales staff",
+    icon: "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0",
+    desc: "Looks after their own customers.",
+    points: ["Contacts and orders", "Live stock check", "Order reports"],
+    href: user ? "/sales" : "/login",
+  },
+  {
+    name: "Inventory staff",
+    icon: "M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M7 12h10",
+    desc: "Keeps stock accurate.",
+    points: ["Receiving restocks", "Adjustments and damage", "Assigned support tickets"],
+    href: user ? "/inventory" : "/login",
+  },
+  {
+    name: "Customer",
+    icon: "M8 8a4 4 0 1 0 8 0a4 4 0 1 0-8 0M4 21c1-4 4-6 8-6s7 2 8 6",
+    desc: "Serves themselves, any time.",
+    points: ["Shop and checkout", "Order tracking", "Support tickets"],
+    href: user ? "/account" : "/login",
+  },
+];
+
+const benefits = [
+  { title: "Five roles, clear access", desc: "Super admin, admin, sales staff, inventory staff and customers each see only what their job needs." },
+  { title: "Live stock in every order", desc: "Sales and customers see real availability before an order is placed." },
+  { title: "Made for the warehouse floor", desc: "A scan-first workflow for receiving, adjustments and lookups." },
+  { title: "Stock you can trust", desc: "Every receipt, sale, adjustment and damage record is logged as a stock movement." },
+  { title: "Customer self-service", desc: "Customers shop, check out, track their orders and raise tickets on their own." },
+  { title: "Support that closes the loop", desc: "Tickets move from customer to staff and back with a clear resolution." },
+];
+
+const plans = [
+  {
+    name: "Starter",
+    desc: "For a single shop or warehouse getting organised.",
+    popular: false,
+    cta: "Start free trial",
+    features: ["Up to 5 users", "Customers and orders", "Products, categories and stock", "Customer shop and portal", "Support tickets", "Email support"],
+  },
+  {
+    name: "Growth",
+    desc: "For growing distributors with a sales team and a warehouse crew.",
+    popular: true,
+    cta: "Start free trial",
+    features: ["Up to 25 users", "All five roles", "Receiving, adjustments and damage records", "Stock movements history", "Sales and inventory reports", "Priority support"],
+  },
+  {
+    name: "Enterprise",
+    desc: "For larger teams that need extra control and onboarding help.",
+    popular: false,
+    cta: "Contact sales",
+    features: ["Unlimited users", "Audit log", "Two-factor sign-in for staff", "Guided data setup", "Dedicated onboarding manager", "Uptime commitment"],
+  },
+];
+
+const faqs = [
+  ["Can each person see only their own data?", "Yes. Sales staff see their own contacts and orders, inventory staff see stock and the tickets assigned to them, and customers only ever see their own orders and tickets."],
+  ["Can my customers place orders themselves?", "Customers get their own portal with your prices: they browse the shop, check out, track orders and raise support tickets."],
+  ["How do support tickets reach the warehouse?", "A customer raises a ticket, an admin replies or assigns operational issues to inventory staff, and the resolution comes back to the customer in the same ticket."],
+  ["Does it keep a history of stock changes?", "Every receipt, sale, adjustment and damage record is saved as a stock movement, so on-hand numbers can always be explained."],
+  ["Does it work on phones and tablets?", "The whole app is responsive. Warehouse screens are designed for tablets and handheld scanners first."],
+  ["Can we add more features later?", "Yes. The app is built to grow with you; start with the essentials and expand as your team needs more."],
+];
+
+const footerCols = [
+  { title: "Product", links: ["Features", "Roles", "FAQ"] },
+  { title: "Company", links: ["About", "Careers", "Contact"] },
+  { title: "Resources", links: ["Help center", "Guides", "API docs"] },
+  { title: "Legal", links: ["Privacy", "Terms", "Security"] },
+];
+
+const loginHref = user ? "/account" : "/login";
+const signupHref = user ? "/account" : "/register";
 ---
 
-<BaseLayout title="Inventory — CRM, stock and a customer portal, in one place">
-  <PublicHeader />
+<BaseLayout title="Inventory — Sell, stock and ship from one calm workspace">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <section id="main-content" class="bg-surface-dark text-on-dark py-xxl px-lg">
-    <div class="max-w-[1440px] mx-auto flex flex-col items-center text-center">
-      <p class="uppercase text-xs tracking-[1.5px] text-on-dark-soft mb-sm">Role-based dashboards for every login</p>
-      <h1 class="text-4xl sm:text-6xl font-bold leading-[1.05] max-w-3xl">
-        Sell, stock and ship from one calm workspace
-      </h1>
-      <p class="mt-md max-w-xl font-light text-on-dark-soft">
-        Inventory brings your CRM, stock and customer portal together. Every login, from owner
-        to warehouse floor, sees exactly the screens it needs.
-      </p>
-      <div class="mt-lg flex gap-md">
+  <div class="landing" id="landing-root">
+    <!-- ================= NAV (floating) ================= -->
+    <header class="landing-nav">
+      <a href="/" class="landing-nav__brand">
+        <span class="landing-nav__logo"><span></span></span>
+        <span>Inventory</span>
+      </a>
+      <nav aria-label="Primary" class="landing-nav__links">
+        <a href="#roles">Roles</a>
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="landing-nav__spacer"></div>
+      <button type="button" id="landing-theme-toggle" class="landing-nav__theme" aria-label="Switch to dark mode">
+        <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+        <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+      </button>
+      <a href={loginHref} class="landing-nav__login">{user ? "My account" : "Log in"}</a>
+      <a href={signupHref} class="landing-nav__signup">
+        <span>{user ? "Go to dashboard" : "Sign Up"}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+    </header>
+
+    <!-- ================= HERO ================= -->
+    <section class="landing-hero" id="top">
+      <div class="landing-hero__inner">
+        <a href="#roles" class="landing-badge">
+          <span class="landing-badge__dot"></span>
+          Role-based dashboards for every login
+          <span class="landing-badge__cta">See how <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></span>
+        </a>
+        <h1 class="landing-hero__title">Sell, stock and ship from one calm workspace</h1>
+        <p class="landing-hero__sub">
+          Inventory brings your CRM, stock and customer portal together. Every login, from owner
+          to warehouse floor, sees exactly the screens it needs.
+        </p>
+        <div class="landing-hero__ctas">
+          <a href={signupHref} class="btn-primary">{user ? "Go to dashboard" : "Start free trial"}</a>
+          <a href="#features" class="btn-secondary">See the product</a>
+        </div>
+      </div>
+
+      <div class="landing-frame">
+        <div class="landing-frame__inner">
+          <div class="landing-frame__mock" role="img" aria-label="Illustrative preview of the Admin dashboard">
+            <div class="mock-topbar"></div>
+            <div class="mock-body">
+              <div class="mock-sidebar"></div>
+              <div class="mock-main">
+                <div class="mock-kpis">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+                <div class="mock-chart"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= BUILT FOR ================= -->
+    <section aria-label="Built for" class="landing-industries">
+      <span class="landing-industries__label">Built for businesses that move physical products</span>
+      <div class="landing-industries__list">
         {
-          user ? (
-            <Button href="/products" variant="primary">
-              Shop products
-            </Button>
-          ) : (
-            <>
-              <Button href="/register" variant="primary">
-                Create an account
-              </Button>
-              <Button href="/login" variant="secondary" class="!text-on-dark !bg-transparent border !border-on-dark-soft">
-                Sign in
-              </Button>
-            </>
-          )
+          industries.map((i) => (
+            <span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d={i.icon} />
+              </svg>
+              {i.label}
+            </span>
+          ))
         }
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section aria-label="Built for" class="py-lg px-lg border-b border-hairline">
-    <div class="max-w-[1440px] mx-auto flex flex-col items-center gap-md">
-      <p class="text-sm text-muted">Built for businesses that move physical products</p>
-      <div class="flex flex-wrap justify-center gap-lg text-body">
-        {["Electrical", "Hardware", "Building materials", "Wholesale", "Distribution"].map((label) => (
-          <span class="text-sm font-bold">{label}</span>
-        ))}
-      </div>
-    </div>
-  </section>
-
-  <section id="roles" class="py-xl px-lg border-b border-hairline">
-    <div class="max-w-[1440px] mx-auto">
-      <div class="flex flex-col items-center text-center gap-xs max-w-2xl mx-auto">
-        <span class="text-xs font-bold uppercase tracking-[0.5px] text-primary">One app, five logins</span>
-        <h2 class="text-2xl sm:text-3xl font-bold text-ink">Everyone sees what they need. Nothing more.</h2>
-        <p class="text-sm text-muted">
+    <!-- ================= ROLES ================= -->
+    <section id="roles" class="landing-section">
+      <div class="landing-section__head">
+        <span class="landing-eyebrow">One app, five logins</span>
+        <h2>Everyone sees what they need. Nothing more.</h2>
+        <p>
           Permissions decide the menu. Your warehouse team never wades through sales reports, and
           your customers only ever see their own orders.
         </p>
       </div>
-      <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-md">
+      <div class="landing-roles">
         {
-          [
-            { name: "Super admin", desc: "Owns users, roles and system settings.", points: ["Users and invites", "Roles and permissions", "Audit log"] },
-            { name: "Admin", desc: "Runs the business day to day.", points: ["Orders and customers", "Products and stock", "Support ticket queue"] },
-            { name: "Sales staff", desc: "Looks after their own customers.", points: ["Contacts and orders", "Live stock check", "Order reports"] },
-            { name: "Inventory staff", desc: "Keeps stock accurate.", points: ["Receiving restocks", "Adjustments and damage", "Assigned support tickets"] },
-            { name: "Customer", desc: "Serves themselves, any time.", points: ["Shop and checkout", "Order tracking", "Support tickets"] },
-          ].map((r) => (
-            <div class="p-md bg-canvas border border-hairline flex flex-col gap-sm">
-              <span class="text-sm font-bold text-ink">{r.name}</span>
-              <p class="text-xs text-muted leading-relaxed">{r.desc}</p>
-              <ul class="mt-xs pt-sm border-t border-hairline flex flex-col gap-xxs">
+          roles.map((r) => (
+            <div class="landing-role-card">
+              <span class="landing-role-card__icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d={r.icon} />
+                </svg>
+              </span>
+              <div class="landing-role-card__body">
+                <span class="landing-role-card__name">{r.name}</span>
+                <span class="landing-role-card__desc">{r.desc}</span>
+              </div>
+              <div class="landing-role-card__points">
                 {r.points.map((p) => (
-                  <li class="text-xs text-body">· {p}</li>
+                  <span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m5 12 5 5 9-10"></path>
+                    </svg>
+                    {p}
+                  </span>
                 ))}
-              </ul>
+              </div>
+              <a href={r.href} class="landing-role-card__link">Preview dashboard →</a>
             </div>
           ))
         }
       </div>
-    </div>
-  </section>
+    </section>
 
-  {
-    categories && categories.length > 0 && (
-      <section class="py-xl px-lg border-b border-hairline">
-        <div class="max-w-[1440px] mx-auto">
-          <h2 class="text-lg font-bold text-ink">Shop by category</h2>
-          <div class="mt-md flex gap-sm overflow-x-auto pb-xs">
-            {categories.map((c) => (
-              <a
-                href={`/products?category=${c.slug}`}
-                class="shrink-0 px-lg py-sm rounded-full bg-surface-soft text-ink text-sm font-bold hover:bg-surface-strong transition-colors active:scale-[0.97]"
-              >
-                {c.name}
-              </a>
-            ))}
+    <!-- ================= FEATURES (bento) ================= -->
+    <section id="features" class="landing-section">
+      <div class="landing-section__head">
+        <span class="landing-eyebrow">Features</span>
+        <h2>Your CRM and your warehouse, finally on speaking terms</h2>
+        <p>Orders see live stock. Stock sees open orders. Nobody promises what the shelf can't deliver.</p>
+      </div>
+
+      <div class="landing-bento">
+        <div class="landing-bento__row landing-bento__row--top">
+          <div class="bento-card bento-card--orders">
+            <div class="bento-card__visual">
+              <svg width="100%" height="100%" viewBox="0 0 520 220" preserveAspectRatio="none" aria-hidden="true">
+                <rect x="8" y="8" width="120" height="204" rx="8" class="bento-swatch" />
+                <rect x="140" y="8" width="120" height="204" rx="8" class="bento-swatch" />
+                <rect x="272" y="8" width="120" height="204" rx="8" class="bento-swatch" />
+                <rect x="404" y="8" width="108" height="204" rx="8" class="bento-swatch" />
+              </svg>
+            </div>
+            <div class="bento-card__text">
+              <h3>Orders that know what's on the shelf</h3>
+              <p>Every order line shows live availability, so sales can promise real delivery dates instead of guesses.</p>
+            </div>
+          </div>
+          <div class="bento-card bento-card--reorder">
+            <div class="bento-card__visual bento-card__visual--center">
+              <svg width="220" height="150" viewBox="0 0 220 150" aria-hidden="true">
+                <line x1="8" y1="70" x2="212" y2="70" class="bento-dash" />
+                <rect x="14" y="30" width="24" height="110" rx="5" class="bento-bar" />
+                <rect x="52" y="48" width="24" height="92" rx="5" class="bento-bar" />
+                <rect x="90" y="94" width="24" height="46" rx="5" class="bento-bar bento-bar--accent" />
+                <rect x="128" y="42" width="24" height="98" rx="5" class="bento-bar" />
+                <rect x="166" y="110" width="24" height="30" rx="5" class="bento-bar bento-bar--accent" />
+              </svg>
+            </div>
+            <div class="bento-card__text">
+              <h3>Reorder before you run out</h3>
+              <p>Low-stock alerts become restock requests for your inventory team.</p>
+            </div>
           </div>
         </div>
-      </section>
-    )
-  }
 
-  <section id="features" class="py-xl px-lg border-b border-hairline">
-    <div class="max-w-[1440px] mx-auto">
-      <div class="flex items-center justify-between flex-wrap gap-md">
-        <h2 class="text-2xl font-bold text-ink">Featured products</h2>
-        <a href="/products" class="text-sm font-bold text-primary hover:underline">
-          View all products
-        </a>
-      </div>
-
-      {
-        featuredProducts && featuredProducts.length > 0 ? (
-          <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-sm">
-            {featuredProducts.map((p) => (
-              <ProductCard
-                productId={p.id}
-                sku={p.sku}
-                name={p.name}
-                price={p.price}
-                imageUrl={p.image_url}
-                categoryName={p.categories?.name}
-              />
-            ))}
+        <div class="landing-bento__row landing-bento__row--bottom">
+          <div class="bento-card bento-card--small">
+            <div class="bento-card__visual bento-card__visual--pad">
+              <div class="mock-scan-input">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M7 12h10"></path></svg>
+                Scan barcode or type SKU
+              </div>
+              <div class="mock-scan-row"><span class="mock-scan-dot">✓</span><span>LED panel 12W × 4</span><span class="mock-scan-bin">A-03-2</span></div>
+              <div class="mock-scan-row"><span class="mock-scan-dot">✓</span><span>Steel hinge 4" × 20</span><span class="mock-scan-bin">A-02-6</span></div>
+            </div>
+            <div class="bento-card__text bento-card__text--small">
+              <h3>Scan-first warehouse</h3>
+              <p>Receive restocks, record damage and look up stock with a scanner.</p>
+            </div>
           </div>
-        ) : (
-          <EmptyState class="mt-lg" title="No products available yet" />
-        )
-      }
-    </div>
-  </section>
-
-  <section aria-labelledby="why" class="py-xl px-lg border-b border-hairline">
-    <div class="max-w-[1440px] mx-auto">
-      <div class="flex flex-col items-center text-center gap-xs max-w-2xl mx-auto">
-        <span class="text-xs font-bold uppercase tracking-[0.5px] text-primary">Why teams switch</span>
-        <h2 id="why" class="text-2xl sm:text-3xl font-bold text-ink">Built for the way distributors really work</h2>
-        <p class="text-sm text-muted">Roles, live stock and customer support work together, not as bolt-ons.</p>
+          <div class="bento-card bento-card--small">
+            <div class="bento-card__visual bento-card__visual--center">
+              <div class="mock-ticket">
+                <div class="mock-ticket__head"><span>Ticket TK-1191</span><span class="mock-pill">In Progress</span></div>
+                <span class="mock-ticket__sub">Damaged items · assigned to inventory staff</span>
+                <div class="mock-ticket__actions"><span>Reply</span><span>Assign</span></div>
+              </div>
+            </div>
+            <div class="bento-card__text bento-card__text--small">
+              <h3>Support that reaches the warehouse</h3>
+              <p>Customers raise tickets; admins reply or hand operational issues to inventory staff.</p>
+            </div>
+          </div>
+          <div class="bento-card bento-card--small">
+            <div class="bento-card__visual bento-card__visual--pad bento-card__visual--column">
+              <span class="mock-track-label">SO-10482 · arriving tomorrow</span>
+              <div class="mock-track-line">
+                <span class="on"></span><span class="line on"></span>
+                <span class="on"></span><span class="line on"></span>
+                <span class="on"></span><span class="line"></span>
+                <span></span>
+              </div>
+              <div class="mock-track-steps"><span>Placed</span><span>Prepared</span><span>Shipped</span><span>Delivered</span></div>
+            </div>
+            <div class="bento-card__text bento-card__text--small">
+              <h3>A portal customers actually use</h3>
+              <p>Shop, check out, track orders and raise support tickets without calling your team.</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 border-t border-l border-hairline">
+    </section>
+
+    <!-- ================= BENEFITS ================= -->
+    <section aria-labelledby="landing-why" class="landing-section">
+      <div class="landing-section__head">
+        <span class="landing-eyebrow">Why teams switch</span>
+        <h2 id="landing-why">Built for the way distributors really work</h2>
+        <p>Roles, live stock and customer support work together, not as bolt-ons.</p>
+      </div>
+      <div class="landing-benefits">
         {
-          [
-            { title: "Five roles, clear access", desc: "Super admin, admin, sales staff, inventory staff and customers each see only what their job needs." },
-            { title: "Live stock in every order", desc: "Sales and customers see real availability before an order is placed." },
-            { title: "Made for the warehouse floor", desc: "A scan-first workflow for receiving, adjustments and lookups." },
-            { title: "Stock you can trust", desc: "Every receipt, sale, adjustment and damage record is logged as a stock movement." },
-            { title: "Customer self-service", desc: "Customers shop, check out, track their orders and raise tickets on their own." },
-            { title: "Support that closes the loop", desc: "Tickets move from customer to staff and back with a clear resolution." },
-          ].map((b) => (
-            <div class="p-lg border-r border-b border-hairline flex flex-col gap-xs">
-              <span class="text-base font-bold text-ink">{b.title}</span>
-              <span class="text-sm text-muted leading-relaxed">{b.desc}</span>
+          benefits.map((b) => (
+            <div class="landing-benefit">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 11h12v10H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3" />
+              </svg>
+              <span class="landing-benefit__title">{b.title}</span>
+              <span class="landing-benefit__desc">{b.desc}</span>
             </div>
           ))
         }
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section id="faq" class="py-xl px-lg border-b border-hairline">
-    <div class="max-w-[1440px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-xl">
-      <div class="flex flex-col gap-sm">
-        <span class="text-xs font-bold uppercase tracking-[0.5px] text-primary">FAQ</span>
-        <h2 class="text-2xl font-bold text-ink">Questions, answered</h2>
-        <p class="text-sm text-muted">Can't find what you're looking for? Reach us from your account's Support page once signed in.</p>
+    <!-- ================= PRICING ================= -->
+    <section id="pricing" class="landing-section">
+      <div class="landing-section__head">
+        <span class="landing-eyebrow">Pricing</span>
+        <h2>Simple plans that grow with your team</h2>
+        <p>Start with a small team. Add users as you grow.</p>
       </div>
-      <div class="flex flex-col border-t border-hairline">
+      <div class="landing-period" role="group" aria-label="Billing period">
+        <button type="button" id="landing-period-monthly" class="is-active">Monthly</button>
+        <button type="button" id="landing-period-yearly">Yearly <span class="landing-period__save">Save [x]%</span></button>
+      </div>
+      <div class="landing-plans">
         {
-          [
-            ["Can each person see only their own data?", "Yes. Sales staff see their own contacts and orders, inventory staff see stock and the tickets assigned to them, and customers only ever see their own orders and tickets."],
-            ["Can my customers place orders themselves?", "Customers get their own portal: they browse the shop, check out, track orders and raise support tickets."],
-            ["How do support tickets get resolved?", "A customer raises a ticket, and staff or an admin update its status and add a resolution as it's worked."],
-            ["Does it keep a history of stock changes?", "Every receipt, sale, adjustment and damage record is saved as a stock movement, so on-hand numbers can always be explained."],
-          ].map(([q, a]) => (
-            <details class="border-b border-hairline py-sm group">
-              <summary class="cursor-pointer list-none flex items-center justify-between gap-md text-sm font-bold text-ink">
+          plans.map((p) => (
+            <div class={`landing-plan ${p.popular ? "landing-plan--popular" : ""}`}>
+              {p.popular && <span class="landing-plan__badge">Most popular</span>}
+              <div class="landing-plan__head">
+                <span class="landing-plan__name">{p.name}</span>
+                <span class="landing-plan__desc">{p.desc}</span>
+              </div>
+              <div class="landing-plan__price">
+                <span class="landing-plan__amount">₹[price]</span>
+                <span class="landing-plan__unit" data-unit-monthly="per month" data-unit-yearly="per month, billed yearly">
+                  per month
+                </span>
+              </div>
+              <div class="landing-plan__features">
+                {p.features.map((f) => (
+                  <span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m5 12 5 5 9-10"></path>
+                    </svg>
+                    {f}
+                  </span>
+                ))}
+              </div>
+              <a href={p.cta === "Contact sales" ? "#faq" : signupHref} class={p.popular ? "btn-primary" : "btn-muted"}>
+                {p.cta}
+              </a>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- ================= FAQ ================= -->
+    <section id="faq" class="landing-faq">
+      <div class="landing-faq__head">
+        <span class="landing-eyebrow">FAQ</span>
+        <h2>Questions, answered</h2>
+        <p>Can't find what you're looking for? Our team will walk you through a setup that matches your business.</p>
+        <a href="#cta" class="btn-outline">Talk to us</a>
+      </div>
+      <div class="landing-faq__list">
+        {
+          faqs.map(([q, a]) => (
+            <details class="landing-faq__item">
+              <summary>
                 {q}
-                <span class="text-muted group-open:rotate-180 transition-transform">▾</span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
               </summary>
-              <p class="mt-xs text-sm text-muted leading-relaxed">{a}</p>
+              <p>{a}</p>
             </details>
           ))
         }
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section class="py-xl px-lg">
-    <div class="max-w-[1440px] mx-auto bg-surface-soft border border-hairline p-xxl flex flex-col items-center text-center gap-md">
-      <h2 class="text-2xl sm:text-3xl font-bold text-ink max-w-2xl">Run the whole business from one place</h2>
-      <p class="text-sm text-muted max-w-lg">
-        Add your products, invite your team and see every role's dashboard with your own data.
-      </p>
-      <div class="flex gap-md">
+    <!-- ================= FINAL CTA ================= -->
+    <section id="cta" class="landing-cta-wrap">
+      <div class="landing-cta">
+        <h2>Run the whole business from one place</h2>
+        <p>Add your products, invite your team and see every role's dashboard with your own data.</p>
+        <div class="landing-cta__actions">
+          <a href={signupHref} class="btn-primary">{user ? "Go to dashboard" : "Start free trial"}</a>
+          <a href={loginHref} class="btn-secondary">{user ? "My account" : "Log in"}</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= FOOTER ================= -->
+    <footer class="landing-footer">
+      <div class="landing-footer__cols">
+        <div class="landing-footer__brand">
+          <div class="landing-nav__brand">
+            <span class="landing-nav__logo"><span></span></span>
+            <span>Inventory</span>
+          </div>
+          <p>CRM, inventory and a customer portal for businesses that sell physical products.</p>
+          <div class="landing-period landing-period--sm" role="group" aria-label="Theme">
+            <button type="button" id="landing-theme-light" class="is-active">Light</button>
+            <button type="button" id="landing-theme-dark">Dark</button>
+          </div>
+        </div>
         {
-          user ? (
-            <Button href="/products" variant="primary">Shop products</Button>
-          ) : (
-            <>
-              <Button href="/register" variant="primary">Create an account</Button>
-              <Button href="/login" variant="secondary">Sign in</Button>
-            </>
-          )
+          footerCols.map((c) => (
+            <div class="landing-footer__col">
+              <span>{c.title}</span>
+              {c.links.map((l) => (
+                <a href="#top">{l}</a>
+              ))}
+            </div>
+          ))
         }
       </div>
-    </div>
-  </section>
-
-  <footer class="border-t border-hairline py-xl px-lg">
-    <div class="max-w-[1440px] mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-sm text-xs text-muted">
-      <span>© 2026 Inventory</span>
-      <span>Made in India</span>
-    </div>
-  </footer>
+      <div class="landing-footer__bottom">
+        <span>© 2026 Inventory. All rights reserved.</span>
+        <span>Made in India · ₹ INR</span>
+      </div>
+    </footer>
+  </div>
 </BaseLayout>
+
+<style>
+  .landing {
+    --shell: #fafafa;
+    --panel: #ffffff;
+    --card: #ffffff;
+    --fg: #0a0a0a;
+    --fg2: #404040;
+    --muted: #f5f5f5;
+    --muted-fg: #737373;
+    --border: #e5e5e5;
+    --input: #e5e5e5;
+    --grid: #f3f3f3;
+    --primary: #171717;
+    --primary-fg: #fafafa;
+    --success-bg: #ecfdf3;
+    --success-fg: #15803d;
+    --danger-bg: #feecec;
+    --danger-fg: #b91c1c;
+    --info-bg: #eef2ff;
+    --info-fg: #3538cd;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --accent: #2b50e0;
+    --accent-soft: rgba(43, 80, 224, 0.1);
+    color-scheme: light;
+
+    background: var(--shell);
+    color: var(--fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .landing[data-theme="dark"] {
+    --shell: #0a0a0a;
+    --panel: #0f0f0f;
+    --card: #171717;
+    --fg: #fafafa;
+    --fg2: #d4d4d4;
+    --muted: #262626;
+    --muted-fg: #a3a3a3;
+    --border: #262626;
+    --input: #363636;
+    --grid: #1c1c1c;
+    --primary: #fafafa;
+    --primary-fg: #171717;
+    --success-bg: #0f2a1c;
+    --success-fg: #4ade80;
+    --danger-bg: #2d1414;
+    --danger-fg: #f87171;
+    --info-bg: #1e2240;
+    --info-fg: #a5b4fc;
+    --shadow: none;
+    --accent: #6b8afb;
+    --accent-soft: rgba(107, 138, 251, 0.16);
+    color-scheme: dark;
+  }
+
+  .landing[data-theme="dark"] .icon-sun,
+  .landing:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+
+  /* ---------- nav ---------- */
+  .landing-nav {
+    position: sticky;
+    top: 16px;
+    z-index: 20;
+    margin: 0 auto;
+    max-width: 1120px;
+    box-sizing: border-box;
+    padding: 0 10px 0 16px;
+    height: 60px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .landing-nav__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 16px;
+    letter-spacing: -0.01em;
+  }
+  .landing-nav__logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .landing-nav__logo span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+  }
+  .landing-nav__links {
+    display: flex;
+    gap: 4px;
+  }
+  .landing-nav__links a {
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    text-decoration: none;
+    color: var(--fg2);
+  }
+  .landing-nav__links a:hover {
+    background: var(--muted);
+  }
+  .landing-nav__spacer {
+    flex-grow: 1;
+  }
+  .landing-nav__theme {
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--input);
+    background: var(--card);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .landing-nav__login {
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 9px;
+    background: var(--muted);
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .landing-nav__signup {
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 9px;
+    background: var(--primary);
+    color: var(--primary-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  /* ---------- hero ---------- */
+  .landing-hero {
+    box-sizing: border-box;
+    padding: 64px 24px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 56px 56px;
+    background-position: center top;
+  }
+  .landing-hero__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 20px;
+    background: var(--panel);
+    border-radius: 24px;
+  }
+  .landing-badge {
+    height: 32px;
+    padding: 0 5px 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    text-decoration: none;
+    color: var(--fg2);
+  }
+  .landing-badge__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .landing-badge__cta {
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--fg);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .landing-hero__title {
+    margin: 28px 0 0;
+    max-width: 980px;
+    text-align: center;
+    font-size: clamp(38px, 7vw, 76px);
+    line-height: 1.02;
+    font-weight: 600;
+    letter-spacing: -0.045em;
+  }
+  .landing-hero__sub {
+    margin: 24px 0 0;
+    max-width: 640px;
+    text-align: center;
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--muted-fg);
+  }
+  .landing-hero__ctas {
+    margin-top: 36px;
+    margin-bottom: 40px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .btn-primary,
+  .btn-secondary,
+  .btn-muted,
+  .btn-outline {
+    height: 46px;
+    padding: 0 22px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-sizing: border-box;
+  }
+  .btn-primary {
+    background: var(--primary);
+    color: var(--primary-fg);
+    border: 0;
+  }
+  .btn-secondary,
+  .btn-outline {
+    border: 1px solid var(--input);
+    background: var(--card);
+    color: var(--fg);
+  }
+  .btn-muted {
+    background: var(--muted);
+    color: var(--fg);
+    border: 0;
+  }
+
+  .landing-frame {
+    width: 100%;
+    max-width: 1032px;
+    box-sizing: border-box;
+    padding: 12px;
+    border-radius: 22px;
+    border: 1px solid var(--border);
+    background: var(--muted);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.12);
+  }
+  .landing-frame__inner {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .landing-frame__mock {
+    aspect-ratio: 1440 / 900;
+    display: flex;
+    flex-direction: column;
+  }
+  .mock-topbar {
+    height: 8%;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  .mock-body {
+    flex-grow: 1;
+    display: flex;
+  }
+  .mock-sidebar {
+    width: 17%;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+  }
+  .mock-main {
+    flex-grow: 1;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .mock-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    height: 64px;
+  }
+  .mock-kpis span {
+    border-radius: 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+  .mock-chart {
+    flex-grow: 1;
+    border-radius: 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+
+  /* ---------- industries ---------- */
+  .landing-industries {
+    padding: 48px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+  }
+  .landing-industries__label {
+    font-size: 15px;
+    color: var(--muted-fg);
+  }
+  .landing-industries__list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 32px;
+    color: var(--fg2);
+  }
+  .landing-industries__list span {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  /* ---------- shared section head ---------- */
+  .landing-section {
+    box-sizing: border-box;
+    padding: 72px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 40px;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+  .landing-section__head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    text-align: center;
+    max-width: 700px;
+  }
+  .landing-eyebrow {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+  }
+  .landing-section__head h2 {
+    margin: 0;
+    font-size: clamp(28px, 4vw, 48px);
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+  }
+  .landing-section__head p {
+    margin: 0;
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--muted-fg);
+  }
+
+  /* ---------- roles ---------- */
+  .landing-roles {
+    width: 100%;
+    max-width: 1120px;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .landing-role-card {
+    padding: 20px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .landing-role-card__icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--muted);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .landing-role-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .landing-role-card__name {
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .landing-role-card__desc {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--muted-fg);
+  }
+  .landing-role-card__points {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .landing-role-card__points span {
+    display: flex;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--fg2);
+  }
+  .landing-role-card__points svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--accent);
+  }
+  .landing-role-card__link {
+    margin-top: auto;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--fg);
+  }
+
+  /* ---------- bento ---------- */
+  .landing-bento {
+    width: 100%;
+    max-width: 1120px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .landing-bento__row--top {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 16px;
+  }
+  .landing-bento__row--bottom {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .bento-card {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .bento-card__visual {
+    flex-grow: 1;
+    min-height: 160px;
+    background: var(--shell);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+  }
+  .bento-card__visual--center {
+    align-items: center;
+    justify-content: center;
+  }
+  .bento-card__visual--pad {
+    padding: 20px;
+    flex-direction: column;
+    gap: 10px;
+    justify-content: center;
+  }
+  .bento-card__visual--column {
+    justify-content: center;
+  }
+  .bento-swatch {
+    fill: var(--input);
+  }
+  .bento-dash {
+    stroke: var(--muted-fg);
+    stroke-width: 2;
+    stroke-dasharray: 6 6;
+  }
+  .bento-bar {
+    fill: var(--input);
+  }
+  .bento-bar--accent {
+    fill: var(--accent);
+  }
+  .bento-card__text {
+    padding: 20px 24px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .bento-card__text--small {
+    padding: 18px 22px 22px;
+  }
+  .bento-card__text h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .bento-card__text--small h3 {
+    font-size: 17px;
+  }
+  .bento-card__text p {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--muted-fg);
+  }
+  .bento-card__text--small p {
+    font-size: 14px;
+  }
+
+  .mock-scan-input {
+    height: 44px;
+    padding: 0 14px;
+    border: 2px solid var(--accent);
+    border-radius: 10px;
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    color: var(--muted-fg);
+  }
+  .mock-scan-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--fg2);
+  }
+  .mock-scan-row span:nth-child(2) {
+    flex-grow: 1;
+  }
+  .mock-scan-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--success-bg);
+    color: var(--success-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .mock-scan-bin {
+    color: var(--muted-fg);
+  }
+
+  .mock-ticket {
+    width: 100%;
+    max-width: 320px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 24px;
+  }
+  .mock-ticket__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .mock-pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .mock-ticket__sub {
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+  .mock-ticket__actions {
+    display: flex;
+    gap: 8px;
+  }
+  .mock-ticket__actions span:first-child {
+    flex-grow: 1;
+    height: 34px;
+    border-radius: 8px;
+    background: var(--primary);
+    color: var(--primary-fg);
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mock-ticket__actions span:last-child {
+    flex-grow: 1;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--input);
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mock-track-label {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .mock-track-line {
+    display: flex;
+    align-items: center;
+  }
+  .mock-track-line span {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-sizing: border-box;
+    border: 2px solid var(--input);
+    background: var(--card);
+  }
+  .mock-track-line span.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .mock-track-line span.line {
+    width: auto;
+    flex-grow: 1;
+    height: 2px;
+    border-radius: 0;
+    border: 0;
+    background: var(--input);
+  }
+  .mock-track-line span.line.on {
+    background: var(--accent);
+  }
+  .mock-track-steps {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--muted-fg);
+  }
+
+  /* ---------- benefits ---------- */
+  .landing-benefits {
+    width: 100%;
+    max-width: 1120px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+  }
+  .landing-benefit {
+    padding: 36px 32px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .landing-benefit svg {
+    color: var(--fg2);
+  }
+  .landing-benefit__title {
+    margin-top: 8px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .landing-benefit__desc {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--muted-fg);
+  }
+
+  /* ---------- pricing ---------- */
+  .landing-period {
+    display: flex;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--muted);
+    gap: 2px;
+  }
+  .landing-period button {
+    height: 36px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    background: transparent;
+    color: var(--muted-fg);
+  }
+  .landing-period button.is-active {
+    background: var(--card);
+    color: var(--fg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  .landing-period__save {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .landing-plans {
+    width: 100%;
+    max-width: 1120px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    align-items: stretch;
+  }
+  .landing-plan {
+    position: relative;
+    padding: 28px;
+    border-radius: 18px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .landing-plan--popular {
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 20px 50px rgba(43, 80, 224, 0.14);
+  }
+  .landing-plan__badge {
+    position: absolute;
+    top: -13px;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 26px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+  }
+  .landing-plan__head {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .landing-plan__name {
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .landing-plan__desc {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--muted-fg);
+  }
+  .landing-plan__price {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .landing-plan__amount {
+    font-size: 40px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+  .landing-plan__unit {
+    font-size: 14px;
+    color: var(--muted-fg);
+  }
+  .landing-plan__features {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-grow: 1;
+  }
+  .landing-plan__features span {
+    display: flex;
+    gap: 10px;
+    font-size: 15px;
+    color: var(--fg2);
+  }
+  .landing-plan__features svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--accent);
+  }
+
+  /* ---------- faq ---------- */
+  .landing-faq {
+    max-width: 1440px;
+    margin: 0 auto;
+    box-sizing: border-box;
+    padding: 72px 24px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  @media (min-width: 900px) {
+    .landing-faq {
+      grid-template-columns: 380px 1fr;
+      gap: 80px;
+    }
+  }
+  .landing-faq__head {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .landing-faq__head h2 {
+    margin: 0;
+    font-size: 44px;
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+  }
+  .landing-faq__head p {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--muted-fg);
+  }
+  .landing-faq__list {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+  }
+  .landing-faq__item {
+    border-bottom: 1px solid var(--border);
+  }
+  .landing-faq__item summary {
+    list-style: none;
+    min-height: 64px;
+    padding: 0;
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    cursor: pointer;
+  }
+  .landing-faq__item summary::-webkit-details-marker {
+    display: none;
+  }
+  .landing-faq__item summary svg {
+    flex-shrink: 0;
+    color: var(--muted-fg);
+    transition: transform 0.2s;
+  }
+  .landing-faq__item[open] summary svg {
+    transform: rotate(180deg);
+  }
+  .landing-faq__item p {
+    margin: 0 0 20px;
+    max-width: 620px;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--muted-fg);
+  }
+
+  /* ---------- final cta ---------- */
+  .landing-cta-wrap {
+    box-sizing: border-box;
+    padding: 40px 24px;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+  .landing-cta {
+    box-sizing: border-box;
+    padding: 64px 24px;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background-color: var(--shell);
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    text-align: center;
+  }
+  .landing-cta h2 {
+    margin: 0;
+    max-width: 720px;
+    font-size: clamp(28px, 5vw, 52px);
+    line-height: 1.08;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+  }
+  .landing-cta p {
+    margin: 0;
+    max-width: 560px;
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--muted-fg);
+  }
+  .landing-cta__actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* ---------- footer ---------- */
+  .landing-footer {
+    box-sizing: border-box;
+    padding: 64px 24px 40px;
+    border-top: 1px solid var(--border);
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+  .landing-footer__cols {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  @media (min-width: 900px) {
+    .landing-footer__cols {
+      grid-template-columns: 1.6fr repeat(4, minmax(0, 1fr));
+      gap: 40px;
+    }
+  }
+  .landing-footer__brand {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .landing-footer__brand p {
+    margin: 0;
+    max-width: 280px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--muted-fg);
+  }
+  .landing-period--sm {
+    align-self: flex-start;
+    padding: 3px;
+  }
+  .landing-period--sm button {
+    height: 30px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  .landing-footer__col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .landing-footer__col span {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .landing-footer__col a {
+    font-size: 14px;
+    text-decoration: none;
+    color: var(--muted-fg);
+  }
+  .landing-footer__bottom {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+</style>
+
+<script>
+  const root = document.getElementById("landing-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyTheme(theme: "light" | "dark") {
+    if (!root) return;
+    if (theme === "dark") {
+      root.setAttribute("data-theme", "dark");
+    } else {
+      root.removeAttribute("data-theme");
+    }
+    document.getElementById("landing-theme-toggle")?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    document.getElementById("landing-theme-light")?.classList.toggle("is-active", theme === "light");
+    document.getElementById("landing-theme-dark")?.classList.toggle("is-active", theme === "dark");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (stored === "dark") applyTheme("dark");
+
+  document.getElementById("landing-theme-toggle")?.addEventListener("click", () => {
+    applyTheme(root?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+  document.getElementById("landing-theme-light")?.addEventListener("click", () => applyTheme("light"));
+  document.getElementById("landing-theme-dark")?.addEventListener("click", () => applyTheme("dark"));
+
+  const monthlyBtn = document.getElementById("landing-period-monthly");
+  const yearlyBtn = document.getElementById("landing-period-yearly");
+
+  function setPeriod(period: "monthly" | "yearly") {
+    monthlyBtn?.classList.toggle("is-active", period === "monthly");
+    yearlyBtn?.classList.toggle("is-active", period === "yearly");
+    document.querySelectorAll<HTMLElement>(".landing-plan__unit").forEach((el) => {
+      el.textContent = period === "yearly" ? el.dataset.unitYearly ?? "" : el.dataset.unitMonthly ?? "";
+    });
+  }
+
+  monthlyBtn?.addEventListener("click", () => setPeriod("monthly"));
+  yearlyBtn?.addEventListener("click", () => setPeriod("yearly"));
+</script>

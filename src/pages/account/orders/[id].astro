@@ -1,11 +1,57 @@
 ---
+// Literal recreation of the Claude Design canvas's Order Detail artboard
+// (project/PageCustOrderDetail.dc.html, imported by CustOrderDetail.dc.html)
+// — the supplied design is the visual source of truth, not the app's
+// existing DESIGN.md component system. Reuses the same --cp-* token system
+// and NavCustomer header already approved on My Orders/Cart/Checkout/Shop/
+// Product Details/Customer Portal. Card/EmptyState/OrderStatusBadge/
+// OrderLineItems are NOT reused (their visual output doesn't match this
+// artboard) — this page builds its own markup over the same real,
+// customer-scoped order/order_items/payments queries and RLS as before.
+//
+// Real vs deferred, per your explicit no-fabrication rules:
+//  - Real order id (truncated UUID), real status (full 7-value enum, not
+//    collapsed), real "Placed {date}", real item count, real total, real
+//    line items (product name/SKU/qty/unit price/line subtotal), real
+//    Subtotal/Tax/Shipping/Total (the existing real orders columns —
+//    tax/shipping_fee are shown exactly as stored, whatever that value
+//    actually is, not a guessed 18%/free figure), real payment
+//    method/status/paid_at/amount (from the existing payments query), real
+//    shipping_address.formatted text, real customer self-cancel action for
+//    a still-pending order (existing updateOrderStatus flow — this predates
+//    this pass and is real functionality, not something the design shows,
+//    kept because "use the existing real order-status data/actions" was an
+//    explicit instruction), real "Raise a support ticket" link (prefilled
+//    subject, same as before).
+//  - "Reorder" button: explicitly disallowed — omitted.
+//  - Delivery-status tracker: the design's version invents a carrier name,
+//    AWB number, a per-item partial-delivery narrative, and per-step ETA/
+//    completion dates — none of that exists in the schema (only the
+//    order's own status and created_at). Rebuilt as a real 5-step tracker
+//    (Placed/Confirmed/Processing/Shipped/Delivered — "Processing" instead
+//    of the design's invented "Prepared" label, matching the real enum
+//    value) driven only by the real order.status, with only the "Placed"
+//    step carrying a real date (order.created_at) — no fabricated ETA or
+//    per-step dates. For cancelled/refunded orders (a terminal state the
+//    5-step forward tracker can't honestly represent), a plain status
+//    banner is shown instead of the stepped tracker. Same honest-tracker
+//    approach already approved on the Customer Portal.
+//  - Per-item "Status" column (Delivered/Shipped per line): no per-item
+//    status exists, only one order-level status — omitted.
+//  - "Showing 5 of 12" items teaser: shows the real full item list instead,
+//    no fabricated truncation/pagination.
+//  - Delivery address card: the design's "Meera Traders" business name and
+//    "Meera Thakkar · +91 98200 41127" contact line have no backing
+//    columns — only `orders.shipping_address.formatted` is real, so only
+//    that text renders.
+//  - "TK-1191 is open for this order · 4 LED panels arrived damaged" linked
+//    -ticket preview: support_tickets has no order_id column at all (see
+//    supabase/migrations/0013_support_tickets.sql) — there is no real way
+//    to know whether a ticket exists for this specific order, so this
+//    fabricated relationship is omitted entirely; only the generic, real
+//    "Raise a support ticket" link remains.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import OrderStatusBadge from "../../../components/orders/OrderStatusBadge.astro";
-import OrderLineItems from "../../../components/orders/OrderLineItems.astro";
-import OrderStatusActions from "../../../components/orders/OrderStatusActions.astro";
-import PublicHeader from "../../../components/layout/PublicHeader.astro";
+import NavCustomer from "../../../components/customer/NavCustomer.astro";
 
 const { id } = Astro.params;
 const { user } = Astro.locals;
@@ -22,7 +68,7 @@ if (!order) {
   Astro.response.status = 404;
 }
 
-const { data: items } = order
+const { data: itemRows } = order
   ? await Astro.locals.supabase
       .from("order_items")
       .select("id, quantity, unit_price, subtotal, products(sku, name)")
@@ -30,69 +76,827 @@ const { data: items } = order
   : { data: null };
 
 const { data: payment } = order
-  ? await Astro.locals.supabase
-      .from("payments")
-      .select("status, method, paid_at")
-      .eq("order_id", id)
-      .maybeSingle()
+  ? await Astro.locals.supabase.from("payments").select("status, method, paid_at").eq("order_id", id).maybeSingle()
   : { data: null };
+
+const items = itemRows ?? [];
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatDate = (value: string) =>
+  new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+const STATUS_TONE: Record<string, "warn" | "info" | "success" | "muted"> = {
+  pending: "warn",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<string, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+
+const FORWARD_STATUSES = ["pending", "confirmed", "processing", "shipped", "delivered"];
+const currentIndex = order ? FORWARD_STATUSES.indexOf(order.status) : -1;
+const isTerminalOffRamp = order ? order.status === "cancelled" || order.status === "refunded" : false;
+
+const TRACKER_STEPS = [
+  { key: "pending", label: "Placed" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "processing", label: "Processing" },
+  { key: "shipped", label: "Shipped" },
+  { key: "delivered", label: "Delivered" },
+];
+
+const PAY_LABELS: Record<string, string> = {
+  upi: "UPI",
+  card: "Card",
+  bank_transfer: "Net banking",
+  cash: "Cash on delivery",
+};
+const PAY_STATUS_TONE: Record<string, "warn" | "success" | "muted"> = {
+  pending: "warn",
+  paid: "success",
+  failed: "muted",
+  refunded: "muted",
+};
+const PAY_STATUS_LABEL: Record<string, string> = {
+  pending: "Pending",
+  paid: "Paid",
+  failed: "Failed",
+  refunded: "Refunded",
+};
+
+const canCancel = order?.status === "pending";
 ---
 
 <BaseLayout title={order ? `Order ${order.id.slice(0, 8)} — Inventory` : "Order not found — Inventory"}>
-  <PublicHeader backHref="/account/orders" backLabel="Your orders" />
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-  <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-    {
-      order ? (
-        <>
-          {created && (
-            <p class="mb-md text-sm text-success" role="status">
-              Order placed successfully.
-            </p>
-          )}
-          <div class="flex items-center justify-between flex-wrap gap-md">
-            <div>
-              <h1 class="text-2xl font-bold text-ink">Order {order.id.slice(0, 8)}</h1>
-              <p class="text-sm text-muted">{new Date(order.created_at).toLocaleString()}</p>
-            </div>
-            <OrderStatusBadge status={order.status} />
-          </div>
+  <div class="cp" id="cp-root">
+    <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+      <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+    </button>
 
-          <Card class="mt-lg">
-            <OrderLineItems
-              items={items ?? []}
-              subtotal={order.subtotal}
-              tax={order.tax}
-              shippingFee={order.shipping_fee}
-              total={order.total}
-            />
-          </Card>
+    <NavCustomer active="My orders" />
 
-          <Card class="mt-lg">
-            <p class="text-xs uppercase tracking-[0.5px] text-muted">Payment</p>
-            <p class="mt-xs text-sm text-body capitalize">
-              {payment?.method ?? "—"} — {payment?.status ?? "—"}
-            </p>
-          </Card>
-
-          <div class="mt-lg">
-            <OrderStatusActions orderId={order.id} status={order.status} viewerRole="customer" />
-          </div>
-
-          <Card class="mt-lg">
-            <h2 class="text-sm font-bold text-ink">Need help with this order?</h2>
-            <p class="mt-xxs text-xs text-muted">Damaged, missing or wrong items — tell us and our support team will sort it out.</p>
-            <a
-              href={`/account/support?subject=${encodeURIComponent(`Issue with order ${order.id.slice(0, 8)}`)}`}
-              class="mt-md inline-flex h-10 px-md items-center border border-hairline text-sm font-bold text-ink hover:border-hairline-strong"
-            >
-              Raise a support ticket
+    <main id="main-content" class="cp__main">
+      {
+        order ? (
+          <Fragment>
+            <a href="/account/orders" class="od__back">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg>
+              My orders
             </a>
-          </Card>
-        </>
-      ) : (
-        <EmptyState title="Order not found" />
-      )
-    }
-  </main>
+
+            {created && <p class="od__created-msg" role="status">Order placed successfully.</p>}
+
+            <div class="od__header">
+              <div class="od__heading-col">
+                <div class="od__heading-row">
+                  <h1>Order {order.id.slice(0, 8)}</h1>
+                  <span class={`od__pill od__pill--${STATUS_TONE[order.status] ?? "muted"}`}>
+                    {STATUS_LABEL[order.status] ?? order.status}
+                  </span>
+                </div>
+                <span class="od__meta">
+                  Placed {formatDate(order.created_at)} · {items.length} item{items.length === 1 ? "" : "s"} · {formatCurrency(order.total)}
+                </span>
+              </div>
+              {canCancel && (
+                <div id="order-cancel-actions" data-order-id={order.id} class="od__actions">
+                  <button type="button" id="od-cancel-btn" class="od__cancel-btn">Cancel order</button>
+                  <p id="od-cancel-message" class="od__cancel-message" role="status" />
+                </div>
+              )}
+            </div>
+
+            {isTerminalOffRamp ? (
+              <section class="od__status-banner">
+                <span class={`od__pill od__pill--${STATUS_TONE[order.status] ?? "muted"}`}>
+                  {STATUS_LABEL[order.status] ?? order.status}
+                </span>
+                <span>
+                  {order.status === "cancelled" ? "This order was cancelled." : "This order was refunded."}
+                </span>
+              </section>
+            ) : (
+              <section class="od__tracker">
+                <h2>Delivery status</h2>
+                <div class="od__steps">
+                  {TRACKER_STEPS.map((step, i) => {
+                    const done = currentIndex >= i;
+                    const isLast = i === TRACKER_STEPS.length - 1;
+                    return (
+                      <div class="od__step">
+                        <div class="od__step-row">
+                          <span class={`od__step-dot ${done ? "is-done" : ""}`}>
+                            {done && (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
+                            )}
+                          </span>
+                          {!isLast && <span class={`od__step-line ${currentIndex > i ? "is-done" : ""}`} />}
+                        </div>
+                        <div class="od__step-label-col">
+                          <span class={`od__step-label ${done ? "is-done" : ""}`}>{step.label}</span>
+                          {step.key === "pending" && <span class="od__step-date">{formatDate(order.created_at)}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            <div class="od__body">
+              <section class="od__items-panel">
+                <div class="od__items-head">
+                  <h2>Items</h2>
+                </div>
+                <div class="od__grid od__grid-head">
+                  <span>Product</span>
+                  <span class="od__col-right">Qty</span>
+                  <span class="od__col-right">Price</span>
+                  <span class="od__col-right">Total</span>
+                </div>
+                {items.map((item) => (
+                  <div class="od__grid od__row">
+                    <span class="od__item-info">
+                      <span class="od__item-name">{item.products?.name ?? "—"}</span>
+                      <span class="od__item-sku">{item.products?.sku}</span>
+                    </span>
+                    <span class="od__col-right">{item.quantity}</span>
+                    <span class="od__col-right">{formatCurrency(item.unit_price)}</span>
+                    <span class="od__col-right od__item-total">{formatCurrency(item.subtotal)}</span>
+                  </div>
+                ))}
+                <div class="od__totals">
+                  <div class="od__totals-row">
+                    <span>Subtotal</span>
+                    <span>{formatCurrency(order.subtotal)}</span>
+                  </div>
+                  <div class="od__totals-row">
+                    <span>Tax</span>
+                    <span>{formatCurrency(order.tax)}</span>
+                  </div>
+                  <div class="od__totals-row">
+                    <span>Shipping</span>
+                    <span>{formatCurrency(order.shipping_fee)}</span>
+                  </div>
+                  <div class="od__totals-row od__totals-final">
+                    <span>Total</span>
+                    <span>{formatCurrency(order.total)}</span>
+                  </div>
+                </div>
+              </section>
+
+              <div class="od__side">
+                <section class="od__card">
+                  <h2>Delivery address</h2>
+                  <span class="od__address-text">
+                    {order.shipping_address?.formatted ?? "No delivery address on file."}
+                  </span>
+                </section>
+
+                <section class="od__card">
+                  <h2>Payment</h2>
+                  <div class="od__payment-row">
+                    <span class="od__payment-icon">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10v18H7zM11 18h2"></path></svg>
+                    </span>
+                    <span class="od__payment-body">
+                      <span class="od__payment-method">{payment ? (PAY_LABELS[payment.method] ?? payment.method) : "—"}</span>
+                      <span class="od__payment-meta">
+                        {formatCurrency(order.total)}
+                        {payment?.paid_at && <Fragment> · {new Date(payment.paid_at).toLocaleString()}</Fragment>}
+                      </span>
+                    </span>
+                    {payment && (
+                      <span class={`od__pill od__pill--${PAY_STATUS_TONE[payment.status] ?? "muted"}`}>
+                        {PAY_STATUS_LABEL[payment.status] ?? payment.status}
+                      </span>
+                    )}
+                  </div>
+                </section>
+
+                <section class="od__card od__help-card">
+                  <div class="od__help-head">
+                    <h2>Need help with this order?</h2>
+                    <span>Damaged, missing or wrong items — tell us and our support team will sort it out.</span>
+                  </div>
+                  <a
+                    href={`/account/support?subject=${encodeURIComponent(`Issue with order ${order.id.slice(0, 8)}`)}`}
+                    class="od__help-btn"
+                  >
+                    Raise a support ticket
+                  </a>
+                </section>
+              </div>
+            </div>
+          </Fragment>
+        ) : (
+          <div class="od__notfound">
+            <p class="od__notfound-title">Order not found</p>
+            <p class="od__notfound-body">This order may not exist, or may belong to a different account.</p>
+            <a href="/account/orders" class="btn-outline-sm">Back to My orders</a>
+          </div>
+        )
+      }
+    </main>
+  </div>
 </BaseLayout>
+
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-warn-bg: #fef3e2;
+    --cp-warn-fg: #9a3412;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-success-bg: #ecfdf3;
+    --cp-success-fg: #15803d;
+    --cp-error-fg: #b91c1c;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-warn-bg: #2e1f0e;
+    --cp-warn-fg: #fdba74;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-success-bg: #0f2a1c;
+    --cp-success-fg: #4ade80;
+    --cp-error-fg: #f87171;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+  .btn-outline-sm {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .od__back {
+    align-self: flex-start;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--cp-fg2);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .od__created-msg {
+    margin: 0;
+    font-size: 14px;
+    color: var(--cp-success-fg);
+  }
+
+  .od__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .od__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .od__heading-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .od__heading-row h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .od__meta {
+    font-size: 14px;
+    color: var(--cp-muted-fg);
+  }
+  .od__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .od__pill--warn {
+    background: var(--cp-warn-bg);
+    color: var(--cp-warn-fg);
+  }
+  .od__pill--info {
+    background: var(--cp-info-bg);
+    color: var(--cp-info-fg);
+  }
+  .od__pill--success {
+    background: var(--cp-success-bg);
+    color: var(--cp-success-fg);
+  }
+  .od__pill--muted {
+    background: var(--cp-muted);
+    color: var(--cp-muted-fg);
+  }
+  .od__actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+  .od__cancel-btn {
+    height: 36px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-error-fg);
+    background: var(--cp-card);
+    color: var(--cp-error-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .od__cancel-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+
+  .od__status-banner {
+    box-sizing: border-box;
+    padding: 16px 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--cp-fg2);
+  }
+
+  .od__tracker {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .od__tracker h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .od__steps {
+    display: flex;
+    align-items: flex-start;
+    overflow-x: auto;
+    min-width: 0;
+    gap: 4px;
+  }
+  .od__step {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 90px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .od__step-row {
+    display: flex;
+    align-items: center;
+  }
+  .od__step-dot {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-sizing: border-box;
+    border: 2px dashed var(--cp-input);
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .od__step-dot.is-done {
+    border: none;
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+  }
+  .od__step-line {
+    flex-grow: 1;
+    height: 2px;
+    margin: 0 8px;
+    background: var(--cp-border);
+  }
+  .od__step-line.is-done {
+    background: var(--cp-primary);
+  }
+  .od__step-label-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .od__step-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+  }
+  .od__step-label.is-done {
+    color: var(--cp-fg);
+  }
+  .od__step-date {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+
+  .od__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .od__body {
+      flex-direction: row;
+    }
+  }
+
+  .od__items-panel {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .od__items-head {
+    min-width: 500px;
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+  }
+  .od__items-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .od__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 70px 100px 110px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 500px;
+  }
+  .od__grid-head {
+    height: 36px;
+    background: var(--cp-shell);
+    border-top: 1px solid var(--cp-border);
+    border-bottom: 1px solid var(--cp-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+  }
+  .od__row {
+    height: 48px;
+    border-bottom: 1px solid var(--cp-border);
+    font-size: 14px;
+  }
+  .od__col-right {
+    text-align: right;
+    color: var(--cp-fg2);
+  }
+  .od__item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .od__item-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .od__item-sku {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+  .od__item-total {
+    font-weight: 500;
+    color: var(--cp-fg);
+  }
+  .od__totals {
+    min-width: 500px;
+    margin-top: auto;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .od__totals-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 24px;
+  }
+  .od__totals-row span:first-child {
+    color: var(--cp-fg2);
+  }
+  .od__totals-row span:last-child {
+    width: 110px;
+    text-align: right;
+    font-weight: 500;
+  }
+  .od__totals-final {
+    padding-top: 8px;
+    border-top: 1px solid var(--cp-border);
+  }
+  .od__totals-final span:first-child {
+    font-weight: 600;
+    color: var(--cp-fg);
+  }
+  .od__totals-final span:last-child {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .od__side {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1000px) {
+    .od__side {
+      width: 380px;
+      flex-shrink: 0;
+    }
+  }
+  .od__card {
+    box-sizing: border-box;
+    padding: 18px 20px;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .od__card h2 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .od__address-text {
+    font-size: 13px;
+    color: var(--cp-fg2);
+    line-height: 1.5;
+  }
+
+  .od__payment-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .od__payment-icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--cp-muted);
+    color: var(--cp-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .od__payment-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .od__payment-method {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .od__payment-meta {
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+
+  .od__help-card {
+    gap: 12px;
+  }
+  .od__help-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .od__help-head span {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+    line-height: 1.5;
+  }
+  .od__help-btn {
+    height: 36px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .od__notfound {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    background: var(--cp-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .od__notfound-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .od__notfound-body {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+</style>
+
+<script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  import { actions } from "astro:actions";
+
+  const container = document.querySelector<HTMLDivElement>("#order-cancel-actions");
+  if (container) {
+    const orderId = container.dataset.orderId!;
+    const cancelBtn = document.querySelector<HTMLButtonElement>("#od-cancel-btn")!;
+    const messageEl = document.querySelector<HTMLParagraphElement>("#od-cancel-message")!;
+
+    cancelBtn.addEventListener("click", async () => {
+      const reason = window.prompt("Reason for cancellation:") ?? "";
+      if (!reason.trim()) return;
+
+      cancelBtn.disabled = true;
+      messageEl.textContent = "";
+
+      const { error } = await actions.updateOrderStatus({ orderId, newStatus: "cancelled", reason });
+
+      if (error) {
+        cancelBtn.disabled = false;
+        messageEl.textContent = error.message;
+        return;
+      }
+
+      window.location.reload();
+    });
+  }
+</script>

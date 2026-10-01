@@ -1,0 +1,1560 @@
+---
+// Literal recreation of the Claude Design canvas's Admin Stock screen
+// (project/AdminStock.dc.html -> NavSidebar role="admin" active="Stock"
+// + the plain shared NavTop.astro (section="Inventory" page="Stock") +
+// PageStock, a role-agnostic, admin-only component — same situation as
+// Product Info's PageProductDetail: no role prop, AdminStock.dc.html is
+// its only real consumer).
+//
+// SCHEMA REALITY vs THE DESIGN: PageStock.dc.html assumes the same
+// warehouse-management model already found not to exist when building
+// Admin Product Info — per-bin locations, reserved/available-to-promise
+// quantities, and a restock-REQUEST-and-fulfilment system (the header's
+// "restock requests go to inventory staff" claim and each row's "Request
+// restock (sent to inventory staff)" button). None of that exists: real
+// restocking is `record_inventory_movement()`, a direct action, not a
+// request-routing workflow. Every one of those is omitted or replaced
+// with an honest "—", never invented.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Header: "Export" omitted (no real export capability, same precedent
+//    as every other Admin list screen). Subtitle drops the fabricated
+//    "main warehouse"/"restock requests go to inventory staff"/"updated 2
+//    min ago" claims, replaced with a plain honest description.
+//  - "Stock adjustment" button: genuinely real and already authorized —
+//    inventory_update_staff / inventory_movements_insert_staff RLS
+//    includes admin (and super_admin), identical to inventory_staff (see
+//    migrations/0005). Reuses the EXACT same real
+//    `recordInventoryMovement` Action → `record_inventory_movement()` RPC
+//    already proven on /inventory/adjustments — same product search,
+//    reason chips (Damaged forces a negative delta, matching the RPC's
+//    own -abs() behavior), quantity stepper, live "current → new qty"
+//    preview, same client+server validation, same real audit trail (every
+//    movement is attributed to the real signed-in admin via
+//    `performed_by`). Packaged as a toggle panel (hidden until opened)
+//    rather than an always-visible side column, since this screen's
+//    primary content is the stock table itself, not a dedicated
+//    adjustment workflow the way /inventory/adjustments is.
+//  - Stat strip (5 real stats, all admin-appropriate real KPIs):
+//    "Inventory value" — the exact same real `inventory_value_summary`
+//    view (sum of qty×price for active products) already used on Admin
+//    Dashboard, honestly labelled "at price" (NOT "at cost" — the
+//    design's own label doesn't match what this view actually computes,
+//    and products.cost is null for some real rows anyway, so relabelling
+//    honestly was preferred over inventing a second cost-based figure).
+//    "SKUs" — real total product count + real populated-category count.
+//    "Low stock"/"Out of stock" — real counts (identical qty<=reorder_level
+//    computation used everywhere else); their fabricated notes ("restock
+//    requested for 5", "2 restocks due this week") dropped — no
+//    restock-request system exists. "Dead stock (90 days)" — genuinely
+//    real and derivable: active products with zero inventory_movements
+//    in the real last-90-IST-days window (resolveDashboardRange("90d"),
+//    the exact same shared IST-safe helper every other dashboard in this
+//    project already uses — no UTC/IST shifting reintroduced), real ₹
+//    value (at price) + real SKU count of that set.
+//  - "Stock value by category": real, grouped from the same real active
+//    products, same "at price" honest relabel as above, real bar widths
+//    scaled to the largest real category value (not fabricated
+//    percentages).
+//  - Status tabs (All/Low stock/Out of stock): real counts, real filter.
+//  - "Category"/"Supplier" facets: real — Category from real
+//    categories.name; Supplier reuses the exact same "most recent
+//    restock supplier" derivation already proven on Admin Products/
+//    Product Info (the only place a supplier is ever attached to a
+//    product in this schema).
+//  - Table: SKU/Product (real, product name links to the real, already-
+//    approved /admin/products/[id] — not /sales/products or
+//    /inventory/products), On hand/Low at/Status all real. "Bin" column:
+//    no location field exists — kept in the grid (matches the design's
+//    own shape) but every cell honestly shows "—", same precedent already
+//    established on Stock Adjustments' own Location/Bin cells. "Reserved"/
+//    "Available": no reservation or available-to-promise concept exists
+//    — both kept as honest "—" columns rather than computed from a
+//    fabricated "reserved" (which would make "Available" a fabricated
+//    derived number too, exactly what your instructions explicitly
+//    forbid). "Level" bar: real substitute — on-hand relative to
+//    2×reorder_level (design used the fabricated "available" for this;
+//    on-hand is the real genuine equivalent). "Actions": only "Adjust"
+//    kept (opens the real panel above, pre-selecting that row's product);
+//    "Request restock" omitted entirely — no request workflow and no
+//    honest destination exists (same reasoning as Product Info's own
+//    "Request restock" omission).
+//  - Footer: "Showing 8 of 3,418 SKUs · sorted by availability" and the
+//    fake "Page 1 of 428" pagination replaced with a real "{N} of {M}
+//    products" count (same precedent as every other Admin list screen —
+//    no fake pagination). Real default sort: stock-status severity (out
+//    → low → in) then name — an honest, genuinely useful real substitute
+//    for the fabricated "sorted by availability" (availability itself
+//    doesn't exist as a real field).
+//  - "View" grid/list toggle: omitted — no view-mode capability, same
+//    precedent as every other list screen in this project.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import { resolveDashboardRange } from "../../../lib/dashboardRange";
+
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const category = url.searchParams.get("category") ?? "";
+const status = url.searchParams.get("status") ?? "";
+const supplier = url.searchParams.get("supplier") ?? "";
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+// --- Real full catalog (active AND inactive — same precedent as Admin Products) ---
+const { data: productRows } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, price, is_active, category_id, categories(name), inventory(quantity_on_hand, reorder_level)")
+  .order("name");
+
+const { data: restockRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("product_id, created_at, suppliers(name)")
+  .eq("movement_type", "restock")
+  .not("supplier_id", "is", null)
+  .order("created_at", { ascending: false });
+
+const supplierByProduct = new Map<string, string>();
+for (const r of restockRows ?? []) {
+  if (supplierByProduct.has(r.product_id as string)) continue;
+  const name = (r.suppliers as unknown as { name: string } | null)?.name;
+  if (name) supplierByProduct.set(r.product_id as string, name);
+}
+
+// --- Real "last movement" per product, for the real Dead stock (90d) stat ---
+const { data: lastMoveRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("product_id, created_at")
+  .order("created_at", { ascending: false });
+const lastMovementByProduct = new Map<string, string>();
+for (const r of lastMoveRows ?? []) {
+  if (!lastMovementByProduct.has(r.product_id as string)) lastMovementByProduct.set(r.product_id as string, r.created_at as string);
+}
+
+function categoryOf(row: { categories: unknown }): { name: string } | null {
+  return row.categories as unknown as { name: string } | null;
+}
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
+};
+
+const allProducts = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+  const stockSeverity = stockTone === "out" ? 0 : stockTone === "low" ? 1 : 2;
+  return {
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    isActive: p.is_active,
+    categoryId: p.category_id as string | null,
+    categoryName: categoryOf(p)?.name ?? "Uncategorised",
+    price: Number(p.price),
+    qty,
+    reorderLevel,
+    stockTone,
+    stockSeverity,
+    supplier: supplierByProduct.get(p.id) ?? null,
+    lastMovementAt: lastMovementByProduct.get(p.id) ?? null,
+  };
+});
+
+const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+// --- Real stat strip ---
+const inventoryValueAtPrice = allProducts.filter((p) => p.isActive).reduce((sum, p) => sum + p.qty * p.price, 0);
+const totalSkus = allProducts.length;
+const populatedCategoryCount = new Set(allProducts.filter((p) => p.categoryId).map((p) => p.categoryId)).size;
+const lowStockCount = allProducts.filter((p) => p.stockTone === "low").length;
+const outOfStockCount = allProducts.filter((p) => p.stockTone === "out").length;
+
+const ninetyDayRange = resolveDashboardRange("90d");
+const deadStockProducts = allProducts.filter(
+  (p) => p.isActive && (!p.lastMovementAt || new Date(p.lastMovementAt) < new Date(ninetyDayRange.from!))
+);
+const deadStockValue = deadStockProducts.reduce((sum, p) => sum + p.qty * p.price, 0);
+
+const stats = [
+  { label: "Inventory value", value: formatCompact(inventoryValueAtPrice), note: "at price", tone: "" },
+  { label: "SKUs", value: String(totalSkus), note: `in ${populatedCategoryCount} categor${populatedCategoryCount === 1 ? "y" : "ies"}`, tone: "" },
+  { label: "Low stock", value: String(lowStockCount), note: "store-wide", tone: "warn" },
+  { label: "Out of stock", value: String(outOfStockCount), note: "store-wide", tone: "danger" },
+  { label: "Dead stock (90 days)", value: formatCompact(deadStockValue), note: `${deadStockProducts.length} SKU${deadStockProducts.length === 1 ? "" : "s"}, no movement`, tone: "" },
+];
+
+// --- Real stock value by category ---
+const categoryValues = new Map<string, number>();
+for (const p of allProducts.filter((p) => p.isActive)) {
+  categoryValues.set(p.categoryName, (categoryValues.get(p.categoryName) ?? 0) + p.qty * p.price);
+}
+const categoryValueList = [...categoryValues.entries()].sort((a, b) => b[1] - a[1]);
+const maxCategoryValue = Math.max(...categoryValueList.map(([, v]) => v), 1);
+const categoryBars = categoryValueList.map(([name, value]) => ({
+  name,
+  value: formatCompact(value),
+  pct: Math.round((value / maxCategoryValue) * 100),
+}));
+
+// --- Real category/supplier facet options ---
+const categoryOptions = [...new Map(allProducts.filter((p) => p.categoryId).map((p) => [p.categoryId!, p.categoryName])).entries()]
+  .map(([id, name]) => ({ id, name }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+const supplierOptions = [...new Set(allProducts.map((p) => p.supplier).filter((s): s is string => !!s))].sort((a, b) => a.localeCompare(b));
+
+// --- Real status tabs (matches the design's own 3-tab set: All/Low/Out) ---
+const STATUS_TABS = [
+  { key: "", label: "All", count: allProducts.length },
+  { key: "low", label: "Low stock", count: lowStockCount },
+  { key: "out", label: "Out of stock", count: outOfStockCount },
+];
+
+// --- Real filter + sort ---
+let filtered = allProducts.filter((p) => {
+  if (category && p.categoryId !== category) return false;
+  if (status && p.stockTone !== status) return false;
+  if (supplier && p.supplier !== supplier) return false;
+  if (!search) return true;
+  const needle = search.toLowerCase();
+  return p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle);
+});
+filtered = [...filtered].sort((a, b) => a.stockSeverity - b.stockSeverity || a.name.localeCompare(b.name));
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  const qs = next.toString();
+  return qs ? `/admin/stock?${qs}` : "/admin/stock";
+}
+
+// --- Real "Level" bar (genuine on-hand-relative substitute for the
+// design's fabricated available-to-promise bar) ---
+function levelPct(qty: number, reorderLevel: number): number {
+  if (reorderLevel <= 0) return qty > 0 ? 100 : 0;
+  return Math.max(0, Math.min(100, Math.round((qty / (reorderLevel * 2)) * 100)));
+}
+const LEVEL_COLOR: Record<string, string> = { in: "var(--sd-success-fg)", low: "var(--sd-warn-fg)", out: "var(--sd-danger-fg)" };
+
+// --- Data passed to the client for the real product search inside the
+// Stock adjustment panel (same shape/technique already used by
+// /inventory/adjustments and /admin/orders/new) ---
+const adjustmentProducts = allProducts.map((p) => ({ id: p.id, sku: p.sku, name: p.name, qty: p.qty, stockTone: p.stockTone }));
+---
+
+<BaseLayout title="Stock — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Stock" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Inventory" page="Stock" searchAction="/admin/stock" searchName="search" searchValue={search} searchPlaceholder="Filter by SKU or product…" />
+
+      <main id="main-content" class="st__main">
+        <div class="st__header">
+          <div class="st__heading-col">
+            <h1>Stock</h1>
+            <span class="st__subtitle">Store-wide stock levels</span>
+          </div>
+          <button type="button" id="st-open-adjust" class="st__adjust-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 4v4M8 10v4M16 16v4"></path></svg>
+            Stock adjustment
+          </button>
+        </div>
+
+        <div class="st__stats">
+          {stats.map((s) => (
+            <div class="st__stat-card">
+              <span class="st__stat-label">{s.label}</span>
+              <span class={`st__stat-value ${s.tone ? `st__stat-value--${s.tone}` : ""}`}>{s.value}</span>
+              <span class="st__stat-note">{s.note}</span>
+            </div>
+          ))}
+        </div>
+
+        <div class="st__cat-card">
+          <div class="st__cat-head">
+            <span class="st__cat-title">Stock value by category</span>
+            <span class="st__cat-sub">At price · total {formatCompact(inventoryValueAtPrice)}</span>
+          </div>
+          <div class="st__cat-bars" role="img" aria-label={`Stock value by category: ${categoryBars.map((c) => `${c.name} ${c.value}`).join(", ")}`}>
+            {categoryBars.map((c) => (
+              <div class="st__cat-row">
+                <span class="st__cat-label">{c.name}</span>
+                <div class="st__cat-track"><div class="st__cat-fill" style={`width: ${c.pct}%;`} /></div>
+                <span class="st__cat-value">{c.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div class="st__toolbar">
+          <div role="tablist" aria-label="Stock status" class="st__tabs">
+            {STATUS_TABS.map((t) => (
+              <a href={buildUrl({ status: t.key || undefined })} role="tab" aria-selected={status === t.key} class={status === t.key ? "is-active" : ""}>
+                {t.label} <span class="st__tab-count">{t.count}</span>
+              </a>
+            ))}
+          </div>
+          <select id="st-category-filter" class="st__facet-select" aria-label="Filter by category">
+            <option value={buildUrl({ category: undefined })} selected={!category}>+ Category</option>
+            {categoryOptions.map((c) => (
+              <option value={buildUrl({ category: c.id })} selected={category === c.id}>{c.name}</option>
+            ))}
+          </select>
+          <select id="st-supplier-filter" class="st__facet-select" aria-label="Filter by supplier">
+            <option value={buildUrl({ supplier: undefined })} selected={!supplier}>+ Supplier</option>
+            {supplierOptions.map((s) => (
+              <option value={buildUrl({ supplier: s })} selected={supplier === s}>{s}</option>
+            ))}
+          </select>
+        </div>
+
+        {
+          filtered.length > 0 ? (
+            <div class="st__panel">
+              <div class="st__grid st__grid-head">
+                <span>SKU</span><span>Product</span><span>Bin</span><span class="st__col-right">On hand</span><span class="st__col-right">Reserved</span><span class="st__col-right">Available</span><span class="st__col-right">Low at</span><span>Level</span><span>Status</span><span class="st__col-right">Actions</span>
+              </div>
+              {filtered.map((p) => (
+                <div class="st__grid st__row">
+                  <span class="st__muted-cell">{p.sku}</span>
+                  <a href={`/admin/products/${p.id}`} class="st__name-cell">
+                    {p.name}
+                    {!p.isActive && <span class="st__inactive-tag">Inactive</span>}
+                  </a>
+                  <span class="st__muted-cell">—</span>
+                  <span class="st__col-right st__on-hand">{p.qty}</span>
+                  <span class="st__col-right st__muted-cell">—</span>
+                  <span class="st__col-right st__muted-cell">—</span>
+                  <span class="st__col-right st__muted-cell">{p.reorderLevel}</span>
+                  <span class="st__level-track" role="img" aria-label={`${levelPct(p.qty, p.reorderLevel)}% of target level`}>
+                    <span class="st__level-fill" style={`width: ${levelPct(p.qty, p.reorderLevel)}%; background: ${LEVEL_COLOR[p.stockTone]};`} />
+                  </span>
+                  <span><span class={`st__pill st__pill--${p.stockTone}`}>{STOCK_LABEL[p.stockTone]}</span></span>
+                  <span class="st__row-actions">
+                    <button type="button" class="st__adjust-icon-btn" aria-label={`Adjust ${p.name}`} title="Adjust" data-product-id={p.id}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 4v4M8 10v4M16 16v4"></path></svg>
+                    </button>
+                  </span>
+                </div>
+              ))}
+              <div class="st__panel-footer">{filtered.length} of {allProducts.length} product{allProducts.length === 1 ? "" : "s"} · sorted by stock status</div>
+            </div>
+          ) : (
+            <div class="st__empty">
+              <p class="st__empty-title">No stock rows found</p>
+              <p class="st__empty-body">Try a different search or filter.</p>
+            </div>
+          )
+        }
+      </main>
+    </div>
+
+    <div id="st-adjust-backdrop" class="st__adjust-backdrop" hidden></div>
+    <aside id="st-adjust-panel" class="st__adjust-panel" hidden aria-label="Stock adjustment">
+      <div class="st__adjust-panel-head">
+        <h2>Stock adjustment</h2>
+        <button type="button" id="st-close-adjust" aria-label="Close" class="st__adjust-close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <span class="st__adjust-panel-sub">Search the item, then record what changed.</span>
+
+      <div class="st__field-col">
+        <label for="st-adj-search">Product</label>
+        <div class="st__product-search-wrap">
+          <input type="search" id="st-adj-search" class="st__product-search" placeholder="Search by name or SKU…" aria-label="Search products" autocomplete="off" />
+          <div id="st-adj-results" class="st__picker-results" role="listbox" aria-label="Products" hidden></div>
+        </div>
+        <div id="st-adj-selected" class="st__selected-product" hidden>
+          <span id="st-adj-selected-name" class="st__selected-name"></span>
+          <button type="button" id="st-adj-clear" aria-label="Clear product" class="st__clear-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="st__field-col">
+        <span>Current qty</span>
+        <div class="st__static-cell" id="st-adj-current-qty">—</div>
+      </div>
+
+      <div class="st__field-col">
+        <span id="st-adj-reason-label">Reason</span>
+        <div role="radiogroup" aria-labelledby="st-adj-reason-label" class="st__reasons" id="st-adj-reasons">
+          {["Damaged", "Lost", "Found", "Expired", "Count correction"].map((label) => (
+            <button type="button" role="radio" aria-checked="false" class="st__reason-chip" data-reason={label}>{label}</button>
+          ))}
+        </div>
+        <span class="st__hint">Damaged saves this as a damage record.</span>
+      </div>
+
+      <div class="st__field-col">
+        <span>Quantity change</span>
+        <div class="st__qty-row">
+          <div class="st__stepper">
+            <button type="button" id="st-adj-dec" aria-label="Decrease by 1" class="st__stepper-btn">−</button>
+            <input type="text" inputmode="numeric" id="st-adj-qty" aria-label="Quantity change" class="st__qty-input" />
+            <button type="button" id="st-adj-inc" aria-label="Increase by 1" class="st__stepper-btn">+</button>
+          </div>
+          <div class="st__preview">
+            <span class="st__preview-label">New qty</span>
+            <span id="st-adj-preview" class="st__preview-value">Select a product</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="st__field-col">
+        <label for="st-adj-note">Note</label>
+        <textarea id="st-adj-note" class="st__textarea" placeholder="What did you check or do?"></textarea>
+      </div>
+
+      <p id="st-adj-message" class="st__status-message" role="status" />
+
+      <div class="st__adjust-actions">
+        <button type="button" id="st-adj-cancel" class="st__btn">Cancel</button>
+        <button type="button" id="st-adj-submit" class="st__btn st__btn--primary" disabled>Submit adjustment</button>
+      </div>
+    </aside>
+  </div>
+
+  <div id="st-adjust-data" hidden data-products={JSON.stringify(adjustmentProducts)}></div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .st__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .st__main {
+      padding: 16px;
+    }
+  }
+
+  .st__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .st__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .st__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .st__adjust-btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .st__stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 1100px) {
+    .st__stats {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 640px) {
+    .st__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .st__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .st__stat-value--warn {
+    color: var(--sd-warn-fg);
+  }
+  .st__stat-value--danger {
+    color: var(--sd-danger-fg);
+  }
+  .st__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .st__cat-card {
+    box-sizing: border-box;
+    padding: 16px 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .st__cat-head {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .st__cat-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .st__cat-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__cat-bars {
+    flex-grow: 1;
+    min-width: 240px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 32px;
+    row-gap: 12px;
+  }
+  @media (max-width: 700px) {
+    .st__cat-bars {
+      grid-template-columns: 1fr;
+    }
+  }
+  .st__cat-row {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr) 56px;
+    gap: 12px;
+    align-items: center;
+    font-size: 13px;
+  }
+  .st__cat-label {
+    color: var(--sd-fg2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .st__cat-track {
+    height: 10px;
+    border-radius: 4px;
+    background: var(--sd-muted);
+  }
+  .st__cat-fill {
+    height: 10px;
+    border-radius: 4px;
+    background: var(--sd-accent);
+  }
+  .st__cat-value {
+    text-align: right;
+    font-weight: 500;
+  }
+
+  .st__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .st__tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+  }
+  .st__tabs a {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .st__tabs a.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .st__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .st__tabs a.is-active .st__tab-count {
+    color: var(--sd-muted-fg);
+  }
+  .st__facet-select {
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .st__panel {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow-x: auto;
+  }
+  .st__grid {
+    display: grid;
+    grid-template-columns: 76px minmax(160px, 1fr) 70px 70px 70px 76px 64px 80px 96px 64px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 1020px;
+  }
+  .st__grid-head {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .st__row {
+    height: 50px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .st__col-right {
+    text-align: right;
+  }
+  .st__muted-cell {
+    color: var(--sd-fg2);
+  }
+  .st__name-cell {
+    color: var(--sd-fg);
+    text-decoration: none;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .st__inactive-tag {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .st__on-hand {
+    font-weight: 500;
+  }
+  .st__level-track {
+    width: 72px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sd-muted);
+    display: block;
+  }
+  .st__level-fill {
+    display: block;
+    height: 6px;
+    border-radius: 3px;
+  }
+  .st__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .st__pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .st__pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .st__pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .st__row-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .st__adjust-icon-btn {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .st__panel-footer {
+    min-width: 1020px;
+    box-sizing: border-box;
+    height: 50px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .st__empty {
+    padding: 48px 24px;
+    text-align: center;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+  }
+  .st__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .st__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Stock adjustment toggle panel */
+  .st__adjust-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 40;
+  }
+  .st__adjust-backdrop:not([hidden]) {
+    display: block;
+  }
+  .st__adjust-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    width: 380px;
+    max-width: 100vw;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border-left: 1px solid var(--sd-border);
+    box-shadow: var(--sd-shadow);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .st__adjust-panel[hidden] {
+    display: none;
+  }
+  .st__adjust-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .st__adjust-panel-head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .st__adjust-close {
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .st__adjust-panel-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    margin-top: -8px;
+  }
+
+  .st__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .st__field-col > label,
+  .st__field-col > span:first-child {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .st__hint {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__product-search-wrap {
+    position: relative;
+  }
+  .st__product-search {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    outline: 0;
+  }
+  .st__picker-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+  }
+  .st__picker-row {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    color: var(--sd-fg);
+  }
+  .st__picker-row:hover {
+    background: var(--sd-muted);
+  }
+  .st__picker-empty {
+    padding: 12px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__picker-row-sub {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex-grow: 1;
+  }
+  .st__picker-row-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .st__picker-row-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .st__stock-pill {
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .st__stock-pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .st__stock-pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .st__stock-pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .st__selected-product {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 6px 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .st__selected-name {
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .st__clear-btn {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .st__static-cell {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+  }
+  .st__reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .st__reason-chip {
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg2);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .st__reason-chip[aria-checked="true"] {
+    border: 1px solid var(--sd-primary);
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .st__qty-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .st__stepper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .st__stepper-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .st__qty-input {
+    width: 76px;
+    height: 44px;
+    box-sizing: border-box;
+    border: 1px solid var(--sd-input);
+    border-radius: 10px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 20px;
+    font-weight: 600;
+    text-align: center;
+    color: var(--sd-fg);
+  }
+  .st__qty-input.is-negative {
+    color: var(--sd-danger-fg);
+  }
+  .st__qty-input.is-positive {
+    color: var(--sd-success-fg);
+  }
+  .st__preview {
+    flex-grow: 1;
+    min-width: 120px;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: 10px;
+    background: var(--sd-shell);
+    border: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+  .st__preview-label {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__preview-value {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .st__textarea {
+    height: 56px;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 10px 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .st__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+  .st__adjust-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+  }
+  .st__btn {
+    height: 40px;
+    box-sizing: border-box;
+    padding: 0 16px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .st__btn--primary {
+    flex-grow: 1;
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .st__btn--primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  interface Product {
+    id: string;
+    sku: string;
+    name: string;
+    qty: number;
+    stockTone: "in" | "low" | "out";
+  }
+
+  const dataEl = document.getElementById("st-adjust-data") as HTMLElement;
+  const products = JSON.parse(dataEl.dataset.products!) as Product[];
+  const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+  let selectedProduct: Product | null = null;
+  let selectedReason: string | null = null;
+
+  const panel = document.getElementById("st-adjust-panel") as HTMLElement;
+  const backdrop = document.getElementById("st-adjust-backdrop") as HTMLElement;
+  const openBtn = document.getElementById("st-open-adjust")!;
+  const closeBtn = document.getElementById("st-close-adjust")!;
+
+  function openPanel(preselect?: Product) {
+    panel.hidden = false;
+    backdrop.hidden = false;
+    if (preselect) selectProduct(preselect);
+  }
+  function closePanel() {
+    panel.hidden = true;
+    backdrop.hidden = true;
+  }
+  openBtn.addEventListener("click", () => openPanel());
+  closeBtn.addEventListener("click", closePanel);
+  backdrop.addEventListener("click", closePanel);
+
+  document.querySelectorAll<HTMLButtonElement>(".st__adjust-icon-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = products.find((pr) => pr.id === btn.dataset.productId);
+      if (p) openPanel(p);
+    });
+  });
+
+  // --- Product search-to-select (identical pattern to /inventory/adjustments) ---
+  const productSearch = document.querySelector<HTMLInputElement>("#st-adj-search")!;
+  const productResults = document.querySelector<HTMLDivElement>("#st-adj-results")!;
+  const selectedBox = document.querySelector<HTMLDivElement>("#st-adj-selected")!;
+  const selectedNameEl = document.querySelector<HTMLSpanElement>("#st-adj-selected-name")!;
+  const clearProductBtn = document.querySelector<HTMLButtonElement>("#st-adj-clear")!;
+  const currentQtyEl = document.querySelector<HTMLDivElement>("#st-adj-current-qty")!;
+
+  function renderProductResults(filter: string) {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) {
+      productResults.hidden = true;
+      productResults.innerHTML = "";
+      return;
+    }
+    const matches = products.filter((p) => p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle)).slice(0, 20);
+    productResults.innerHTML = "";
+    if (matches.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "st__picker-empty";
+      empty.textContent = "No products found.";
+      productResults.appendChild(empty);
+    } else {
+      matches.forEach((p) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "st__picker-row";
+        row.setAttribute("role", "option");
+
+        const sub = document.createElement("span");
+        sub.className = "st__picker-row-sub";
+        const nameEl = document.createElement("span");
+        nameEl.className = "st__picker-row-name";
+        nameEl.textContent = p.name;
+        const metaEl = document.createElement("span");
+        metaEl.className = "st__picker-row-meta";
+        metaEl.append(p.sku);
+        const pill = document.createElement("span");
+        pill.className = `st__stock-pill st__stock-pill--${p.stockTone}`;
+        pill.textContent = p.stockTone === "out" ? STOCK_LABEL.out : `${STOCK_LABEL[p.stockTone]} ${p.qty}`;
+        metaEl.appendChild(pill);
+        sub.appendChild(nameEl);
+        sub.appendChild(metaEl);
+        row.appendChild(sub);
+
+        row.addEventListener("click", () => {
+          selectProduct(p);
+          productSearch.value = "";
+          productResults.hidden = true;
+        });
+        productResults.appendChild(row);
+      });
+    }
+    productResults.hidden = false;
+  }
+  productSearch.addEventListener("input", () => renderProductResults(productSearch.value));
+  document.addEventListener("click", (e) => {
+    if (!productResults.hidden && !productResults.contains(e.target as Node) && e.target !== productSearch) {
+      productResults.hidden = true;
+    }
+  });
+
+  function selectProduct(p: Product) {
+    selectedProduct = p;
+    selectedNameEl.textContent = `${p.name} · ${p.sku}`;
+    selectedBox.hidden = false;
+    productSearch.hidden = true;
+    currentQtyEl.textContent = String(p.qty);
+    updatePreview();
+    updateSubmitState();
+  }
+  clearProductBtn.addEventListener("click", () => {
+    selectedProduct = null;
+    selectedBox.hidden = true;
+    productSearch.hidden = false;
+    productSearch.value = "";
+    currentQtyEl.textContent = "—";
+    updatePreview();
+    updateSubmitState();
+  });
+
+  // --- Reason chips ---
+  const reasonButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".st__reason-chip"));
+  const qtyInput = document.querySelector<HTMLInputElement>("#st-adj-qty")!;
+
+  reasonButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const reason = btn.dataset.reason!;
+      selectedReason = reason;
+      reasonButtons.forEach((b) => b.setAttribute("aria-checked", String(b === btn)));
+
+      const noteEl = document.querySelector<HTMLTextAreaElement>("#st-adj-note")!;
+      if (!noteEl.value.trim()) noteEl.value = reason;
+
+      if (reason === "Damaged") {
+        const n = parseInt(qtyInput.value, 10);
+        if (Number.isFinite(n) && n > 0) qtyInput.value = String(-n);
+        if (!qtyInput.value || qtyInput.value === "0") qtyInput.value = "-1";
+      }
+      updateQtyStyle();
+      updatePreview();
+      updateSubmitState();
+    });
+  });
+
+  function currentQtyValue(): number {
+    const n = parseInt(qtyInput.value, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function setQty(n: number) {
+    qtyInput.value = n === 0 ? "" : String(n);
+    updateQtyStyle();
+    updatePreview();
+    updateSubmitState();
+  }
+  document.querySelector<HTMLButtonElement>("#st-adj-dec")!.addEventListener("click", () => {
+    let next = currentQtyValue() - 1;
+    if (selectedReason === "Damaged" && next >= 0) next = -1;
+    setQty(next);
+  });
+  document.querySelector<HTMLButtonElement>("#st-adj-inc")!.addEventListener("click", () => {
+    let next = currentQtyValue() + 1;
+    if (selectedReason === "Damaged" && next >= 0) next = -1;
+    setQty(next);
+  });
+  qtyInput.addEventListener("input", () => {
+    updateQtyStyle();
+    updatePreview();
+    updateSubmitState();
+  });
+
+  function updateQtyStyle() {
+    const n = currentQtyValue();
+    qtyInput.classList.toggle("is-negative", n < 0);
+    qtyInput.classList.toggle("is-positive", n > 0);
+  }
+
+  const previewEl = document.querySelector<HTMLSpanElement>("#st-adj-preview")!;
+  function updatePreview() {
+    if (!selectedProduct) {
+      previewEl.textContent = "Select a product";
+      return;
+    }
+    const delta = currentQtyValue();
+    const next = selectedProduct.qty + delta;
+    previewEl.textContent = `${selectedProduct.qty} → ${next}`;
+    previewEl.style.color = next < 0 ? "var(--sd-danger-fg)" : "";
+  }
+
+  const messageEl = document.querySelector<HTMLParagraphElement>("#st-adj-message")!;
+  const noteInput = document.querySelector<HTMLTextAreaElement>("#st-adj-note")!;
+  const submitBtn = document.querySelector<HTMLButtonElement>("#st-adj-submit")!;
+  const cancelBtn = document.querySelector<HTMLButtonElement>("#st-adj-cancel")!;
+
+  function updateSubmitState() {
+    const delta = currentQtyValue();
+    const newQty = selectedProduct ? selectedProduct.qty + delta : 0;
+    submitBtn.disabled = !selectedProduct || !selectedReason || delta === 0 || newQty < 0;
+  }
+
+  function resetForm() {
+    selectedProduct = null;
+    selectedReason = null;
+    selectedBox.hidden = true;
+    productSearch.hidden = false;
+    productSearch.value = "";
+    currentQtyEl.textContent = "—";
+    qtyInput.value = "";
+    noteInput.value = "";
+    reasonButtons.forEach((b) => b.setAttribute("aria-checked", "false"));
+    messageEl.textContent = "";
+    updateQtyStyle();
+    updatePreview();
+    updateSubmitState();
+  }
+  cancelBtn.addEventListener("click", () => {
+    resetForm();
+    closePanel();
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    messageEl.textContent = "";
+    if (!selectedProduct || !selectedReason) return;
+
+    const delta = currentQtyValue();
+    if (delta === 0) {
+      messageEl.textContent = "Enter a non-zero quantity change.";
+      return;
+    }
+    const reasonText = noteInput.value.trim();
+    if (!reasonText) {
+      messageEl.textContent = "Enter a note describing the reason.";
+      noteInput.focus();
+      return;
+    }
+    if (selectedProduct.qty + delta < 0) {
+      messageEl.textContent = "This would take stock below zero.";
+      return;
+    }
+
+    const movementType = selectedReason === "Damaged" ? "damaged" : "adjustment";
+    const quantity = movementType === "damaged" ? Math.abs(delta) : delta;
+
+    submitBtn.disabled = true;
+    const fd = new FormData();
+    fd.set("productId", selectedProduct.id);
+    fd.set("movementType", movementType);
+    fd.set("quantity", String(quantity));
+    fd.set("reason", reasonText);
+
+    const { error } = await actions.recordInventoryMovement(fd);
+
+    if (error) {
+      messageEl.textContent = error.message;
+      submitBtn.disabled = false;
+      return;
+    }
+
+    window.location.href = "/admin/stock?updated=1";
+  });
+
+  updateQtyStyle();
+  updatePreview();
+  updateSubmitState();
+
+  // --- Category/Supplier filters — each <option>'s value is already the
+  // full real, server-built target URL, same pattern as Admin Products. ---
+  document.getElementById("st-category-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+  document.getElementById("st-supplier-filter")?.addEventListener("change", (e) => {
+    const url = (e.currentTarget as HTMLSelectElement).value;
+    if (url) window.location.href = url;
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

@@ -1,0 +1,886 @@
+---
+// Literal recreation of the Claude Design canvas's Sales My Reports
+// screen (project/SalesReports.dc.html -> NavSidebar + NavTop +
+// PageReports.dc.html with role="sales") — the supplied design is the
+// visual source of truth, not the app's existing DESIGN.md/AppShell/
+// ChartCanvas/DateRangeFilter UI. Reuses the same --sd-* token system +
+// NavSidebar.astro/NavTop.astro already established by every approved
+// Sales screen, plus the same real, unmodified dashboard_revenue_trend/
+// dashboard_orders_by_status/dashboard_top_products RPCs and the same
+// real resolveDashboardRange/DASHBOARD_RANGE_PRESETS/buildDashboardRangeUrl
+// logic already used (and IST-tested) by /account, /admin, /crm and
+// /inventory's own dashboards — this screen introduces zero new date-
+// bucketing logic of its own specifically to avoid reintroducing the
+// IST off-by-one class of bug already found and fixed on Sales Dashboard.
+//
+// LOCKED BUSINESS DECISION (per your explicit instruction): this screen
+// is store-wide sales reporting, not personal Sales Staff performance.
+// orders.placed_by is an audit/process field, not sales-rep attribution,
+// and there is no reliable per-rep attribution model in this schema — so
+// every number below is store-wide, and the subtitle says so explicitly
+// rather than leaving it ambiguous.
+//
+// Real vs deferred/fabricated, per your explicit no-fabrication rules:
+//  - Real: a working date-range control (7D/30D/90D/YTD/All time — the
+//    same real presets/query-param convention as every other dashboard
+//    in this app), real revenue + order count for the selected range
+//    (dashboard_revenue_trend, unchanged, already excludes cancelled
+//    orders), real average order value (derived, revenue/orders — not
+//    fabricated, a genuine calculation), real active-customer count
+//    (distinct customers with a real order in range, out of the real
+//    total customer count), a real daily revenue chart built directly
+//    from dashboard_revenue_trend's own already-IST-bucketed rows (no
+//    client-side date rebucketing at all — the RPC's `day` column is
+//    rendered as-is, capped to the most recent 60 real day-rows for
+//    wide ranges so the chart stays legible, disclosed via a note), real
+//    orders-by-status breakdown (dashboard_orders_by_status, all 7 real
+//    statuses), real top products by revenue (dashboard_top_products,
+//    plus a real category lookup for just those returned products), real
+//    top customers by revenue (a real orders query grouped by customer
+//    for the selected range — customer_metrics has no date-range
+//    parameter, so this is computed directly over the same real,
+//    already-authorized orders table instead, to keep the whole page
+//    consistently date-range-aware), real share-of-revenue bars on both
+//    tables (a genuine percentage of the same real range-total revenue,
+//    not fabricated).
+//  - "My sales"/"Sales vs target" chart, "92% of target" and the target
+//    dashed line, "+6% vs last year": no sales-target/quota concept
+//    exists anywhere in the schema, and no reliable prior-year comparison
+//    was already available — all omitted rather than invented. The
+//    revenue chart above is the real, honest replacement for this slot.
+//  - "Your accounts" / "Share of my sales" framing on the customers
+//    table: replaced with "Top customers by revenue" / "Share of
+//    revenue" — store-wide, matching the locked decision.
+//  - The entire left report-picker nav (My sales/By month/By order
+//    status/My customers/My products, "Saved reports" with fabricated
+//    emailed/updated timestamps, "Search reports", "New report"): none
+//    of this has any backend — there is no saved-report table, no report
+//    subscription/emailing capability, and no multiple distinct
+//    navigable report views behind it (the sub-items would all point at
+//    fabricated destinations). Rather than build fake navigation to
+//    nowhere, this page shows one real, honest report combining the
+//    real content those sub-items implied (revenue trend, order status,
+//    top products, top customers) on a single scrollable page.
+//  - "Export PDF / Excel" and "Schedule email": no export or email-
+//    scheduling capability exists anywhere in this app — omitted.
+//  - Admin-branch content (Category share donut, admin's own "Sales by
+//    category"/margin columns): not applicable — this is the sales-role
+//    branch only, per your instruction.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+import { resolveDashboardRange, DASHBOARD_RANGE_PRESETS, buildDashboardRangeUrl } from "../../../lib/dashboardRange";
+import type { OrderStatus } from "../../../lib/types";
+
+interface RevenueTrendRow {
+  day: string;
+  revenue: number;
+  order_count: number;
+}
+interface StatusRow {
+  status: OrderStatus;
+  order_count: number;
+}
+interface TopProductRow {
+  product_id: string;
+  sku: string;
+  name: string;
+  units_sold: number;
+  revenue: number;
+}
+
+const url = Astro.url;
+const range = resolveDashboardRange(url.searchParams.get("range"));
+
+const { data: revenueTrend } = await Astro.locals.supabase.rpc("dashboard_revenue_trend", {
+  p_from: range.from,
+  p_to: range.to,
+});
+const trendRows = (revenueTrend ?? []) as RevenueTrendRow[];
+
+const totalRevenue = trendRows.reduce((sum, r) => sum + Number(r.revenue), 0);
+const totalOrders = trendRows.reduce((sum, r) => sum + Number(r.order_count), 0);
+const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+const { data: statusRowsRaw } = await Astro.locals.supabase.rpc("dashboard_orders_by_status", {
+  p_from: range.from,
+  p_to: range.to,
+});
+const statusRows = (statusRowsRaw ?? []) as StatusRow[];
+
+const { data: topProductRows } = await Astro.locals.supabase.rpc("dashboard_top_products", {
+  p_from: range.from,
+  p_to: range.to,
+  p_limit: 6,
+});
+const topProducts = (topProductRows ?? []) as TopProductRow[];
+
+const productIds = topProducts.map((p) => p.product_id);
+const { data: productCategoryRows } =
+  productIds.length > 0
+    ? await Astro.locals.supabase.from("products").select("id, categories(name)").in("id", productIds)
+    : { data: [] };
+function categoryOf(row: { categories: unknown }): { name: string } | null {
+  return row.categories as unknown as { name: string } | null;
+}
+const categoryByProductId = new Map((productCategoryRows ?? []).map((p) => [p.id, categoryOf(p)?.name ?? "Uncategorised"]));
+
+// --- Real orders-in-range, used for both the active-customer count and the top-customers table ---
+let orderQuery = Astro.locals.supabase
+  .from("orders")
+  .select("customer_id, total, created_at")
+  .neq("status", "cancelled");
+if (range.from) orderQuery = orderQuery.gte("created_at", range.from);
+if (range.to) orderQuery = orderQuery.lt("created_at", range.to);
+const { data: ordersInRange } = await orderQuery;
+
+const byCustomer = new Map<string, { orders: number; revenue: number }>();
+for (const o of ordersInRange ?? []) {
+  const existing = byCustomer.get(o.customer_id);
+  if (existing) {
+    existing.orders += 1;
+    existing.revenue += o.total;
+  } else {
+    byCustomer.set(o.customer_id, { orders: 1, revenue: o.total });
+  }
+}
+const activeCustomerCount = byCustomer.size;
+
+const { count: totalCustomerCount } = await Astro.locals.supabase
+  .from("profiles")
+  .select("id", { count: "exact", head: true })
+  .eq("role", "customer");
+
+const topCustomerIds = [...byCustomer.entries()]
+  .sort((a, b) => b[1].revenue - a[1].revenue)
+  .slice(0, 5)
+  .map(([id]) => id);
+const { data: topCustomerProfiles } =
+  topCustomerIds.length > 0 ? await Astro.locals.supabase.from("profiles").select("id, full_name").in("id", topCustomerIds) : { data: [] };
+const nameById = new Map((topCustomerProfiles ?? []).map((p) => [p.id, p.full_name ?? "Unnamed customer"]));
+
+const topCustomers = topCustomerIds.map((id) => {
+  const stats = byCustomer.get(id)!;
+  const name = nameById.get(id) ?? "Unnamed customer";
+  return {
+    id,
+    name,
+    initials: name.split(/\s+/).filter(Boolean).slice(0, 2).map((p: string) => p[0]!.toUpperCase()).join("") || "?",
+    orders: stats.orders,
+    revenue: stats.revenue,
+    share: totalRevenue > 0 ? (stats.revenue / totalRevenue) * 100 : 0,
+  };
+});
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
+const formatCompact = (value: number) => {
+  if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  return formatCurrency(value);
+};
+const formatDayLabel = (day: string) => new Date(day).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+
+const MAX_CHART_BARS = 60;
+const chartRows = trendRows.slice(-MAX_CHART_BARS);
+const maxChartRevenue = Math.max(1, ...chartRows.map((r) => Number(r.revenue)));
+
+const STATUS_TONE: Record<OrderStatus, "outline" | "warn" | "info" | "success" | "muted"> = {
+  pending: "outline",
+  confirmed: "warn",
+  processing: "warn",
+  shipped: "info",
+  delivered: "success",
+  cancelled: "muted",
+  refunded: "muted",
+};
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  processing: "Processing",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+};
+const ALL_STATUSES: OrderStatus[] = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"];
+const statusCountByKey = new Map(statusRows.map((r) => [r.status, Number(r.order_count)]));
+const maxStatusCount = Math.max(1, ...ALL_STATUSES.map((s) => statusCountByKey.get(s) ?? 0));
+---
+
+<BaseLayout title="My reports — Sales">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="My reports" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Tools" page="My reports" />
+
+      <main id="main-content" class="rp__main">
+        <div class="rp__header">
+          <div class="rp__heading-col">
+            <h1>My reports</h1>
+            <span class="rp__subtitle">Store-wide sales performance — Sales Staff do not have individual attribution in this system · {range.label}</span>
+          </div>
+          <div class="rp__range">
+            {DASHBOARD_RANGE_PRESETS.map((p) => (
+              <a href={buildDashboardRangeUrl(url, "/sales/reports", p.value)} class={`rp__range-chip ${range.preset === p.value ? "is-active" : ""}`}>
+                {p.label}
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div class="rp__stats">
+          <div class="rp__stat-card">
+            <span class="rp__stat-label">Revenue</span>
+            <div class="rp__stat-body">
+              <span class="rp__stat-value">{formatCompact(totalRevenue)}</span>
+            </div>
+            <span class="rp__stat-note">{totalOrders} order{totalOrders === 1 ? "" : "s"}</span>
+          </div>
+          <div class="rp__stat-card">
+            <span class="rp__stat-label">Orders</span>
+            <div class="rp__stat-body">
+              <span class="rp__stat-value">{totalOrders}</span>
+            </div>
+            <span class="rp__stat-note">excl. cancelled</span>
+          </div>
+          <div class="rp__stat-card">
+            <span class="rp__stat-label">Avg order value</span>
+            <div class="rp__stat-body">
+              <span class="rp__stat-value">{formatCompact(avgOrderValue)}</span>
+            </div>
+            <span class="rp__stat-note">per order</span>
+          </div>
+          <div class="rp__stat-card">
+            <span class="rp__stat-label">Active customers</span>
+            <div class="rp__stat-body">
+              <span class="rp__stat-value">{activeCustomerCount}</span>
+            </div>
+            <span class="rp__stat-note">of {totalCustomerCount ?? 0} total</span>
+          </div>
+        </div>
+
+        <section class="rp__card">
+          <div class="rp__card-head">
+            <div class="rp__card-head-col">
+              <h3>Revenue trend</h3>
+              <span class="rp__card-sub">
+                Daily revenue · {range.label}
+                {trendRows.length > MAX_CHART_BARS && <Fragment> · showing the most recent {MAX_CHART_BARS} days</Fragment>}
+              </span>
+            </div>
+          </div>
+          {chartRows.length > 0 ? (
+            <div class="rp__bars">
+              {chartRows.map((r) => (
+                <div class="rp__bar-col">
+                  <div class="rp__bar-track">
+                    <div class="rp__bar-fill" style={`height: ${Math.round((Number(r.revenue) / maxChartRevenue) * 100)}%`} title={`${formatDayLabel(r.day)}: ${formatCurrency(Number(r.revenue))}`} />
+                  </div>
+                  {chartRows.length <= 31 && <span class="rp__bar-label">{formatDayLabel(r.day)}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p class="rp__empty-note">No revenue in this range.</p>
+          )}
+        </section>
+
+        <section class="rp__card">
+          <div class="rp__card-head">
+            <div class="rp__card-head-col">
+              <h3>Orders by status</h3>
+              <span class="rp__card-sub">{range.label}</span>
+            </div>
+          </div>
+          <div class="rp__status-list">
+            {ALL_STATUSES.map((s) => {
+              const count = statusCountByKey.get(s) ?? 0;
+              return (
+                <div class="rp__status-row">
+                  <span class={`rp__pill rp__pill--${STATUS_TONE[s]}`}>{STATUS_LABEL[s]}</span>
+                  <div class="rp__status-track">
+                    <div class="rp__status-fill" style={`width: ${Math.round((count / maxStatusCount) * 100)}%`} />
+                  </div>
+                  <span class="rp__status-count">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section class="rp__card rp__table-card">
+          <div class="rp__card-head">
+            <div class="rp__card-head-col">
+              <h3>Top products by revenue</h3>
+              <span class="rp__card-sub">{range.label}</span>
+            </div>
+          </div>
+          {topProducts.length > 0 ? (
+            <Fragment>
+              <div class="rp__grid rp__grid-head rp__grid--products">
+                <span>#</span><span>Product</span><span>Category</span><span class="rp__col-right">Qty sold</span><span class="rp__col-right">Revenue</span><span>Share</span>
+              </div>
+              {topProducts.map((p, i) => (
+                <div class="rp__grid rp__row rp__grid--products">
+                  <span class="rp__muted-cell">{i + 1}</span>
+                  <span class="rp__product-cell">
+                    <span class="rp__product-name">{p.name}</span>
+                    <span class="rp__product-sku">{p.sku}</span>
+                  </span>
+                  <span class="rp__muted-cell">{categoryByProductId.get(p.product_id) ?? "Uncategorised"}</span>
+                  <span class="rp__col-right">{Number(p.units_sold)}</span>
+                  <span class="rp__col-right rp__total">{formatCurrency(Number(p.revenue))}</span>
+                  <span class="rp__share-cell">
+                    <span class="rp__share-track">
+                      <span class="rp__share-fill" style={`width: ${totalRevenue > 0 ? Math.round((Number(p.revenue) / totalRevenue) * 100) : 0}%`} />
+                    </span>
+                    <span class="rp__share-pct">{totalRevenue > 0 ? ((Number(p.revenue) / totalRevenue) * 100).toFixed(0) : 0}%</span>
+                  </span>
+                </div>
+              ))}
+            </Fragment>
+          ) : (
+            <p class="rp__empty-note">No product sales in this range.</p>
+          )}
+        </section>
+
+        <section class="rp__card rp__table-card">
+          <div class="rp__card-head">
+            <div class="rp__card-head-col">
+              <h3>Top customers by revenue</h3>
+              <span class="rp__card-sub">{range.label}</span>
+            </div>
+          </div>
+          {topCustomers.length > 0 ? (
+            <Fragment>
+              <div class="rp__grid rp__grid-head rp__grid--customers">
+                <span>Customer</span><span class="rp__col-right">Orders</span><span class="rp__col-right">Revenue</span><span>Share of revenue</span>
+              </div>
+              {topCustomers.map((c) => (
+                <div class="rp__grid rp__row rp__grid--customers">
+                  <span class="rp__customer-cell">
+                    <span class="rp__avatar">{c.initials}</span>
+                    <span class="rp__customer-name">{c.name}</span>
+                  </span>
+                  <span class="rp__col-right rp__muted-cell">{c.orders}</span>
+                  <span class="rp__col-right rp__total">{formatCurrency(c.revenue)}</span>
+                  <span class="rp__share-cell">
+                    <span class="rp__share-track">
+                      <span class="rp__share-fill" style={`width: ${Math.round(c.share)}%`} />
+                    </span>
+                    <span class="rp__share-pct">{c.share.toFixed(0)}%</span>
+                  </span>
+                </div>
+              ))}
+            </Fragment>
+          ) : (
+            <p class="rp__empty-note">No customer orders in this range.</p>
+          )}
+        </section>
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .rp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .rp__main {
+      padding: 16px;
+    }
+  }
+
+  .rp__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .rp__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 640px;
+  }
+  .rp__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .rp__subtitle {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    line-height: 1.5;
+  }
+  .rp__range {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+  }
+  .rp__range-chip {
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .rp__range-chip.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+
+  .rp__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) {
+    .rp__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 480px) {
+    .rp__stats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .rp__stat-card {
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rp__stat-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .rp__stat-body {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .rp__stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .rp__stat-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .rp__card {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .rp__card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .rp__card-head-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rp__card-head-col h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .rp__card-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .rp__bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 180px;
+    overflow-x: auto;
+  }
+  .rp__bar-col {
+    flex: 1 0 8px;
+    min-width: 8px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+  }
+  .rp__bar-track {
+    width: 100%;
+    flex-grow: 1;
+    display: flex;
+    align-items: flex-end;
+  }
+  .rp__bar-fill {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 3px 3px 0 0;
+    background: var(--sd-accent);
+  }
+  .rp__bar-label {
+    font-size: 10px;
+    color: var(--sd-muted-fg);
+    white-space: nowrap;
+  }
+
+  .rp__status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .rp__status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .rp__pill {
+    width: 96px;
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .rp__pill--outline {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .rp__pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .rp__pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .rp__pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .rp__pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+  .rp__status-track {
+    flex-grow: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--sd-muted);
+    overflow: hidden;
+  }
+  .rp__status-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--sd-accent);
+  }
+  .rp__status-count {
+    width: 32px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .rp__table-card {
+    padding: 0;
+    overflow-x: auto;
+  }
+  .rp__table-card .rp__card-head {
+    padding: 14px 20px;
+  }
+  .rp__grid {
+    display: grid;
+    gap: 12px;
+    align-items: center;
+    padding: 0 20px;
+    min-width: 640px;
+  }
+  .rp__grid--products {
+    grid-template-columns: 24px minmax(160px, 1fr) 110px 80px 100px 130px;
+    min-width: 700px;
+  }
+  .rp__grid--customers {
+    grid-template-columns: minmax(160px, 1fr) 80px 100px 160px;
+  }
+  .rp__grid-head {
+    height: 36px;
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .rp__row {
+    height: 48px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .rp__col-right {
+    text-align: right;
+  }
+  .rp__muted-cell {
+    color: var(--sd-fg2);
+  }
+  .rp__total {
+    font-weight: 500;
+  }
+  .rp__product-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .rp__product-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rp__product-sku {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    flex-shrink: 0;
+  }
+  .rp__customer-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .rp__avatar {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .rp__customer-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rp__share-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rp__share-track {
+    flex-grow: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sd-muted);
+    overflow: hidden;
+  }
+  .rp__share-fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--sd-accent);
+  }
+  .rp__share-pct {
+    width: 36px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .rp__empty-note {
+    margin: 0;
+    padding: 24px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is now wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

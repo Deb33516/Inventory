@@ -1,0 +1,590 @@
+---
+// Literal recreation of the Claude Design canvas's staff sidebar
+// (project/NavSidebar.dc.html) — built for its first real consumer, the
+// Sales Dashboard, same precedent as NavCustomer.astro. Only the "sales"
+// role config is implemented (real routes only exist for Sales today);
+// other roles (admin/inventory_staff/super_admin) get their own config
+// added when their own screens are redone, matching this project's
+// one-screen-at-a-time process.
+//
+// Real nav destinations only: Dashboard (/sales, real), Contacts
+// (/crm/customers, real — sales_staff is role-gated into /crm per
+// lib/roles.ts APP_SECTIONS), Orders (/sales/orders, real), Products &
+// stock (/sales/products, real, read-only), My reports (/sales/reports,
+// real, store-wide reporting — not personal performance, see that page's
+// own header comment). Both of the last two fall under the existing
+// "/sales" middleware prefix, so no route/RLS change was needed beyond
+// these links. Every Sales sub-screen this sidebar points to now has a
+// real route — no disabled items remain. Real signed-in user identity
+// (name/initials/role label) and a real sign-out action, same pattern
+// already established by AppShell.astro's extended sidebar footer.
+//
+// Desktop collapse / mobile drawer toggle (bugfix): every consuming page
+// renders the same #sd-sidebar-toggle button (NavTop.astro's hamburger,
+// or Sales Dashboard's own equivalent) targeting this component's
+// #sd-sidebar wrapper. That button was previously wired up separately,
+// near-identically, in each of the 7 consuming pages' own <script> —
+// each copy only ever toggled the page-owned "is-open" drawer class,
+// which has a CSS effect solely under the existing max-width:1023px
+// media query. On desktop the button was therefore always visible but
+// produced no visible change at all — the reported bug. Fixed by
+// centralizing the toggle logic here (the shared component, so the fix
+// applies everywhere the button appears, not per-page) and adding a
+// genuine desktop behavior: collapse this sidebar to icon-only via a
+// data-collapsed attribute (CSS-gated to min-width:1024px, so it can
+// never affect the mobile drawer even if the attribute is left set while
+// the viewport narrows). The button now branches on viewport width —
+// desktop clicks collapse/expand (persisted to localStorage, read back
+// on load, same non-blocking "flash of default state before JS applies
+// the stored preference" tradeoff this project's own theme toggle already
+// has on every page), mobile clicks still open/close the drawer exactly
+// as before. Each of the 6 pages using NavTop.astro, plus Sales
+// Dashboard's own equivalent button, had their now-redundant per-page
+// copy of this script removed — this file is the only place it's wired
+// up now. No page's visual design/content changed, only which file owns
+// the toggle's behavior.
+//
+// Role config (Inventory Staff addition): the Claude Design canvas's own
+// NavSidebar.dc.html renders one shared component parameterized by a
+// `role` prop ("super"/"admin"/"sales"/"staff") — the Sales screens above
+// only ever exercised role="sales". The Receiving screen's own artboard
+// (StaffReceiving.dc.html) imports this same shared component with
+// role="staff" (badge "INVENTORY"), so that's the visual source of truth
+// for the branch added below — not a new design, just the second role
+// this shared component was always meant to support. Every inventory nav
+// destination below is a real, already-working route (Warehouse tasks,
+// Stock, Products, Support tickets all predate this screen; Receiving is
+// the one being added now) — none are placeholders, unlike Sales'
+// originally-disabled items. The "Shift" card mirrors the exact honest-
+// deferred wording already approved on Warehouse Tasks' own sidebar
+// widget (real shift-scheduling data doesn't exist in this system) —
+// same content, just relocated into this shared component per the
+// design's own layout for role="staff".
+//
+// Role config (Admin Dashboard addition): the design's Admin.dc.html
+// imports this same shared component with role="admin" (badge "ADMIN") —
+// the design's own NavSidebar.dc.html source (project/NavSidebar.dc.html)
+// gives the real "admin" role's exact nav item list/order/icons/grouping,
+// reproduced verbatim in ADMIN_NAV below. Only "Dashboard" is a real link
+// this turn — every other item (Customers, Sales orders, Products, Stock,
+// Support tickets, Team, Reports, Settings) is honestly disabled, same
+// "Not available yet" treatment Sales' own nav used before those screens
+// existed — each becomes real only once its own screen goes through this
+// project's one-screen-at-a-time design-comparison process. Deliberately
+// NOT wired to any pre-existing old-style page at a related URL (e.g. the
+// old /admin/staff) — that page's visual design doesn't match this design
+// system, and linking a new-shell nav item to an old-shell page would
+// reproduce the exact "looks like the wrong role's UI" bug already found
+// and fixed on Inventory Staff's Support Ticket screen.
+//
+// Role config (Super Admin routing/shell-separation fix): role="super"
+// added below — /super is now its own real application area, distinct
+// from /admin (see ROLE_DASHBOARD/APP_SECTIONS in lib/roles.ts). This
+// corrects an earlier design decision recorded right here that turned out
+// to be wrong: admin and super_admin used to share this same role="admin"
+// branch (distinguished only in the footer's role label via viewerRole),
+// which meant a super_admin's post-login /admin landing rendered the
+// ADMIN badge and ADMIN_NAV — indistinguishable from an actual admin.
+// SUPER_NAV below is routing/shell FOUNDATION ONLY: every item is still
+// `disabled: true` (no /super pages exist yet) — the five real items
+// (Dashboard/Users/Roles & Permissions/Audit Log/Settings) get flipped
+// real one at a time as their own screens are built, same precedent
+// ADMIN_NAV itself followed. Icons below are generic placeholders (no
+// Claude Design artboard for Super Admin has been fetched/approved yet)
+// — re-derive them from the real artboard once that turn happens, don't
+// treat these as the visual source of truth. Existing role="admin" pages
+// are NOT touched by this change — they keep calling role="admin"
+// literally, unaffected (see each Admin page's own NavSidebar call).
+//
+// Role config (Admin Customers addition): "Customers" flipped from
+// disabled to a real link (/admin/customers) now that screen exists —
+// same "flip one item real once its own screen is built" precedent used
+// every other time this project added a screen behind an already-shared
+// nav (e.g. Receiving on Inventory Staff's sidebar). No other ADMIN_NAV
+// item changed.
+//
+// Role config (Admin Sales Orders addition): "Sales orders" flipped from
+// disabled to a real link (/admin/orders) — same precedent, no other
+// ADMIN_NAV item changed.
+//
+// Role config (Admin Products addition): "Products" flipped from disabled
+// to a real link (/admin/products) — same precedent, no other ADMIN_NAV
+// item changed.
+//
+// Role config (Admin Stock addition): "Stock" flipped from disabled to a
+// real link (/admin/stock) — same precedent, no other ADMIN_NAV item
+// changed.
+//
+// Role config (Admin Support Tickets addition): "Support tickets" flipped
+// from disabled to a real link (/admin/tickets) — same precedent, no
+// other ADMIN_NAV item changed.
+//
+// Role config (Admin Team addition): "Team" flipped from disabled to a
+// real link (/admin/staff — the existing route, redesigned in place, same
+// "redesign in place" precedent as Admin Dashboard's own /admin) — no
+// other ADMIN_NAV item changed.
+//
+// Role config (Admin Reports addition): "Reports" flipped from disabled to
+// a real link (/admin/reports — a brand-new route, no old page existed
+// here to redesign in place) — no other ADMIN_NAV item changed.
+//
+// Role config (Admin Settings addition — final Admin-section screen):
+// "Settings" flipped from disabled to a real link (/admin/settings — a
+// brand-new route) — no other ADMIN_NAV item changed. Every ADMIN_NAV
+// item is now real; none remain disabled.
+interface Props {
+  active: string;
+  role?: "sales" | "inventory" | "admin" | "super";
+  ticketBadgeCount?: number;
+  // Only meaningful for role="admin" — a super_admin visiting an Admin
+  // page still renders role="admin"'s ADMIN_NAV/badge on purpose (/admin
+  // stays the Admin application area even for an authorized super_admin
+  // visitor), but the footer's own role label should still reflect which
+  // one the real viewer actually is. role="super" doesn't need this prop
+  // since it's unambiguous on its own — a /super page only ever has a
+  // super_admin viewer.
+  viewerRole?: "admin" | "super_admin";
+}
+
+const { active, role = "sales", ticketBadgeCount, viewerRole } = Astro.props;
+
+const user = Astro.locals.user;
+const displayName = (user?.user_metadata?.full_name as string | undefined) ?? user?.email ?? "—";
+const initials =
+  displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part: string) => part[0]?.toUpperCase())
+    .join("") || "?";
+
+const SALES_NAV = [
+  { isHeader: false, label: "Dashboard", href: "/sales", disabled: false, icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" },
+  { isHeader: true, label: "Selling" },
+  {
+    isHeader: false,
+    label: "Contacts",
+    href: "/crm/customers",
+    disabled: false,
+    icon: "M8 8a4 4 0 1 0 8 0a4 4 0 1 0-8 0M4 21c1-4 4-6 8-6s7 2 8 6",
+  },
+  {
+    isHeader: false,
+    label: "Orders",
+    href: "/sales/orders",
+    disabled: false,
+    icon: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6",
+  },
+  { isHeader: true, label: "Tools" },
+  {
+    isHeader: false,
+    label: "Products & stock",
+    href: "/sales/products",
+    disabled: false,
+    icon: "M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9",
+  },
+  {
+    isHeader: false,
+    label: "My reports",
+    href: "/sales/reports",
+    disabled: false,
+    icon: "M4 20V10M10 20V4M16 20v-7M2 20h20",
+  },
+] as const;
+
+const INVENTORY_NAV = [
+  { isHeader: false, label: "Warehouse tasks", href: "/inventory", disabled: false, icon: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 12l3 3 5-6" },
+  { isHeader: true, label: "Inventory" },
+  { isHeader: false, label: "Receiving", href: "/inventory/receiving", disabled: false, icon: "M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z" },
+  { isHeader: false, label: "Stock adjustments", href: "/inventory/adjustments", disabled: false, icon: "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 4v4M8 10v4M16 16v4" },
+  { isHeader: false, label: "Product lookup", href: "/inventory/products", disabled: false, icon: "M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4" },
+  { isHeader: true, label: "Help" },
+  {
+    isHeader: false,
+    label: "Support tickets",
+    href: "/inventory/tickets",
+    disabled: false,
+    icon: "M4 4h16v12H8l-4 4z",
+    badge: ticketBadgeCount && ticketBadgeCount > 0 ? String(ticketBadgeCount) : undefined,
+  },
+] as const;
+
+// Admin role branch (project/NavSidebar.dc.html's own "admin" role
+// config) — every ADMIN_NAV item is now a real, built screen (see each
+// item's own "Role config (... addition)" comment above). This is the
+// admin-only shell as of the routing/shell-separation fix — super_admin
+// gets its own separate SUPER_NAV below instead of sharing this one (see
+// ROLE_DASHBOARD/APP_SECTIONS in lib/roles.ts for the /admin vs /super
+// split). Admin pages still pass role="admin" literally and are
+// unaffected by that fix.
+const ADMIN_NAV = [
+  { isHeader: false, label: "Dashboard", href: "/admin", disabled: false, icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" },
+  { isHeader: true, label: "Sales" },
+  { isHeader: false, label: "Customers", href: "/admin/customers", disabled: false, icon: "M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2" },
+  { isHeader: false, label: "Sales orders", href: "/admin/orders", disabled: false, icon: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6" },
+  { isHeader: true, label: "Inventory" },
+  { isHeader: false, label: "Products", href: "/admin/products", disabled: false, icon: "M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9" },
+  { isHeader: false, label: "Stock", href: "/admin/stock", disabled: false, icon: "M4 9h16l-1-5H5zM5 9v11h14V9M9 20v-6h6v6" },
+  { isHeader: true, label: "Manage" },
+  { isHeader: false, label: "Support tickets", href: "/admin/tickets", disabled: false, icon: "M4 4h16v12H8l-4 4z" },
+  { isHeader: false, label: "Team", href: "/admin/staff", disabled: false, icon: "M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2" },
+  { isHeader: false, label: "Reports", href: "/admin/reports", disabled: false, icon: "M4 20V10M10 20V4M16 20v-7M2 20h20" },
+  { isHeader: false, label: "Settings", href: "/admin/settings", disabled: false, icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" },
+] as const;
+
+// Super Admin role branch — originally routing/shell FOUNDATION ONLY (every
+// item disabled, generic placeholder icons, no real artboard fetched yet).
+// Now updated against the real Claude Design canvas source
+// (project/NavSidebar.dc.html's "super" role config, as imported by
+// SuperAdmin.dc.html/SuperAdminDark.dc.html): labels ("Overview", not
+// "Dashboard"; "Roles & permissions"/"Audit log", sentence case not title
+// case), grouping ("Access": Users, Roles & permissions; "System": Audit
+// log, Settings), and icon paths are all reproduced verbatim from that
+// source now. "Overview" is flipped to a real link (/super — the real
+// Dashboard screen, built this turn) per this project's established "flip
+// one item real once its own screen is built" precedent; Users/Roles &
+// permissions/Audit log/Settings stay `disabled: true` — their own screens
+// don't exist yet (explicitly out of scope this turn).
+const SUPER_NAV = [
+  { isHeader: false, label: "Overview", href: "/super", disabled: false, icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" },
+  { isHeader: true, label: "Access" },
+  { isHeader: false, label: "Users", href: "", disabled: true, icon: "M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2" },
+  { isHeader: false, label: "Roles & permissions", href: "", disabled: true, icon: "M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6zM9 12l2 2 4-4" },
+  { isHeader: true, label: "System" },
+  { isHeader: false, label: "Audit log", href: "", disabled: true, icon: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
+  { isHeader: false, label: "Settings", href: "", disabled: true, icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" },
+] as const;
+
+const NAV = role === "admin" ? ADMIN_NAV : role === "inventory" ? INVENTORY_NAV : role === "super" ? SUPER_NAV : SALES_NAV;
+const badgeLabel = role === "admin" ? "ADMIN" : role === "inventory" ? "INVENTORY" : role === "super" ? "SUPER ADMIN" : "SALES";
+const roleLabel =
+  role === "admin"
+    ? viewerRole === "super_admin"
+      ? "Super admin"
+      : "Admin"
+    : role === "inventory"
+      ? "Inventory staff"
+      : role === "super"
+        ? "Super admin"
+        : "Sales staff";
+---
+
+<nav aria-label="Main" class="navsidebar">
+  <div class="navsidebar__brand">
+    <span class="navsidebar__logo"><span></span></span>
+    <span class="navsidebar__brand-name">Inventory</span>
+    <span class="navsidebar__badge">{badgeLabel}</span>
+  </div>
+
+  {
+    NAV.map((item) =>
+      item.isHeader ? (
+        item.label && <div class="navsidebar__group-label">{item.label}</div>
+      ) : item.disabled ? (
+        <span class="navsidebar__item navsidebar__item--disabled" aria-disabled="true" title="Not available yet">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={item.icon} /></svg>
+          <span class="navsidebar__item-label">{item.label}</span>
+        </span>
+      ) : (
+        <a href={item.href!} class={`navsidebar__item ${item.label === active ? "is-active" : ""}`} title={item.label}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={item.icon} /></svg>
+          <span class="navsidebar__item-label">{item.label}</span>
+          {"badge" in item && item.badge && <span class="navsidebar__nav-badge">{item.badge}</span>}
+        </a>
+      )
+    )
+  }
+
+  <div class="navsidebar__spacer"></div>
+
+  {
+    role === "inventory" && (
+      <div class="navsidebar__shift">
+        <span class="navsidebar__shift-label">Shift</span>
+        <span class="navsidebar__shift-value">Not available yet</span>
+        <span class="navsidebar__shift-note">Shift scheduling isn't tracked in this system yet.</span>
+      </div>
+    )
+  }
+
+  <div class="navsidebar__footer">
+    <span class="navsidebar__avatar">{initials}</span>
+    <span class="navsidebar__identity">
+      <span class="navsidebar__name">{displayName}</span>
+      <span class="navsidebar__role">{roleLabel}</span>
+    </span>
+    <button type="button" id="navsidebar-signout-btn" aria-label="Sign out" class="navsidebar__signout">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10" /></svg>
+    </button>
+  </div>
+</nav>
+
+<style>
+  .navsidebar {
+    width: 248px;
+    height: 100%;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 20px 14px;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .navsidebar__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 8px 14px;
+  }
+  .navsidebar__logo {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--sd-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .navsidebar__logo span {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+  }
+  .navsidebar__brand-name {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .navsidebar__badge {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+  }
+  .navsidebar__group-label {
+    padding: 14px 12px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sd-muted-fg);
+  }
+  .navsidebar__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 14px;
+    color: var(--sd-fg2);
+  }
+  .navsidebar__item.is-active {
+    background: var(--sd-muted);
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .navsidebar__item--disabled {
+    color: var(--sd-muted-fg);
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .navsidebar__item-label {
+    flex-grow: 1;
+  }
+  .navsidebar__nav-badge {
+    padding: 1px 7px;
+    border-radius: 6px;
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .navsidebar__spacer {
+    flex-grow: 1;
+  }
+  .navsidebar__shift {
+    margin: 0 4px 12px;
+    padding: 14px;
+    border-radius: 12px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .navsidebar__shift-label {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .navsidebar__shift-value {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .navsidebar__shift-note {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .navsidebar__footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 8px 0;
+    border-top: 1px solid var(--sd-border);
+  }
+  .navsidebar__avatar {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .navsidebar__identity {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-width: 0;
+  }
+  .navsidebar__name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .navsidebar__role {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .navsidebar__signout {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  /* Desktop-only collapsed (icon-only) state — gated behind the same
+     min-width:1024px breakpoint the mobile drawer's own max-width:1023px
+     rules use, so a collapsed preference can never visually affect the
+     mobile drawer even if the attribute is still set when the viewport
+     narrows (no resize listener needed to keep the two states apart). */
+  @media (min-width: 1024px) {
+    .navsidebar[data-collapsed="true"] {
+      width: 72px;
+      padding: 20px 10px;
+      transition: width 0.15s ease;
+    }
+    .navsidebar[data-collapsed="true"] .navsidebar__brand {
+      justify-content: center;
+      padding: 0 0 14px;
+    }
+    .navsidebar[data-collapsed="true"] .navsidebar__brand-name,
+    .navsidebar[data-collapsed="true"] .navsidebar__badge,
+    .navsidebar[data-collapsed="true"] .navsidebar__group-label,
+    .navsidebar[data-collapsed="true"] .navsidebar__item-label,
+    .navsidebar[data-collapsed="true"] .navsidebar__nav-badge,
+    .navsidebar[data-collapsed="true"] .navsidebar__shift,
+    .navsidebar[data-collapsed="true"] .navsidebar__identity {
+      display: none;
+    }
+    .navsidebar[data-collapsed="true"] .navsidebar__item {
+      justify-content: center;
+      padding: 0;
+    }
+    .navsidebar[data-collapsed="true"] .navsidebar__footer {
+      justify-content: center;
+      padding: 12px 0 0;
+    }
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  const signOutButton = document.querySelector<HTMLButtonElement>("#navsidebar-signout-btn");
+  signOutButton?.addEventListener("click", async () => {
+    signOutButton.disabled = true;
+    await actions.signOut();
+    window.location.href = "/login";
+  });
+
+  // Sidebar toggle: one #sd-sidebar-toggle button, two behaviors —
+  // desktop collapses this sidebar to icon-only (persisted), mobile
+  // opens/closes the page-owned #sd-sidebar drawer (unchanged, not
+  // persisted). See the file-header comment for why this lives here
+  // instead of duplicated per consuming page.
+  const COLLAPSE_KEY = "sales-sidebar-collapsed";
+  const navEl = document.querySelector<HTMLElement>(".navsidebar");
+  const toggleBtn = document.getElementById("sd-sidebar-toggle");
+  const drawerEl = document.getElementById("sd-sidebar");
+  const backdropEl = document.getElementById("sd-sidebar-backdrop");
+
+  const isDesktop = () => window.matchMedia("(min-width: 1024px)").matches;
+
+  function applyCollapsed(collapsed: boolean) {
+    if (!navEl) return;
+    if (collapsed) navEl.setAttribute("data-collapsed", "true");
+    else navEl.removeAttribute("data-collapsed");
+    toggleBtn?.setAttribute("aria-expanded", String(!collapsed));
+    toggleBtn?.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  }
+
+  let storedCollapsed = false;
+  try {
+    storedCollapsed = localStorage.getItem(COLLAPSE_KEY) === "true";
+  } catch {
+    // ignore — private browsing / storage disabled
+  }
+  applyCollapsed(storedCollapsed);
+
+  function toggleDrawer() {
+    const isOpen = drawerEl?.classList.contains("is-open");
+    drawerEl?.classList.toggle("is-open", !isOpen);
+    backdropEl?.classList.toggle("is-open", !isOpen);
+    toggleBtn?.setAttribute("aria-expanded", String(!isOpen));
+    toggleBtn?.setAttribute("aria-label", "Toggle sidebar");
+  }
+  function closeDrawer() {
+    drawerEl?.classList.remove("is-open");
+    backdropEl?.classList.remove("is-open");
+    toggleBtn?.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleCollapse() {
+    const collapsed = navEl?.getAttribute("data-collapsed") === "true";
+    const next = !collapsed;
+    applyCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSE_KEY, String(next));
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  toggleBtn?.addEventListener("click", () => {
+    if (isDesktop()) toggleCollapse();
+    else toggleDrawer();
+  });
+  backdropEl?.addEventListener("click", closeDrawer);
+</script>

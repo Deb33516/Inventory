@@ -10,7 +10,8 @@ import Card from "../../components/ui/Card.astro";
 import EmptyState from "../../components/catalog/EmptyState.astro";
 import KpiCard from "../../components/dashboard/KpiCard.astro";
 import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import Button from "../../components/ui/Button.astro";
+import Badge from "../../components/ui/Badge.astro";
+import FilterChip from "../../components/catalog/FilterChip.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
 import AppShell from "../../components/layout/AppShell.astro";
 import { CHART_COLORS } from "../../lib/chartTheme";
@@ -18,21 +19,128 @@ import { staffSidebarNav, STAFF_ICONS } from "../../lib/staffNav";
 
 const userId = Astro.locals.user!.id;
 
-// --- Real: low stock (existing calc, unchanged from the prior dashboard) ---
+// --- Real: low stock (existing calc, unchanged from the prior dashboard) —
+// select broadened to include product_id/sku/name too, so the exact same
+// real rows can also back the "My task queue" Restock rows below (no second
+// query, no new definition of "low stock"). ---
 const { data: inventoryRows } = await Astro.locals.supabase
   .from("inventory")
-  .select("quantity_on_hand, reorder_level, products!inner(is_active)")
+  .select("product_id, quantity_on_hand, reorder_level, products!inner(sku, name, is_active)")
   .eq("products.is_active", true);
 
 const rows = inventoryRows ?? [];
 const lowStockCount = rows.filter((r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level).length;
 
-// --- Real: my open support tickets ---
+// --- Real: my open support tickets — select broadened to include id/
+// subject/created_at too, so the same real rows can also back the "My task
+// queue" Ticket rows below (same filter that already computes
+// openTicketCount, no second query, no new definition of "open"). ---
 const { data: myTickets } = await Astro.locals.supabase
   .from("support_tickets")
-  .select("status")
+  .select("id, subject, status, created_at")
   .eq("assigned_to", userId);
-const openTicketCount = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+const openTickets = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status));
+const openTicketCount = openTickets.length;
+
+// --- "My task queue" (real data only — see the section's own markup
+// comment below for the full real-vs-unavailable breakdown per task type).
+const queue = Astro.url.searchParams.get("queue") ?? "all";
+
+function buildQueueUrl(next: string) {
+  const params = new URLSearchParams(Astro.url.search);
+  if (next === "all") params.delete("queue");
+  else params.set("queue", next);
+  const qs = params.toString();
+  return qs ? `/inventory?${qs}` : "/inventory";
+}
+
+interface TaskRow {
+  type: "restock" | "ticket";
+  pillLabel: string;
+  reference: string;
+  details: string;
+  units: string;
+  location: string;
+  due: string;
+  startHref: string;
+}
+
+// Restock: the exact same "low stock" rows as the KPI card above (real
+// products genuinely needing restocking) — Start links to the real
+// Receiving screen. Reference is the real SKU; Location/Due have no real
+// backing field anywhere in the schema, so both are shown as "—" rather
+// than invented.
+function productOf(row: { products: unknown }): { sku: string; name: string } {
+  return row.products as unknown as { sku: string; name: string };
+}
+
+const restockRows: TaskRow[] = [...rows]
+  .filter((r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level)
+  .sort((a, b) => a.quantity_on_hand - b.quantity_on_hand)
+  .map((r) => {
+    const product = productOf(r);
+    return {
+      type: "restock",
+      pillLabel: "Restock",
+      reference: product.sku,
+      details: `${product.name} · ${r.quantity_on_hand} on hand · reorder at ${r.reorder_level}`,
+      units: String(r.quantity_on_hand),
+      location: "—",
+      due: "—",
+      startHref: "/inventory/receiving",
+    };
+  });
+
+// Tickets: the exact same "my open tickets" rows as the KPI card above —
+// Start links to the real ticket detail page. No sequential reference-
+// number field exists on support_tickets (just a uuid) — shown as "—"
+// rather than inventing a "TK-####" scheme. Units/Location/Due have no
+// real backing field on a ticket — all "—".
+const ticketRows: TaskRow[] = [...openTickets]
+  .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  .map((t) => ({
+    type: "ticket",
+    pillLabel: "Ticket",
+    reference: "—",
+    details: t.subject,
+    units: "—",
+    location: "—",
+    due: "—",
+    startHref: `/inventory/tickets/${t.id}`,
+  }));
+
+// Receive/Damage/Adjust: no incoming-shipment, pending-damage, or pending-
+// adjustment entity exists anywhere in this schema (see CLAUDE.md) — these
+// three categories are always real, honest zeros, never fabricated rows.
+const queueCounts = {
+  all: restockRows.length + ticketRows.length,
+  receive: 0,
+  restock: restockRows.length,
+  damage: 0,
+  adjust: 0,
+  tickets: ticketRows.length,
+};
+
+const QUEUE_FILTERS: { value: keyof typeof queueCounts; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "receive", label: "Receive" },
+  { value: "restock", label: "Restock" },
+  { value: "damage", label: "Damage" },
+  { value: "adjust", label: "Adjust" },
+  { value: "tickets", label: "Tickets" },
+];
+
+const visibleTaskRows: TaskRow[] =
+  queue === "restock" ? restockRows : queue === "tickets" ? ticketRows : queue === "all" ? [...restockRows, ...ticketRows] : [];
+
+const EMPTY_QUEUE_MESSAGE: Record<string, string> = {
+  all: "No task queue yet.",
+  receive: "Incoming-shipment tracking isn't supported in this system yet.",
+  restock: "No products are currently low on stock.",
+  damage: "Damage-to-record tracking isn't supported in this system yet.",
+  adjust: "Pending-adjustment tracking isn't supported in this system yet.",
+  tickets: "No open tickets assigned to you.",
+};
 
 // --- Real: stock movements, last 7 days, bucketed by IST calendar day into
 // in (positive quantity_delta) vs out (negative) — the design shows this
@@ -119,25 +227,63 @@ const hasMovementData = totalIn > 0 || totalOut > 0;
     </div>
 
     <div class="mt-lg flex flex-col lg:flex-row gap-lg items-start">
-      <section class="w-full lg:w-[740px] shrink-0 bg-canvas border border-hairline rounded-xl shadow-sm">
-        <div class="flex items-center justify-between px-lg pt-lg pb-sm">
+      <section class="w-full lg:w-[740px] shrink-0 bg-canvas border border-hairline rounded-xl shadow-sm overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between flex-wrap gap-sm px-lg pt-lg pb-sm">
           <h2 class="text-sm font-bold text-ink">My task queue</h2>
+          <div role="group" aria-label="Filter tasks" class="flex flex-wrap gap-xs">
+            {
+              QUEUE_FILTERS.map((f) => (
+                <FilterChip href={buildQueueUrl(f.value)} active={queue === f.value || (queue === "all" && f.value === "all")}>
+                  {`${f.label} ${queueCounts[f.value]}`}
+                </FilterChip>
+              ))
+            }
+          </div>
         </div>
-        <div class="grid grid-cols-[100px_1fr_80px] sm:grid-cols-[120px_1fr_64px_80px] gap-sm px-lg h-9 items-center bg-surface-soft border-t border-b border-hairline text-xs font-bold text-muted uppercase tracking-[0.5px]">
-          <span>Task</span>
-          <span>Details</span>
-          <span class="hidden sm:inline">Due</span>
-          <span></span>
-        </div>
-        <EmptyState
-          class="m-lg"
-          title="No task queue yet"
-          message="Receiving, adjustments and damage are handled directly on their own pages until a unified queue exists."
-        />
-        <div class="flex flex-wrap gap-sm px-lg pb-lg">
-          <Button href="/inventory/stock" variant="secondary">Receiving</Button>
-          <Button href="/inventory/stock" variant="secondary">Stock adjustments</Button>
-          <Button href="/inventory/products" variant="secondary">Product lookup</Button>
+
+        <div class="overflow-x-auto">
+          <div
+            class="grid gap-sm px-lg h-9 items-center bg-surface-soft border-t border-b border-hairline text-xs font-bold text-muted uppercase tracking-[0.5px]"
+            style="grid-template-columns: 96px 84px 1fr 52px 72px 52px 64px; min-width: 620px;"
+          >
+            <span>Task</span>
+            <span>Reference</span>
+            <span>Details</span>
+            <span class="text-right">Units</span>
+            <span>Location</span>
+            <span>Due</span>
+            <span></span>
+          </div>
+
+          {
+            visibleTaskRows.length > 0 ? (
+              <div>
+                {visibleTaskRows.map((t) => (
+                  <div
+                    class="grid gap-sm px-lg items-center border-b border-hairline text-sm"
+                    style="grid-template-columns: 96px 84px 1fr 52px 72px 52px 64px; min-width: 620px; height: 54px;"
+                  >
+                    <span>
+                      <Badge tone={t.type === "restock" ? "warning" : "neutral"}>{t.pillLabel}</Badge>
+                    </span>
+                    <span class="font-bold text-ink">{t.reference}</span>
+                    <span class="text-body truncate">{t.details}</span>
+                    <span class="text-right font-bold text-ink">{t.units}</span>
+                    <span class="text-xs text-body">{t.location}</span>
+                    <span class="text-xs text-body">{t.due}</span>
+                    <a
+                      href={t.startHref}
+                      class="h-9 box-border rounded-lg border border-hairline bg-canvas text-xs font-bold text-ink flex items-center justify-center hover:border-hairline-strong"
+                    >
+                      Start
+                    </a>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState class="m-lg" title={EMPTY_QUEUE_MESSAGE[queue] ?? EMPTY_QUEUE_MESSAGE.all} />
+            )
+          }
         </div>
       </section>
 

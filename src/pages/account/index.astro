@@ -1,32 +1,42 @@
 ---
-// Customer branch matches the Claude Design canvas's Customer portal
-// artboard (project/Customer.dc.html) — a lean dashboard overview, not the
-// full profile/analytics page this used to be. Profile editing moved to
-// /account/profile (its own named screen in the design), and the detailed
-// spend/status/top-products analytics block moved to the bottom of
-// /account/orders (closest thematic home; not itself a named screen).
-// Order history/detail and support both reuse real, RLS-scoped queries —
-// no new tables, no fabricated numbers.
+// Literal recreation of the Claude Design canvas's Customer portal
+// artboard (project/Customer.dc.html, imported by NavCustomer.dc.html) —
+// the supplied design is the visual source of truth, not the app's
+// existing DESIGN.md component system. Preserves the exact real data
+// logic already established for this dashboard (Phase A): profile,
+// orders, support tickets, cart, YTD spend — only the visual layer
+// changes here.
 //
-// Real vs deferred:
+// Real vs deferred, per your no-fabrication rule:
 //  - Open orders / Open support tickets / Spent this year: real, computed
-//    below.
+//    below from the customer's own orders/support_tickets rows.
 //  - Items in cart: cart is localStorage-only (no server-side cart table,
-//    a deliberate Phase 7 exception) — rendered client-side on load, not
-//    server-computed.
+//    a deliberate Phase 7 exception) — rendered client-side on load.
+//  - "Account C-2041 · Your account manager is Arjun Mehta" in the design
+//    is demo copy — no customer-account-code or account-manager-
+//    assignment concept exists anywhere in the schema, so that subtitle
+//    line is omitted entirely rather than faked.
 //  - Order tracking widget: real, the customer's own most recent
-//    non-final order, status mapped onto the same 5-step shape as the
-//    design (no separate carrier/AWB tracking data exists — omitted).
+//    non-final order, status mapped onto the design's 5-step shape — no
+//    carrier/AWB tracking data exists, so that line is omitted too.
+//  - Monthly spend chart: real, actual monthly sums of the customer's own
+//    orders this year (dashboard_revenue_trend, day rows re-bucketed by
+//    calendar month here) — not the design's fixed demo bar heights.
+//    Y-axis is labeled from the real computed max rather than assuming a
+//    "lakh" scale that may not fit real data.
+//  - Recent orders table: the design's "Reorder" button has no backing
+//    action anywhere in this app — omitted rather than shown as a button
+//    that does nothing.
+//
+// The staff/admin branch of this same route (a different role's own
+// minimal profile panel, unrelated to the Customer Portal screen) is
+// untouched below.
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import Card from "../../components/ui/Card.astro";
 import Badge from "../../components/ui/Badge.astro";
 import AppShell from "../../components/layout/AppShell.astro";
-import PublicHeader from "../../components/layout/PublicHeader.astro";
-import EmptyState from "../../components/catalog/EmptyState.astro";
-import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import OrderStatusBadge from "../../components/orders/OrderStatusBadge.astro";
+import NavCustomer from "../../components/customer/NavCustomer.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
-import { CHART_COLORS } from "../../lib/chartTheme";
 import type { TicketStatus } from "../../lib/types";
 
 const { user, role } = Astro.locals;
@@ -47,7 +57,8 @@ let spentThisYear = 0;
 let trackedOrder: { id: string; status: string; total: number; created_at: string } | null = null;
 let recentOrders: { id: string; status: string; total: number; created_at: string }[] = [];
 let recentTickets: { id: string; subject: string; status: string; updated_at: string }[] = [];
-let spendRows: { day: string; revenue: number }[] = [];
+let monthlyBars: { label: string; value: number; isCurrent: boolean }[] = [];
+let maxMonthly = 0;
 
 const STEP_ORDER = ["pending", "confirmed", "processing", "shipped", "delivered"];
 
@@ -64,7 +75,7 @@ if (isCustomer) {
     .select("id, status, total, created_at")
     .eq("customer_id", userId)
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(50);
 
   const orders = orderRows ?? [];
   openOrderCount = orders.filter((o) => !["delivered", "cancelled", "refunded"].includes(o.status)).length;
@@ -72,9 +83,19 @@ if (isCustomer) {
   recentOrders = orders.slice(0, 5);
 
   const ytd = resolveDashboardRange("ytd");
-  spentThisYear = orders
-    .filter((o) => o.created_at >= ytd.from! && o.status !== "cancelled")
-    .reduce((sum, o) => sum + o.total, 0);
+  const ytdOrders = orders.filter((o) => o.created_at >= ytd.from! && o.status !== "cancelled");
+  spentThisYear = ytdOrders.reduce((sum, o) => sum + o.total, 0);
+
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const monthTotals = new Array(currentMonth + 1).fill(0);
+  for (const o of ytdOrders) {
+    const m = new Date(o.created_at).getMonth();
+    if (m <= currentMonth) monthTotals[m] += o.total;
+  }
+  const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  monthlyBars = monthTotals.map((value, i) => ({ label: monthLabels[i], value, isCurrent: i === currentMonth }));
+  maxMonthly = Math.max(...monthTotals, 1);
 
   const { data: ticketRows } = await Astro.locals.supabase
     .from("support_tickets")
@@ -86,25 +107,28 @@ if (isCustomer) {
   const tickets = ticketRows ?? [];
   openTicketCount = tickets.filter((t) => !["resolved", "closed"].includes(t.status)).length;
   recentTickets = tickets.slice(0, 3);
-
-  const { data: spendTrend } = await Astro.locals.supabase.rpc("dashboard_revenue_trend", {
-    p_from: ytd.from,
-    p_to: ytd.to,
-  });
-  spendRows = spendTrend ?? [];
 }
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
-const statusTone: Record<TicketStatus, "success" | "warning" | "error" | "neutral"> = {
-  open: "neutral",
-  in_progress: "warning",
-  waiting: "warning",
-  resolved: "success",
-  closed: "neutral",
+const statusPill: Record<string, { bg: string; fg: string }> = {
+  pending: { bg: "var(--cp-warn-bg)", fg: "var(--cp-warn-fg)" },
+  confirmed: { bg: "var(--cp-muted)", fg: "var(--cp-fg2)" },
+  processing: { bg: "var(--cp-warn-bg)", fg: "var(--cp-warn-fg)" },
+  shipped: { bg: "var(--cp-info-bg)", fg: "var(--cp-info-fg)" },
+  delivered: { bg: "var(--cp-success-bg)", fg: "var(--cp-success-fg)" },
+  cancelled: { bg: "var(--cp-muted)", fg: "var(--cp-muted-fg)" },
+  refunded: { bg: "var(--cp-muted)", fg: "var(--cp-muted-fg)" },
 };
-const statusLabel: Record<TicketStatus, string> = {
+const ticketPill: Record<TicketStatus, { bg: string; fg: string }> = {
+  open: { bg: "var(--cp-muted)", fg: "var(--cp-fg2)" },
+  in_progress: { bg: "var(--cp-info-bg)", fg: "var(--cp-info-fg)" },
+  waiting: { bg: "var(--cp-warn-bg)", fg: "var(--cp-warn-fg)" },
+  resolved: { bg: "var(--cp-success-bg)", fg: "var(--cp-success-fg)" },
+  closed: { bg: "var(--cp-muted)", fg: "var(--cp-muted-fg)" },
+};
+const ticketLabel: Record<TicketStatus, string> = {
   open: "Open",
   in_progress: "In progress",
   waiting: "Waiting",
@@ -114,180 +138,186 @@ const statusLabel: Record<TicketStatus, string> = {
 ---
 
 <BaseLayout title="Your account — Inventory">
+  <Fragment slot="head">
+    {isCustomer && <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />}
+  </Fragment>
   {
     isCustomer ? (
-      <PublicHeader />
+      <Fragment>
+        <div class="cp" id="cp-root">
+          <button type="button" id="cp-theme-toggle" class="cp__theme-toggle" aria-label="Switch to dark mode">
+            <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+            <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+          </button>
 
-      <main id="main-content" class="max-w-[1440px] mx-auto px-lg py-xl">
-        <div class="flex items-end justify-between flex-wrap gap-md">
-          <div>
-            <h1 class="text-2xl font-bold text-ink">Welcome back{fullName ? `, ${fullName}` : ""}</h1>
-          </div>
-          <div class="flex gap-sm">
-            <a href="/account/support" class="h-12 px-lg inline-flex items-center border border-hairline text-sm font-bold text-ink hover:border-hairline-strong">
-              Raise a ticket
-            </a>
-            <a href="/products" class="h-12 px-lg inline-flex items-center bg-primary text-on-primary text-sm font-bold">
-              New order
-            </a>
-          </div>
-        </div>
+          <NavCustomer active="Home" />
 
-        <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md">
-          <Card>
-            <p class="text-xs uppercase tracking-[0.5px] text-muted">Open orders</p>
-            <p class="mt-xs text-3xl font-bold text-ink">{openOrderCount}</p>
-          </Card>
-          <a href="/account/support">
-            <Card class="hover:border-hairline-strong transition-colors h-full">
-              <p class="text-xs uppercase tracking-[0.5px] text-muted">Open support tickets</p>
-              <p class="mt-xs text-3xl font-bold text-ink">{openTicketCount}</p>
-            </Card>
-          </a>
-          <a href="/cart">
-            <Card class="hover:border-hairline-strong transition-colors h-full">
-              <p class="text-xs uppercase tracking-[0.5px] text-muted">Items in cart</p>
-              <p id="dashboard-cart-count" class="mt-xs text-3xl font-bold text-ink">—</p>
-            </Card>
-          </a>
-          <Card>
-            <p class="text-xs uppercase tracking-[0.5px] text-muted">Spent this year</p>
-            <p class="mt-xs text-3xl font-bold text-ink">{formatCurrency(spentThisYear)}</p>
-          </Card>
-        </div>
-
-        <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-lg items-start">
-          <Card>
-            <h2 class="text-sm font-bold text-ink">Track your order</h2>
-            {trackedOrder ? (
-              <>
-                <div class="mt-xs flex items-center justify-between">
-                  <p class="text-xs text-muted">
-                    {trackedOrder.id.slice(0, 8)} · {formatCurrency(trackedOrder.total)}
-                  </p>
-                  <OrderStatusBadge status={trackedOrder.status} />
-                </div>
-                <div class="mt-md flex items-start">
-                  {STEP_ORDER.map((step, i) => {
-                    const currentIndex = STEP_ORDER.indexOf(trackedOrder!.status);
-                    const done = i <= currentIndex;
-                    return (
-                      <div class="flex-grow flex flex-col gap-xs items-start">
-                        <div class="w-full flex items-center">
-                          <span
-                            class={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${done ? "bg-ink text-on-dark" : "border border-hairline-strong text-muted"}`}
-                          >
-                            {done ? "✓" : ""}
-                          </span>
-                          {i < STEP_ORDER.length - 1 && (
-                            <span class={`flex-grow h-0.5 mx-xs ${i < currentIndex ? "bg-ink" : "bg-hairline"}`} />
-                          )}
-                        </div>
-                        <span class={`text-xs capitalize ${done ? "text-ink font-bold" : "text-muted"}`}>{step}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <a href={`/account/orders/${trackedOrder.id}`} class="mt-md inline-block text-sm font-bold text-primary hover:underline">
-                  Details →
-                </a>
-              </>
-            ) : (
-              <EmptyState class="mt-md" title="No active orders" message="Orders you place will show up here while they're in progress." />
-            )}
-          </Card>
-
-          <Card>
-            <h2 class="text-sm font-bold text-ink">Spend this year</h2>
-            <div class="mt-sm">
-              {spendRows.length > 0 ? (
-                <ChartCanvas
-                  id="account-dashboard-spend"
-                  type="line"
-                  height={140}
-                  data={{
-                    labels: spendRows.map((r) => r.day),
-                    datasets: [
-                      {
-                        label: "Spend",
-                        data: spendRows.map((r) => Number(r.revenue)),
-                        borderColor: CHART_COLORS.ink,
-                        backgroundColor: "rgba(17,17,17,0.06)",
-                        fill: true,
-                      },
-                    ],
-                  }}
-                  options={{ plugins: { legend: { display: false } } }}
-                />
-              ) : (
-                <EmptyState class="mt-sm" title="No orders yet this year" />
-              )}
+          <main id="main-content" class="cp__main">
+            <div class="cp__header">
+              <h1>Welcome back{fullName ? `, ${fullName}` : ""}</h1>
+              <div class="cp__header-actions">
+                <a href="/account/support" class="btn-secondary">Raise a ticket</a>
+                <a href="/products" class="btn-primary">New order</a>
+              </div>
             </div>
-          </Card>
-        </div>
 
-        <div class="mt-lg grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-lg items-start">
-          <Card>
-            <div class="flex items-center justify-between">
-              <h2 class="text-sm font-bold text-ink">Recent orders</h2>
-              <a href="/account/orders" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
-                All orders
+            <div class="cp__kpis">
+              <div class="cp__kpi">
+                <span class="cp__kpi-label">Open orders</span>
+                <span class="cp__kpi-value">{openOrderCount}</span>
+              </div>
+              <a href="/account/support" class="cp__kpi cp__kpi--link">
+                <span class="cp__kpi-label">Open support tickets</span>
+                <span class="cp__kpi-value">{openTicketCount}</span>
               </a>
-            </div>
-            <div class="mt-sm divide-y divide-hairline">
-              {recentOrders.length > 0 ? (
-                recentOrders.map((o) => (
-                  <div class="py-sm flex items-center gap-md">
-                    <a href={`/account/orders/${o.id}`} class="text-sm font-bold text-ink hover:text-primary">
-                      {o.id.slice(0, 8)}
-                    </a>
-                    <span class="text-xs text-muted">{new Date(o.created_at).toLocaleDateString()}</span>
-                    <span class="text-sm text-body">{formatCurrency(o.total)}</span>
-                    <span class="ml-auto">
-                      <OrderStatusBadge status={o.status} />
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <EmptyState class="my-sm" title="No orders yet" message="Your orders will appear here once you check out." />
-              )}
-            </div>
-          </Card>
-
-          <Card>
-            <div class="flex items-center justify-between">
-              <h2 class="text-sm font-bold text-ink">Support tickets</h2>
-              <a href="/account/support" class="text-xs font-bold text-primary uppercase tracking-[0.5px]">
-                New ticket
+              <a href="/cart" class="cp__kpi cp__kpi--link">
+                <span class="cp__kpi-label">Items in cart</span>
+                <span id="cp-cart-count" class="cp__kpi-value">—</span>
               </a>
+              <div class="cp__kpi">
+                <span class="cp__kpi-label">Spent this year</span>
+                <span class="cp__kpi-value">{formatCurrency(spentThisYear)}</span>
+              </div>
             </div>
-            <div class="mt-sm divide-y divide-hairline">
-              {recentTickets.length > 0 ? (
-                recentTickets.map((t) => (
-                  <a href={`/account/support/${t.id}`} class="py-sm flex items-center gap-md">
-                    <span class="flex-grow min-w-0 text-sm text-ink truncate">{t.subject}</span>
-                    <Badge tone={statusTone[t.status as TicketStatus]}>{statusLabel[t.status as TicketStatus]}</Badge>
+
+            <div class="cp__row">
+              <section class="cp__card cp__card--wide">
+                <h2>Track your order</h2>
+                {trackedOrder ? (
+                  <Fragment>
+                    <div class="cp__track-head">
+                      <span>
+                        Order {trackedOrder.id.slice(0, 8)} · {formatCurrency(trackedOrder.total)}
+                      </span>
+                      <span
+                        class="cp__pill"
+                        style={`background:${statusPill[trackedOrder.status]?.bg ?? "var(--cp-muted)"};color:${statusPill[trackedOrder.status]?.fg ?? "var(--cp-fg2)"}`}
+                      >
+                        {trackedOrder.status}
+                      </span>
+                    </div>
+                    <div class="cp__steps">
+                      {STEP_ORDER.map((step, i) => {
+                        const currentIndex = STEP_ORDER.indexOf(trackedOrder!.status);
+                        const done = i <= currentIndex;
+                        return (
+                          <div class="cp__step">
+                            <div class="cp__step-row">
+                              <span class={`cp__step-dot ${done ? "is-done" : ""}`}>
+                                {done && (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="m5 12 5 5 9-10" />
+                                  </svg>
+                                )}
+                              </span>
+                              {i < STEP_ORDER.length - 1 && <span class={`cp__step-line ${i < currentIndex ? "is-done" : ""}`} />}
+                            </div>
+                            <span class={`cp__step-label ${done ? "is-done" : ""}`}>{step}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <a href={`/account/orders/${trackedOrder.id}`} class="cp__details-link">Details →</a>
+                  </Fragment>
+                ) : (
+                  <p class="cp__empty">No active orders. Orders you place will show up here while they're in progress.</p>
+                )}
+              </section>
+
+              <section class="cp__card">
+                <h2>Monthly spend</h2>
+                <span class="cp__card-sub">{new Date().getFullYear()} · ₹</span>
+                {monthlyBars.length > 0 && maxMonthly > 1 ? (
+                  <svg class="cp__chart" viewBox={`0 0 ${Math.max(monthlyBars.length * 42 + 30, 200)} 196`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Monthly spend so far this year">
+                    <g class="cp__chart-grid">
+                      <line x1="30" y1="10" x2={Math.max(monthlyBars.length * 42 + 30, 200)} y2="10" />
+                      <line x1="30" y1="63" x2={Math.max(monthlyBars.length * 42 + 30, 200)} y2="63" />
+                      <line x1="30" y1="117" x2={Math.max(monthlyBars.length * 42 + 30, 200)} y2="117" />
+                    </g>
+                    <line x1="30" y1="170" x2={Math.max(monthlyBars.length * 42 + 30, 200)} y2="170" class="cp__chart-axis" />
+                    {monthlyBars.map((bar, i) => {
+                      const barHeight = (bar.value / maxMonthly) * 160;
+                      return (
+                        <rect
+                          x={37 + i * 37}
+                          y={170 - barHeight}
+                          width="22"
+                          height={Math.max(barHeight, 1)}
+                          rx="4"
+                          class={bar.isCurrent ? "cp__chart-bar cp__chart-bar--current" : "cp__chart-bar"}
+                        />
+                      );
+                    })}
+                    {monthlyBars.map((bar, i) => (
+                      <text x={48 + i * 37} y="188" text-anchor="middle" class="cp__chart-label">
+                        {bar.label[0]}
+                      </text>
+                    ))}
+                  </svg>
+                ) : (
+                  <p class="cp__empty">No orders yet this year.</p>
+                )}
+              </section>
+            </div>
+
+            <div class="cp__row">
+              <section class="cp__card cp__card--wide cp__card--flush">
+                <div class="cp__card-title-row">
+                  <h2>Recent orders</h2>
+                  <a href="/account/orders">All orders</a>
+                </div>
+                <div class="cp__table-head">
+                  <span>Order</span><span>Date</span><span>Items</span><span>Total</span><span>Status</span>
+                </div>
+                {recentOrders.length > 0 ? (
+                  recentOrders.map((o) => (
+                    <div class="cp__table-row">
+                      <a href={`/account/orders/${o.id}`}>{o.id.slice(0, 8)}</a>
+                      <span>{new Date(o.created_at).toLocaleDateString()}</span>
+                      <span />
+                      <span class="cp__strong">{formatCurrency(o.total)}</span>
+                      <span
+                        class="cp__pill"
+                        style={`background:${statusPill[o.status]?.bg ?? "var(--cp-muted)"};color:${statusPill[o.status]?.fg ?? "var(--cp-fg2)"}`}
+                      >
+                        {o.status}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p class="cp__empty cp__empty--pad">No orders yet. Your orders will appear here once you check out.</p>
+                )}
+              </section>
+
+              <section class="cp__card">
+                <div class="cp__card-title-row">
+                  <h2>Support tickets</h2>
+                  <a href="/account/support" class="btn-outline-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                    New ticket
                   </a>
-                ))
-              ) : (
-                <EmptyState class="my-sm" title="No tickets yet" />
-              )}
+                </div>
+                {recentTickets.length > 0 ? (
+                  recentTickets.map((t) => (
+                    <a href={`/account/support/${t.id}`} class="cp__ticket-row">
+                      <span class="cp__ticket-title">{t.subject}</span>
+                      <span
+                        class="cp__pill"
+                        style={`background:${ticketPill[t.status as TicketStatus].bg};color:${ticketPill[t.status as TicketStatus].fg}`}
+                      >
+                        {ticketLabel[t.status as TicketStatus]}
+                      </span>
+                    </a>
+                  ))
+                ) : (
+                  <p class="cp__empty">No tickets yet.</p>
+                )}
+                <span class="cp__footnote">Replies from our support team show up in each ticket.</span>
+              </section>
             </div>
-          </Card>
+          </main>
         </div>
-      </main>
-
-      <script>
-        import { getCart } from "../../lib/cart";
-        const el = document.querySelector<HTMLParagraphElement>("#dashboard-cart-count");
-        if (el) {
-          const render = () => {
-            el.textContent = String(getCart().reduce((sum, i) => sum + i.quantity, 0));
-          };
-          render();
-          window.addEventListener("cart-updated", render);
-        }
-      </script>
+      </Fragment>
     ) : (
       <AppShell active="account">
         <Card class="max-w-lg">
@@ -316,3 +346,463 @@ const statusLabel: Record<TicketStatus, string> = {
     )
   }
 </BaseLayout>
+
+<style>
+  .cp {
+    --cp-shell: #f4f4f4;
+    --cp-panel: #ffffff;
+    --cp-card: #ffffff;
+    --cp-fg: #0a0a0a;
+    --cp-fg2: #404040;
+    --cp-muted: #f0f0f0;
+    --cp-muted-fg: #6b6b6b;
+    --cp-border: #e5e5e5;
+    --cp-input: #d4d4d4;
+    --cp-primary: #171717;
+    --cp-primary-fg: #fafafa;
+    --cp-success-bg: #ecfdf3;
+    --cp-success-fg: #15803d;
+    --cp-warn-bg: #fef3e2;
+    --cp-warn-fg: #9a3412;
+    --cp-danger-bg: #feecec;
+    --cp-danger-fg: #b91c1c;
+    --cp-info-bg: #eef2ff;
+    --cp-info-fg: #3538cd;
+    --cp-accent: #2b50e0;
+    --cp-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cp-shell);
+    color: var(--cp-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cp[data-theme="dark"] {
+    --cp-shell: #0a0a0a;
+    --cp-panel: #0f0f0f;
+    --cp-card: #171717;
+    --cp-fg: #fafafa;
+    --cp-fg2: #d4d4d4;
+    --cp-muted: #262626;
+    --cp-muted-fg: #a3a3a3;
+    --cp-border: #262626;
+    --cp-input: #363636;
+    --cp-primary: #fafafa;
+    --cp-primary-fg: #171717;
+    --cp-success-bg: #0f2a1c;
+    --cp-success-fg: #4ade80;
+    --cp-warn-bg: #2e1f0e;
+    --cp-warn-fg: #fdba74;
+    --cp-danger-bg: #2d1414;
+    --cp-danger-fg: #f87171;
+    --cp-info-bg: #1e2240;
+    --cp-info-fg: #a5b4fc;
+    --cp-accent: #6b8afb;
+    --cp-shadow: none;
+    color-scheme: dark;
+  }
+
+  .cp__theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .cp[data-theme="dark"] .icon-sun,
+  .cp:not([data-theme="dark"]) .icon-moon {
+    display: none;
+  }
+
+  .cp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 1200px) {
+    .cp__main {
+      padding: 28px 120px 56px;
+    }
+  }
+
+  .cp__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .cp__header h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .cp__header-actions {
+    display: flex;
+    gap: 10px;
+  }
+  .btn-primary,
+  .btn-secondary {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .btn-primary {
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    border: 0;
+  }
+  .btn-secondary {
+    background: var(--cp-card);
+    color: var(--cp-fg);
+    border: 1px solid var(--cp-input);
+  }
+  .btn-outline-sm {
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-input);
+    background: var(--cp-card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-fg);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cp__kpis {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (min-width: 900px) {
+    .cp__kpis {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  .cp__kpi {
+    min-height: 100px;
+    box-sizing: border-box;
+    padding: 18px;
+    background: var(--cp-card);
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 10px;
+    text-decoration: none;
+    color: inherit;
+  }
+  .cp__kpi--link:hover {
+    border-color: var(--cp-input);
+  }
+  .cp__kpi-label {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .cp__kpi-value {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .cp__row {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (min-width: 1200px) {
+    .cp__row {
+      flex-direction: row;
+      align-items: stretch;
+    }
+    .cp__card--wide {
+      width: 780px;
+      flex-shrink: 0;
+    }
+  }
+  .cp__card {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--cp-card);
+    border: 1px solid var(--cp-border);
+    border-radius: 12px;
+    box-shadow: var(--cp-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cp__card h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .cp__card-sub {
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+    margin-top: -6px;
+  }
+  .cp__empty {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+    line-height: 1.5;
+  }
+  .cp__empty--pad {
+    padding: 16px 0;
+  }
+
+  .cp__track-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--cp-muted-fg);
+  }
+  .cp__pill {
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: capitalize;
+    white-space: nowrap;
+  }
+  .cp__steps {
+    display: flex;
+    align-items: flex-start;
+    margin-top: 4px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .cp__step {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 84px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .cp__step-row {
+    display: flex;
+    align-items: center;
+  }
+  .cp__step-dot {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-sizing: border-box;
+    border: 2px dashed var(--cp-input);
+    color: var(--cp-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cp__step-dot.is-done {
+    background: var(--cp-primary);
+    color: var(--cp-primary-fg);
+    border-style: solid;
+    border-color: var(--cp-primary);
+  }
+  .cp__step-line {
+    flex-grow: 1;
+    height: 2px;
+    margin: 0 8px;
+    background: var(--cp-border);
+  }
+  .cp__step-line.is-done {
+    background: var(--cp-primary);
+  }
+  .cp__step-label {
+    font-size: 12px;
+    text-transform: capitalize;
+    color: var(--cp-muted-fg);
+  }
+  .cp__step-label.is-done {
+    color: var(--cp-fg);
+    font-weight: 600;
+  }
+  .cp__details-link {
+    margin-top: auto;
+    align-self: flex-start;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cp-accent);
+    text-decoration: none;
+  }
+
+  .cp__chart {
+    width: 100%;
+    height: 196px;
+  }
+  .cp__chart-grid line {
+    stroke: var(--cp-border);
+  }
+  .cp__chart-axis {
+    stroke: var(--cp-input);
+  }
+  .cp__chart-bar {
+    fill: var(--cp-accent);
+  }
+  .cp__chart-bar--current {
+    fill: var(--cp-accent);
+    fill-opacity: 0.5;
+  }
+  .cp__chart-label {
+    font-size: 11px;
+    fill: var(--cp-muted-fg);
+  }
+
+  .cp__card--flush {
+    padding: 20px 0 0;
+    overflow-x: auto;
+  }
+  .cp__card-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+  }
+  .cp__card-title-row a {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--cp-accent);
+    text-decoration: none;
+  }
+  .cp__table-head {
+    display: grid;
+    grid-template-columns: 100px 90px 60px 1fr 90px;
+    gap: 8px;
+    padding: 0 20px;
+    height: 34px;
+    min-width: 480px;
+    align-items: center;
+    background: var(--cp-shell);
+    border-top: 1px solid var(--cp-border);
+    border-bottom: 1px solid var(--cp-border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--cp-muted-fg);
+  }
+  .cp__table-row {
+    display: grid;
+    grid-template-columns: 100px 90px 60px 1fr 90px;
+    gap: 8px;
+    padding: 0 20px;
+    height: 46px;
+    min-width: 480px;
+    align-items: center;
+    border-bottom: 1px solid var(--cp-border);
+    font-size: 14px;
+  }
+  .cp__table-row a {
+    font-weight: 500;
+    color: var(--cp-fg);
+    text-decoration: underline;
+    text-decoration-color: var(--cp-input);
+    text-underline-offset: 3px;
+  }
+  .cp__table-row span {
+    color: var(--cp-fg2);
+  }
+  .cp__strong {
+    font-weight: 600;
+    color: var(--cp-fg) !important;
+  }
+
+  .cp__ticket-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-top: 1px solid var(--cp-border);
+    text-decoration: none;
+    color: inherit;
+  }
+  .cp__ticket-title {
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cp__footnote {
+    margin-top: auto;
+    font-size: 12px;
+    color: var(--cp-muted-fg);
+  }
+</style>
+
+<script>
+  const cpRoot = document.getElementById("cp-root");
+  const THEME_KEY = "landing-theme";
+
+  function applyCpTheme(theme: "light" | "dark") {
+    if (!cpRoot) return;
+    if (theme === "dark") {
+      cpRoot.setAttribute("data-theme", "dark");
+    } else {
+      cpRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("cp-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedCpTheme: string | null = null;
+  try {
+    storedCpTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedCpTheme === "dark") applyCpTheme("dark");
+
+  document.getElementById("cp-theme-toggle")?.addEventListener("click", () => {
+    applyCpTheme(cpRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  import { getCart } from "../../lib/cart";
+
+  const cartCountEl = document.querySelector<HTMLSpanElement>("#cp-cart-count");
+  if (cartCountEl) {
+    const render = () => {
+      cartCountEl.textContent = String(getCart().reduce((sum, i) => sum + i.quantity, 0));
+    };
+    render();
+    window.addEventListener("cart-updated", render);
+  }
+</script>

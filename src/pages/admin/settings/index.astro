@@ -1,0 +1,924 @@
+---
+// Admin Settings — real MVP pass (supersedes the previous turn's mostly-
+// deferred version). Still the Claude Design canvas's Admin Settings
+// screen (project/AdminSettings.dc.html / AdminSettingsDark.dc.html ->
+// NavSidebar role="admin" active="Settings" + the shared NavTop.astro +
+// PageSettings, role="admin") as the visual source of truth — only the
+// section SET changed (Account/Appearance/Support removed per your
+// explicit instruction; Business profile/Notifications/Numbering/Stock
+// rules kept, now genuinely real instead of deferred placeholders).
+//
+// BACKEND (new this turn — see supabase/migrations/0015_app_settings_
+// notifications.sql for the full reasoning, this is the short version):
+//  - `app_settings`: a singleton row (id boolean primary key default true
+//    check (id) — a second row is structurally impossible). Columns:
+//    business_name, gstin, currency, timezone, order_number_prefix,
+//    next_order_number, low_stock_alerts_enabled. RLS: admin/super_admin
+//    select+update only (verified live: 0 rows visible to sales_staff).
+//    No insert/delete policy — seeded once in the migration, only ever
+//    updated.
+//  - `notifications`: id, recipient_id, title, message, created_at,
+//    read_at, ignored_at — exactly the fields asked for, nothing more.
+//    RLS scopes select/update to `recipient_id = auth.uid()` (verified
+//    live: a second admin's notification is invisible and untouched by a
+//    cross-user update attempt). No insert policy for any role — the
+//    only writer is the new `private.notify_low_stock()` trigger.
+//  - `private.notify_low_stock()` (security definer, same pattern as
+//    current_role()/handle_new_user()): fires a real notification to
+//    every real admin/super_admin when a product's quantity_on_hand
+//    crosses INTO its reorder_level, but only while
+//    low_stock_alerts_enabled is true (verified live: no-op while off,
+//    fires exactly once per real admin/super_admin on the real crossing,
+//    does NOT re-fire on a second update while already low).
+//  - Actions: updateAppSettings (partial update, RLS-backed) and
+//    updateNotification (markRead/ignore, RLS-backed) — src/actions/
+//    index.ts.
+//
+// NO-FABRICATION DECISIONS (per your explicit instructions):
+//  - Currency and Time zone are real but rendered READ-ONLY (matching the
+//    design's own admin-role treatment of Currency: "Set by the super
+//    admin"). Every formatCurrency() call and every dashboard's date
+//    bucketing in this project already hardcodes INR/Asia-Kolkata — a
+//    genuinely different saved value here would persist but change
+//    nothing else in the app, which is exactly the "appears functional
+//    but doesn't really do anything" trap called out explicitly.
+//  - No logo upload: Supabase Storage is deliberately unimplemented
+//    project-wide (not even product images use it yet) — "only if it can
+//    be implemented cleanly with the existing Storage setup" isn't met.
+//  - Numbering (order_number_prefix/next_order_number) is real and
+//    persisted, but explicitly NOT wired into place_order()/order id
+//    generation — every order everywhere (Sales/Admin Orders, Order
+//    Detail, Customer Orders) still gets a plain uuid exactly as before.
+//    The card says so directly rather than implying it already works —
+//    wiring it in would touch every one of those already-approved
+//    screens, out of scope this turn.
+//  - "Allow negative stock" is rendered as an honestly DISABLED row, not
+//    a working toggle — the real `quantity_on_hand >= 0` check
+//    constraint (0005_inventory.sql) has no safe per-setting override
+//    without touching record_inventory_movement()/
+//    private.apply_order_stock_movement(), both used by every existing
+//    order/stock screen. Chosen per the task's own explicit fallback
+//    (option B) rather than weakening stock integrity.
+//  - "Low-stock alerts" is the one fully real, fully wired toggle —
+//    flips low_stock_alerts_enabled instantly (no separate Save step,
+//    same "instant-apply" precedent as every theme toggle in this
+//    project) and genuinely changes whether the trigger above fires.
+//    Delivery is in-app notifications only — no email/SMS/push, which
+//    the card states directly (all three are explicitly out of MVP
+//    scope per your own instructions).
+//  - Notifications list excludes ignored rows (ignored_at is set, not
+//    deleted — a real soft-dismiss, not a client-side hide). No fake
+//    rows were ever inserted for testing — every number in this page was
+//    verified via begin/rollback role-impersonation against the live
+//    database (see the migration file and this turn's verification
+//    report), never a permanent seeded fake notification.
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+const url = Astro.url;
+const viewerRole = (Astro.locals.role === "super_admin" ? "super_admin" : "admin") as "admin" | "super_admin";
+
+const SECTION_KEYS = ["business-profile", "notifications", "numbering", "stock-rules"] as const;
+type SectionKey = (typeof SECTION_KEYS)[number];
+const rawSection = url.searchParams.get("section") ?? "";
+const sectionKey: SectionKey = (SECTION_KEYS as readonly string[]).includes(rawSection) ? (rawSection as SectionKey) : "business-profile";
+
+function buildSectionUrl(next: SectionKey): string {
+  return `/admin/settings?section=${next}`;
+}
+
+const saved = url.searchParams.get("saved");
+
+// --- Real app_settings (singleton) ---
+const { data: settingsRow } = await Astro.locals.supabase
+  .from("app_settings")
+  .select("business_name, gstin, currency, timezone, order_number_prefix, next_order_number, low_stock_alerts_enabled")
+  .eq("id", true)
+  .single();
+
+const businessName = settingsRow?.business_name ?? "";
+const gstin = settingsRow?.gstin ?? "";
+const currency = settingsRow?.currency ?? "INR";
+const timezone = settingsRow?.timezone ?? "Asia/Kolkata";
+const orderNumberPrefix = settingsRow?.order_number_prefix ?? "";
+const nextOrderNumber = settingsRow?.next_order_number ?? 1;
+const lowStockAlertsEnabled = settingsRow?.low_stock_alerts_enabled ?? false;
+
+// --- Real notifications for the signed-in admin (ignored rows excluded) ---
+const userId = Astro.locals.user!.id;
+const { data: notificationRows } = await Astro.locals.supabase
+  .from("notifications")
+  .select("id, title, message, created_at, read_at, ignored_at")
+  .eq("recipient_id", userId)
+  .is("ignored_at", null)
+  .order("created_at", { ascending: false });
+
+const notifications = (notificationRows ?? []).map((n) => ({
+  id: n.id as string,
+  title: n.title as string,
+  message: n.message as string,
+  createdAt: n.created_at as string,
+  isUnread: !n.read_at,
+}));
+const unreadCount = notifications.filter((n) => n.isUnread).length;
+
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const dIst = new Date(d.getTime() + IST_OFFSET_MS);
+  const nowIst = new Date(now.getTime() + IST_OFFSET_MS);
+  const sameIstDay =
+    dIst.getUTCFullYear() === nowIst.getUTCFullYear() && dIst.getUTCMonth() === nowIst.getUTCMonth() && dIst.getUTCDate() === nowIst.getUTCDate();
+  if (sameIstDay) return `Today, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+const NAV: { key: SectionKey; label: string }[] = [
+  { key: "business-profile", label: "Business profile" },
+  { key: "notifications", label: "Notifications" },
+  { key: "numbering", label: "Numbering" },
+  { key: "stock-rules", label: "Stock rules" },
+];
+---
+
+<BaseLayout title="Settings — Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Settings" role="admin" viewerRole={viewerRole} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Manage" page="Settings" />
+
+      <main id="main-content" class="st__main">
+        <div class="st__header">
+          <div class="st__heading-col">
+            <h1>Settings</h1>
+            <span class="st__subtitle">Business profile, notifications, numbering and stock rules</span>
+          </div>
+        </div>
+
+        {saved && (
+          <p class="st__banner" role="status">
+            Saved.
+          </p>
+        )}
+
+        <div class="st__body">
+          <nav aria-label="Settings sections" class="st__nav">
+            {NAV.map((n) => (
+              <a href={buildSectionUrl(n.key)} aria-current={sectionKey === n.key ? "page" : "false"} class={`st__nav-item ${sectionKey === n.key ? "is-active" : ""}`}>
+                <span class="st__nav-label">{n.label}</span>
+                {n.key === "notifications" && unreadCount > 0 && <span class="st__nav-count">{unreadCount}</span>}
+              </a>
+            ))}
+          </nav>
+
+          <div class="st__content">
+            {sectionKey === "business-profile" && (
+              <section aria-label="Business profile" class="st__card">
+                <div class="st__card-head">
+                  <h2>Business profile</h2>
+                  <span class="st__card-desc">Details you can set for your own reference — not yet printed anywhere else in this app.</span>
+                </div>
+                <div class="st__divider" />
+                <form id="st-business-form" class="st__form">
+                  <div class="st__form-grid">
+                    <label class="st__field">
+                      <span>Business name</span>
+                      <input type="text" name="businessName" value={businessName} placeholder="Not set" />
+                    </label>
+                    <label class="st__field">
+                      <span>GSTIN</span>
+                      <input type="text" name="gstin" value={gstin} placeholder="Not set" />
+                    </label>
+                    <div class="st__field">
+                      <span>Currency</span>
+                      <span class="st__readonly-value">₹ {currency}</span>
+                      <span class="st__field-help">Fixed — every amount in this app is formatted as {currency}.</span>
+                    </div>
+                    <div class="st__field">
+                      <span>Time zone</span>
+                      <span class="st__readonly-value">{timezone}</span>
+                      <span class="st__field-help">Fixed — every dashboard and report in this app is bucketed by this time zone.</span>
+                    </div>
+                  </div>
+                  <p id="st-business-message" class="st__form-message" role="status" />
+                  <div class="st__form-actions">
+                    <button type="button" id="st-business-cancel" class="st__btn">Cancel</button>
+                    <button type="submit" class="st__btn st__btn--primary">Save changes</button>
+                  </div>
+                </form>
+              </section>
+            )}
+
+            {sectionKey === "notifications" && (
+              <section aria-label="Notifications" class="st__card">
+                <div class="st__card-head">
+                  <h2>Notifications</h2>
+                  <span class="st__card-desc">{unreadCount > 0 ? `${unreadCount} unread` : "You're all caught up"} · real alerts generated by this app, nothing scheduled or emailed.</span>
+                </div>
+                <div class="st__divider" />
+                {notifications.length > 0 ? (
+                  <div class="st__notif-list">
+                    {notifications.map((n) => (
+                      <div class={`st__notif-row ${n.isUnread ? "is-unread" : ""}`} data-notification-id={n.id}>
+                        {n.isUnread && <span class="st__notif-dot" aria-hidden="true" />}
+                        <div class="st__notif-body">
+                          <span class="st__notif-title">{n.title}</span>
+                          <span class="st__notif-message">{n.message}</span>
+                          <span class="st__notif-time">{fmtWhen(n.createdAt)}</span>
+                        </div>
+                        <div class="st__notif-actions">
+                          {n.isUnread && (
+                            <button type="button" class="st-notif-read st__link-btn">Mark as read</button>
+                          )}
+                          <button type="button" class="st-notif-ignore st__link-btn st__link-btn--muted">Ignore</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p class="st__empty">No notifications yet.</p>
+                )}
+              </section>
+            )}
+
+            {sectionKey === "numbering" && (
+              <section aria-label="Numbering" class="st__card">
+                <div class="st__card-head">
+                  <h2>Numbering</h2>
+                  <span class="st__card-desc">A reference prefix and counter you can save for your own records.</span>
+                </div>
+                <div class="st__divider" />
+                <form id="st-numbering-form" class="st__form">
+                  <div class="st__form-grid st__form-grid--narrow">
+                    <label class="st__field">
+                      <span>Order number prefix</span>
+                      <input type="text" name="orderNumberPrefix" value={orderNumberPrefix} placeholder="Not set" />
+                    </label>
+                    <label class="st__field">
+                      <span>Next order number</span>
+                      <input type="number" name="nextOrderNumber" value={nextOrderNumber} min="1" step="1" />
+                    </label>
+                  </div>
+                  <p class="st__field-help st__field-help--block">
+                    Real orders are still identified by their database id everywhere in this app (Sales Orders, Admin Orders, Order Detail, Customer Orders) —
+                    saving a prefix/number here doesn’t change how those ids are generated or displayed yet.
+                  </p>
+                  <p id="st-numbering-message" class="st__form-message" role="status" />
+                  <div class="st__form-actions">
+                    <button type="button" id="st-numbering-cancel" class="st__btn">Cancel</button>
+                    <button type="submit" class="st__btn st__btn--primary">Save changes</button>
+                  </div>
+                </form>
+              </section>
+            )}
+
+            {sectionKey === "stock-rules" && (
+              <section aria-label="Stock rules" class="st__card">
+                <div class="st__card-head">
+                  <h2>Stock rules</h2>
+                  <span class="st__card-desc">How stock behaves when orders are confirmed and restocks arrive.</span>
+                </div>
+                <div class="st__divider" />
+
+                <div class="st__switch-row st__switch-row--disabled" title="The database enforces on-hand quantity ≥ 0 as a hard constraint with no override — this can’t be turned off from here.">
+                  <div class="st__switch-text">
+                    <span class="st__switch-label">Allow negative stock</span>
+                    <span class="st__switch-desc">Not available — enforced as a hard database rule with no override.</span>
+                  </div>
+                  <span role="switch" aria-checked="false" aria-disabled="true" aria-label="Allow negative stock (not available)" class="st__switch-track st__switch-track--disabled">
+                    <span class="st__switch-knob" />
+                  </span>
+                </div>
+
+                <div class="st__switch-row">
+                  <div class="st__switch-text">
+                    <span class="st__switch-label">Low-stock alerts</span>
+                    <span class="st__switch-desc">Notify every admin when a product's on-hand quantity drops to or below its reorder level. Delivered as in-app notifications only.</span>
+                  </div>
+                  <button type="button" id="st-lowstock-switch" role="switch" aria-checked={lowStockAlertsEnabled ? "true" : "false"} aria-label="Low-stock alerts" class="st__switch-track">
+                    <span class="st__switch-knob" />
+                  </button>
+                </div>
+                <p id="st-stockrules-message" class="st__form-message" role="status" />
+              </section>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .st__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .st__main {
+      padding: 16px;
+    }
+  }
+
+  .st__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .st__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .st__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .st__banner {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-success-fg);
+  }
+
+  .st__body {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (min-width: 900px) {
+    .st__body {
+      flex-direction: row;
+    }
+  }
+
+  .st__nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  @media (min-width: 900px) {
+    .st__nav {
+      width: 220px;
+      flex-shrink: 0;
+    }
+  }
+  .st__nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 14px;
+    color: var(--sd-fg2);
+  }
+  .st__nav-item.is-active {
+    background: var(--sd-muted);
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .st__nav-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .st__nav-count {
+    flex-shrink: 0;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .st__content {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .st__card {
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .st__card-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__card-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .st__card-desc {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__divider {
+    height: 1px;
+    background: var(--sd-border);
+  }
+
+  .st__form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .st__form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+  }
+  .st__form-grid--narrow {
+    max-width: 420px;
+  }
+  @media (max-width: 520px) {
+    .st__form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .st__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .st__field span:first-child {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .st__field input {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .st__readonly-value {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+  }
+  .st__field-help {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__field-help--block {
+    margin: 0;
+    line-height: 1.5;
+    max-width: 560px;
+  }
+  .st__form-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+  .st__form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .st__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .st__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+
+  .st__notif-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .st__notif-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 0;
+    border-top: 1px solid var(--sd-border);
+  }
+  .st__notif-row:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .st__notif-dot {
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-info-fg);
+  }
+  .st__notif-row:not(.is-unread) .st__notif-body {
+    padding-left: 18px;
+  }
+  .st__notif-body {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .st__notif-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .st__notif-row:not(.is-unread) .st__notif-title {
+    font-weight: 500;
+    color: var(--sd-fg2);
+  }
+  .st__notif-message {
+    font-size: 13px;
+    color: var(--sd-fg2);
+  }
+  .st__notif-time {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__notif-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .st__link-btn {
+    border: 0;
+    background: transparent;
+    color: var(--sd-accent);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .st__link-btn--muted {
+    color: var(--sd-muted-fg);
+    font-weight: 500;
+  }
+
+  .st__empty {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .st__switch-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .st__switch-row:last-of-type {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .st__switch-row--disabled {
+    cursor: not-allowed;
+  }
+  .st__switch-text {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .st__switch-label {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .st__switch-desc {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__switch-track {
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 2px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--sd-input);
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    cursor: pointer;
+  }
+  .st__switch-track[aria-checked="true"] {
+    background: var(--sd-primary);
+    justify-content: flex-end;
+  }
+  .st__switch-track--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .st__switch-knob {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--sd-card);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+  .st__switch-track[aria-checked="true"] .st__switch-knob {
+    background: var(--sd-primary-fg);
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  // --- Business profile form ---
+  const businessForm = document.querySelector<HTMLFormElement>("#st-business-form");
+  const businessMsg = document.querySelector<HTMLParagraphElement>("#st-business-message");
+  document.getElementById("st-business-cancel")?.addEventListener("click", () => businessForm?.reset());
+  businessForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = businessForm.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    button.disabled = true;
+    if (businessMsg) businessMsg.textContent = "";
+
+    const formData = new FormData(businessForm);
+    const { error } = await actions.updateAppSettings({
+      businessName: String(formData.get("businessName") ?? ""),
+      gstin: String(formData.get("gstin") ?? ""),
+    });
+
+    if (error) {
+      button.disabled = false;
+      if (businessMsg) businessMsg.textContent = error.message;
+      return;
+    }
+    window.location.href = "/admin/settings?section=business-profile&saved=1";
+  });
+
+  // --- Numbering form ---
+  const numberingForm = document.querySelector<HTMLFormElement>("#st-numbering-form");
+  const numberingMsg = document.querySelector<HTMLParagraphElement>("#st-numbering-message");
+  document.getElementById("st-numbering-cancel")?.addEventListener("click", () => numberingForm?.reset());
+  numberingForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = numberingForm.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    button.disabled = true;
+    if (numberingMsg) numberingMsg.textContent = "";
+
+    const formData = new FormData(numberingForm);
+    const { error } = await actions.updateAppSettings({
+      orderNumberPrefix: String(formData.get("orderNumberPrefix") ?? ""),
+      nextOrderNumber: Number(formData.get("nextOrderNumber") ?? 1),
+    });
+
+    if (error) {
+      button.disabled = false;
+      if (numberingMsg) numberingMsg.textContent = error.message;
+      return;
+    }
+    window.location.href = "/admin/settings?section=numbering&saved=1";
+  });
+
+  // --- Stock rules: instant-apply low-stock alerts switch ---
+  const lowStockSwitch = document.querySelector<HTMLButtonElement>("#st-lowstock-switch");
+  const stockRulesMsg = document.querySelector<HTMLParagraphElement>("#st-stockrules-message");
+  lowStockSwitch?.addEventListener("click", async () => {
+    const next = lowStockSwitch.getAttribute("aria-checked") !== "true";
+    lowStockSwitch.setAttribute("aria-checked", String(next));
+    lowStockSwitch.disabled = true;
+    if (stockRulesMsg) stockRulesMsg.textContent = "";
+
+    const { error } = await actions.updateAppSettings({ lowStockAlertsEnabled: next });
+
+    lowStockSwitch.disabled = false;
+    if (error) {
+      lowStockSwitch.setAttribute("aria-checked", String(!next));
+      if (stockRulesMsg) stockRulesMsg.textContent = error.message;
+    }
+  });
+
+  // --- Notifications: mark as read / ignore ---
+  document.querySelectorAll<HTMLDivElement>(".st__notif-row").forEach((row) => {
+    const notificationId = row.dataset.notificationId!;
+
+    row.querySelector<HTMLButtonElement>(".st-notif-read")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      button.disabled = true;
+      const { error } = await actions.updateNotification({ notificationId, markRead: true });
+      if (error) {
+        button.disabled = false;
+        return;
+      }
+      window.location.reload();
+    });
+
+    row.querySelector<HTMLButtonElement>(".st-notif-ignore")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      button.disabled = true;
+      const { error } = await actions.updateNotification({ notificationId, ignore: true });
+      if (error) {
+        button.disabled = false;
+        return;
+      }
+      window.location.reload();
+    });
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

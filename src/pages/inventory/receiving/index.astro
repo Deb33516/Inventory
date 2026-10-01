@@ -1,0 +1,1147 @@
+---
+// Literal recreation of the Claude Design canvas's Inventory Staff
+// Receiving screen (project/StaffReceiving.dc.html -> NavSidebar role="staff"
+// + NavTop + PageReceiving) — this artboard is the visual source of truth
+// for layout/spacing/typography/borders/colors, reusing the exact same
+// --sd-* token shell + NavSidebar.astro/NavTop.astro already established
+// by the Sales screens (NavSidebar.astro gained a role="inventory" branch
+// for this, see that file's own header comment — its existing role="sales"
+// rendering is untouched).
+//
+// Real vs deferred/fabricated, per the no-fabrication rules:
+//  - Real: active products + their current quantity_on_hand/reorder_level
+//    (same inventory_select_staff RLS already used by /inventory/stock),
+//    real active suppliers (suppliers_all_inventory_staff RLS — the same
+//    set the existing Restock form already offers), real client-side
+//    search-to-add for products (filters the real fetched list, same
+//    pattern as Sales' New Order), real per-line Received/Damaged
+//    quantity inputs, real "Received earlier" list (actual recent
+//    inventory_movements rows of type 'restock', joined to real
+//    product/supplier names — no shipment/PO id exists so each row is
+//    identified by product + quantity + timestamp instead), real
+//    "recorded today" count/units in the header subtitle (computed from
+//    today's real restock movements, IST calendar day, same half-open-
+//    interval convention as every other dashboard in this project — see
+//    dashboardRange.ts). "Complete delivery" calls the exact same,
+//    unmodified `recordInventoryMovement` action/RPC the existing
+//    Restock and Damage pages already use — once per product line
+//    (restock, the full received quantity), plus a second call per line
+//    only when that line has damaged units (damaged, forced negative,
+//    reason required) — exactly the two real, independent ledger entries
+//    record_inventory_movement() already supports. No new action, RPC,
+//    table, or column was added: the existing action only accepts one
+//    product at a time, so a multi-product delivery issues one real,
+//    independently-authorized call per line/movement rather than a new
+//    batch endpoint.
+//  - "3 expected · 86 units · Dock 2 active" subtitle, the "Incoming
+//    restocks" queue of scheduled/at-dock shipments with reference
+//    numbers, arrival times and dock assignments, the "Unplanned
+//    delivery" header button, the receipt header's supplier contact
+//    name/phone, the "Expected" column, "Put-away bin" column/picker,
+//    and "Add photos": no purchase-order/incoming-shipment/dock/bin/
+//    contact/attachment entity exists anywhere in this schema (products,
+//    inventory, inventory_movements, suppliers — see CLAUDE.md). None of
+//    these are invented. The "Incoming restocks" card's shape is kept
+//    (same header/border/radius) but its body is an honest deferred
+//    state instead of fabricated rows, per your explicit instruction not
+//    to fabricate a queue that doesn't exist. The header button is
+//    omitted rather than faked — the real product search directly below
+//    already provides the one real "add a product" affordance, matching
+//    the exact precedent already established on Sales' New Order screen
+//    (which omitted a redundant "Add item" button for the same reason).
+//  - "Save draft": no draft/autosave concept exists anywhere in this
+//    schema (same reasoning as New Order) — omitted.
+//  - Supplier is offered once per delivery (applies to every restock line
+//    in that submission), not per line — record_inventory_movement()
+//    already accepts one supplier_id per call, and a single real
+//    delivery is realistically from one supplier; this keeps the form
+//    from inventing a second concept (per-line supplier) the design
+//    itself doesn't actually ask for either (only the receipt header, not
+//    each row, names a supplier).
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+const recorded = Astro.url.searchParams.get("recorded");
+
+const userId = Astro.locals.user!.id;
+
+// Real open-ticket count for the shared sidebar's "Support tickets" badge
+// — identical query already used on /inventory and /inventory/tickets.
+const { data: myTickets } = await Astro.locals.supabase
+  .from("support_tickets")
+  .select("status")
+  .eq("assigned_to", userId);
+const openTicketCount = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+
+// Real active products + current stock, for the product picker.
+const { data: productRows } = await Astro.locals.supabase
+  .from("products")
+  .select("id, sku, name, inventory(quantity_on_hand, reorder_level)")
+  .eq("is_active", true)
+  .order("name");
+
+function inventoryOf(row: { inventory: unknown }): { quantity_on_hand: number; reorder_level: number } | null {
+  const inv = row.inventory as unknown as { quantity_on_hand: number; reorder_level: number }[] | null;
+  return inv?.[0] ?? null;
+}
+
+const products = (productRows ?? []).map((p) => {
+  const inv = inventoryOf(p);
+  const qty = inv?.quantity_on_hand ?? 0;
+  const reorderLevel = inv?.reorder_level ?? 0;
+  const stockTone: "in" | "low" | "out" = qty === 0 ? "out" : qty <= reorderLevel ? "low" : "in";
+  return { id: p.id, sku: p.sku, name: p.name, qty, stockTone };
+});
+
+// Real active suppliers — the same set the existing Restock form
+// (StockMovementForm.astro) already offers.
+const { data: supplierRows } = await Astro.locals.supabase
+  .from("suppliers")
+  .select("id, name")
+  .eq("is_active", true)
+  .order("name");
+const suppliers = (supplierRows ?? []).map((s) => ({ id: s.id, name: s.name }));
+
+// Real recent restock movements for "Received earlier" — the actual
+// ledger record_inventory_movement() already writes, read back and
+// joined to product/supplier names for display.
+const { data: recentRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("id, quantity_delta, created_at, products(name, sku), suppliers(name)")
+  .eq("movement_type", "restock")
+  .order("created_at", { ascending: false })
+  .limit(6);
+
+const recent = (recentRows ?? []).map((r) => {
+  const product = r.products as unknown as { name: string; sku: string } | null;
+  const supplier = r.suppliers as unknown as { name: string } | null;
+  return {
+    id: r.id as string,
+    quantity: r.quantity_delta as number,
+    productName: product?.name ?? "—",
+    sku: product?.sku ?? "",
+    supplierName: supplier?.name ?? null,
+    createdAt: r.created_at as string,
+  };
+});
+
+// Real "today" stat for the header subtitle (IST calendar day, same
+// half-open-interval convention as every dashboard in this project —
+// see dashboardRange.ts) — replaces the design's fabricated
+// "3 expected · 86 units · Dock 2 active".
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const now = new Date();
+const shifted = new Date(now.getTime() + IST_OFFSET_MS);
+const todayIstMidnightUtc = new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - IST_OFFSET_MS);
+const tomorrowIstMidnightUtc = new Date(todayIstMidnightUtc.getTime() + DAY_MS);
+
+const { data: todayRows } = await Astro.locals.supabase
+  .from("inventory_movements")
+  .select("quantity_delta")
+  .eq("movement_type", "restock")
+  .gte("created_at", todayIstMidnightUtc.toISOString())
+  .lt("created_at", tomorrowIstMidnightUtc.toISOString());
+
+const deliveriesToday = todayRows?.length ?? 0;
+const unitsToday = (todayRows ?? []).reduce((sum, r) => sum + (r.quantity_delta as number), 0);
+const subtitle =
+  deliveriesToday > 0
+    ? `${deliveriesToday} deliver${deliveriesToday === 1 ? "y" : "ies"} recorded today · ${unitsToday} unit${unitsToday === 1 ? "" : "s"}`
+    : "No deliveries recorded today yet";
+
+const timeFormatter = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" });
+---
+
+<BaseLayout title="Receiving — Inventory">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Receiving" role="inventory" ticketBadgeCount={openTicketCount} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Inventory" page="Receiving" />
+
+      <main id="main-content" class="rv__main">
+        <div class="rv__header">
+          <h1>Receiving</h1>
+          <span class="rv__subtitle">{subtitle}</span>
+        </div>
+
+        {
+          recorded && (
+            <p class="rv__banner" role="status">
+              Recorded delivery for {recorded} product{recorded === "1" ? "" : "s"}.
+            </p>
+          )
+        }
+
+        <div class="rv__body">
+          <section aria-label="Incoming restocks" class="rv__left">
+            <div class="rv__left-head">
+              <div class="rv__left-head-text">
+                <h2>Incoming restocks</h2>
+                <span class="rv__left-head-sub">Not tracked in this system yet</span>
+              </div>
+            </div>
+            <div class="rv__deferred">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z" /></svg>
+              <span>Purchase orders and scheduled deliveries aren't tracked in this system. Record what physically arrives directly on the right.</span>
+            </div>
+
+            <div class="rv__left-subhead">Received earlier</div>
+            {
+              recent.length > 0 ? (
+                <div class="rv__recent-list">
+                  {recent.map((r) => (
+                    <div class="rv__recent-item">
+                      <span class="rv__recent-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg>
+                      </span>
+                      <div class="rv__recent-text">
+                        <span class="rv__recent-name">{r.productName} · {r.sku}</span>
+                        <span class="rv__recent-meta">
+                          Received · {r.quantity} unit{r.quantity === 1 ? "" : "s"}{r.supplierName ? ` · ${r.supplierName}` : ""} · {timeFormatter.format(new Date(r.createdAt))}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p class="rv__recent-empty">No deliveries recorded yet.</p>
+              )
+            }
+          </section>
+
+          <section aria-label="Record a delivery" class="rv__right">
+            <div class="rv__right-head">
+              <h2>Record a delivery</h2>
+              <div class="rv__field-col rv__supplier-col">
+                <label for="rv-supplier">Supplier (optional)</label>
+                <select id="rv-supplier" class="rv__input">
+                  <option value="">No supplier</option>
+                  {suppliers.map((s) => <option value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div class="rv__product-search-wrap">
+              <input type="search" id="rv-product-search" class="rv__product-search" placeholder="Search products by name or SKU to add…" aria-label="Search products" autocomplete="off" />
+              <div id="rv-product-results" class="rv__picker-results rv__product-results" role="listbox" aria-label="Products" hidden></div>
+            </div>
+
+            <div class="rv__grid rv__grid-head">
+              <span>Product</span><span class="rv__col-center">Received</span><span class="rv__col-center">Damaged</span><span></span>
+            </div>
+            <div id="rv-line-items"></div>
+            <p id="rv-empty-note" class="rv__empty-note">No products added yet.</p>
+
+            <div id="rv-totals" class="rv__grid rv__totals" hidden>
+              <span>Total</span><span id="rv-total-received" class="rv__col-center">0</span><span id="rv-total-damaged" class="rv__col-center">0</span><span></span>
+            </div>
+
+            <div id="rv-discrepancy" class="rv__discrepancy" hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4M12 17h.01" /></svg>
+              <div class="rv__discrepancy-text">
+                <span id="rv-discrepancy-title" class="rv__discrepancy-title"></span>
+                <div class="rv__field-col">
+                  <label for="rv-damage-reason">Reason for damaged units</label>
+                  <textarea id="rv-damage-reason" class="rv__textarea" placeholder="e.g. Cracked casing found during unpacking"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <p id="rv-form-message" class="rv__status-message" role="status"></p>
+
+            <div class="rv__footer">
+              <span id="rv-footer-note" class="rv__footer-note">Add a product to begin.</span>
+              <button type="button" id="rv-complete-btn" class="rv__btn rv__btn--primary" disabled>Complete delivery</button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="rv-data" hidden data-products={JSON.stringify(products)}></div>
+</BaseLayout>
+
+<style is:global>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .rv__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .rv__main {
+      padding: 16px;
+    }
+  }
+  .rv__header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rv__header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .rv__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__banner {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-success-fg);
+  }
+
+  .rv__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  @media (min-width: 1000px) {
+    .rv__body {
+      flex-direction: row;
+    }
+  }
+
+  .rv__left {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  @media (min-width: 1000px) {
+    .rv__left {
+      width: 320px;
+      flex-shrink: 0;
+    }
+  }
+  .rv__left-head {
+    box-sizing: border-box;
+    padding: 16px;
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .rv__left-head-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rv__left-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .rv__left-head-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__deferred {
+    margin: 12px;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px dashed var(--sd-border);
+    background: var(--sd-shell);
+    color: var(--sd-muted-fg);
+    font-size: 13px;
+    line-height: 1.45;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .rv__deferred svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .rv__left-subhead {
+    padding: 4px 16px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sd-muted-fg);
+  }
+  .rv__recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 12px 12px;
+  }
+  .rv__recent-item {
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--sd-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .rv__recent-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .rv__recent-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .rv__recent-name {
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rv__recent-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__recent-empty {
+    margin: 0;
+    padding: 4px 16px 16px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .rv__right {
+    flex-grow: 1;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .rv__right-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .rv__right-head h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .rv__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .rv__field-col label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .rv__supplier-col {
+    min-width: 200px;
+  }
+  .rv__input {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+
+  .rv__product-search-wrap {
+    position: relative;
+  }
+  .rv__product-search {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border: 2px solid var(--sd-accent);
+    border-radius: 10px;
+    background: var(--sd-shell);
+    font: inherit;
+    font-size: 15px;
+    color: var(--sd-fg);
+    outline: 0;
+  }
+  .rv__picker-results {
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .rv__product-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    border: 1px solid var(--sd-border);
+    border-radius: 8px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+  }
+  .rv__picker-row {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    color: var(--sd-fg);
+  }
+  .rv__picker-row:hover {
+    background: var(--sd-muted);
+  }
+  .rv__picker-empty {
+    padding: 12px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__picker-row-sub {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex-grow: 1;
+  }
+  .rv__picker-row-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rv__picker-row-meta {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .rv__stock-pill {
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .rv__stock-pill--in {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .rv__stock-pill--low {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .rv__stock-pill--out {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+
+  .rv__grid {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 100px 100px 32px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 8px;
+    min-width: 460px;
+  }
+  .rv__grid-head {
+    height: 36px;
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    background: var(--sd-shell);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  #rv-line-items {
+    overflow-x: auto;
+  }
+  .rv__row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 100px 100px 32px;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+    min-width: 460px;
+  }
+  .rv__col-center {
+    text-align: center;
+  }
+  .rv__row-name {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .rv__row-name-main {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rv__row-name-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__qty-input {
+    width: 100%;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 8px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--sd-fg);
+    text-align: center;
+  }
+  .rv__qty-input--damaged.has-damage {
+    border: 2px solid var(--sd-danger-fg);
+    color: var(--sd-danger-fg);
+  }
+  .rv__remove-btn {
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .rv__empty-note {
+    margin: 0;
+    padding: 24px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__totals {
+    height: 40px;
+    background: var(--sd-shell);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 460px;
+  }
+
+  .rv__discrepancy {
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .rv__discrepancy svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .rv__discrepancy-text {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-grow: 1;
+  }
+  .rv__discrepancy-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .rv__discrepancy .rv__field-col label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-warn-fg);
+  }
+  .rv__textarea {
+    min-height: 56px;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 8px 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+
+  .rv__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+
+  .rv__footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .rv__footer-note {
+    flex-grow: 1;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .rv__btn {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 20px;
+    border-radius: 8px;
+    border: 0;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .rv__btn--primary {
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .rv__btn--primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  interface Product {
+    id: string;
+    sku: string;
+    name: string;
+    qty: number;
+    stockTone: "in" | "low" | "out";
+  }
+  interface Line {
+    productId: string;
+    sku: string;
+    name: string;
+    received: number;
+    damaged: number;
+  }
+
+  const dataEl = document.getElementById("rv-data") as HTMLElement;
+  const products = JSON.parse(dataEl.dataset.products!) as Product[];
+
+  const lines: Line[] = [];
+  const STOCK_LABEL: Record<string, string> = { in: "In stock", low: "Low stock", out: "Out of stock" };
+
+  // --- Product search-to-add (same pattern as Sales' New Order) ---
+  const productSearch = document.querySelector<HTMLInputElement>("#rv-product-search")!;
+  const productResults = document.querySelector<HTMLDivElement>("#rv-product-results")!;
+  const lineItemsEl = document.querySelector<HTMLDivElement>("#rv-line-items")!;
+  const emptyNote = document.querySelector<HTMLParagraphElement>("#rv-empty-note")!;
+
+  function renderProductResults(filter: string) {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) {
+      productResults.hidden = true;
+      productResults.innerHTML = "";
+      return;
+    }
+    const matches = products.filter((p) => p.name.toLowerCase().includes(needle) || p.sku.toLowerCase().includes(needle)).slice(0, 20);
+    productResults.innerHTML = "";
+    if (matches.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "rv__picker-empty";
+      empty.textContent = "No products found.";
+      productResults.appendChild(empty);
+    } else {
+      matches.forEach((p) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "rv__picker-row";
+        row.setAttribute("role", "option");
+
+        const sub = document.createElement("span");
+        sub.className = "rv__picker-row-sub";
+        const nameEl = document.createElement("span");
+        nameEl.className = "rv__picker-row-name";
+        nameEl.textContent = p.name;
+        const metaEl = document.createElement("span");
+        metaEl.className = "rv__picker-row-meta";
+        metaEl.append(p.sku);
+        const pill = document.createElement("span");
+        pill.className = `rv__stock-pill rv__stock-pill--${p.stockTone}`;
+        pill.textContent = p.stockTone === "out" ? STOCK_LABEL.out : `${STOCK_LABEL[p.stockTone]} ${p.qty}`;
+        metaEl.appendChild(pill);
+        sub.appendChild(nameEl);
+        sub.appendChild(metaEl);
+        row.appendChild(sub);
+
+        row.addEventListener("click", () => {
+          addOrFocusLine(p);
+          productSearch.value = "";
+          productResults.hidden = true;
+          productSearch.focus();
+        });
+        productResults.appendChild(row);
+      });
+    }
+    productResults.hidden = false;
+  }
+  productSearch.addEventListener("input", () => renderProductResults(productSearch.value));
+  document.addEventListener("click", (e) => {
+    if (!productResults.hidden && !productResults.contains(e.target as Node) && e.target !== productSearch) {
+      productResults.hidden = true;
+    }
+  });
+
+  function addOrFocusLine(p: Product) {
+    if (lines.some((l) => l.productId === p.id)) return;
+    lines.push({ productId: p.id, sku: p.sku, name: p.name, received: 1, damaged: 0 });
+    renderLines();
+  }
+
+  function renderLines() {
+    lineItemsEl.innerHTML = "";
+    emptyNote.hidden = lines.length > 0;
+
+    lines.forEach((line, index) => {
+      const row = document.createElement("div");
+      row.className = "rv__row";
+
+      const nameCell = document.createElement("div");
+      nameCell.className = "rv__row-name";
+      const nameMain = document.createElement("span");
+      nameMain.className = "rv__row-name-main";
+      nameMain.textContent = line.name;
+      const nameSub = document.createElement("span");
+      nameSub.className = "rv__row-name-sub";
+      nameSub.textContent = line.sku;
+      nameCell.append(nameMain, nameSub);
+      row.appendChild(nameCell);
+
+      const recvInput = document.createElement("input");
+      recvInput.type = "number";
+      recvInput.min = "1";
+      recvInput.step = "1";
+      recvInput.className = "rv__qty-input";
+      recvInput.value = String(line.received);
+      recvInput.setAttribute("aria-label", `Received quantity for ${line.name}`);
+      recvInput.addEventListener("change", () => {
+        const n = parseInt(recvInput.value, 10);
+        line.received = Number.isFinite(n) && n > 0 ? n : 1;
+        if (line.damaged > line.received) line.damaged = line.received;
+        renderLines();
+      });
+      row.appendChild(recvInput);
+
+      const dmgInput = document.createElement("input");
+      dmgInput.type = "number";
+      dmgInput.min = "0";
+      dmgInput.step = "1";
+      dmgInput.className = "rv__qty-input rv__qty-input--damaged" + (line.damaged > 0 ? " has-damage" : "");
+      dmgInput.value = String(line.damaged);
+      dmgInput.setAttribute("aria-label", `Damaged quantity for ${line.name}`);
+      dmgInput.addEventListener("change", () => {
+        const n = parseInt(dmgInput.value, 10);
+        let next = Number.isFinite(n) && n > 0 ? n : 0;
+        if (next > line.received) next = line.received;
+        line.damaged = next;
+        renderLines();
+      });
+      row.appendChild(dmgInput);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "rv__remove-btn";
+      removeBtn.setAttribute("aria-label", `Remove ${line.name}`);
+      removeBtn.innerHTML =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg>';
+      removeBtn.addEventListener("click", () => {
+        lines.splice(index, 1);
+        renderLines();
+      });
+      row.appendChild(removeBtn);
+
+      lineItemsEl.appendChild(row);
+    });
+
+    updateTotals();
+  }
+
+  const totalsRow = document.querySelector<HTMLDivElement>("#rv-totals")!;
+  const totalReceivedEl = document.querySelector<HTMLSpanElement>("#rv-total-received")!;
+  const totalDamagedEl = document.querySelector<HTMLSpanElement>("#rv-total-damaged")!;
+  const discrepancyEl = document.querySelector<HTMLDivElement>("#rv-discrepancy")!;
+  const discrepancyTitleEl = document.querySelector<HTMLSpanElement>("#rv-discrepancy-title")!;
+  const damageReasonEl = document.querySelector<HTMLTextAreaElement>("#rv-damage-reason")!;
+  const footerNoteEl = document.querySelector<HTMLSpanElement>("#rv-footer-note")!;
+  const completeBtn = document.querySelector<HTMLButtonElement>("#rv-complete-btn")!;
+
+  function updateTotals() {
+    const totalReceived = lines.reduce((sum, l) => sum + l.received, 0);
+    const totalDamaged = lines.reduce((sum, l) => sum + l.damaged, 0);
+    const damagedLines = lines.filter((l) => l.damaged > 0).length;
+
+    totalsRow.hidden = lines.length === 0;
+    totalReceivedEl.textContent = String(totalReceived);
+    totalDamagedEl.textContent = String(totalDamaged);
+
+    if (totalDamaged > 0) {
+      discrepancyEl.hidden = false;
+      discrepancyTitleEl.textContent = `Discrepancy · ${totalDamaged} damaged across ${damagedLines} product${damagedLines === 1 ? "" : "s"}`;
+    } else {
+      discrepancyEl.hidden = true;
+    }
+
+    const netUnits = totalReceived - totalDamaged;
+    footerNoteEl.textContent =
+      lines.length === 0
+        ? "Add a product to begin."
+        : totalDamaged > 0
+          ? `Completing adds ${netUnits} unit${netUnits === 1 ? "" : "s"} to stock and records ${totalDamaged} as damaged`
+          : `Completing adds ${netUnits} unit${netUnits === 1 ? "" : "s"} to stock`;
+
+    completeBtn.disabled = lines.length === 0;
+  }
+
+  // --- Submit ---
+  const messageEl = document.querySelector<HTMLParagraphElement>("#rv-form-message")!;
+  const supplierSelect = document.querySelector<HTMLSelectElement>("#rv-supplier")!;
+
+  function buildMovementForm(fields: Record<string, string>): FormData {
+    const fd = new FormData();
+    for (const [key, value] of Object.entries(fields)) fd.set(key, value);
+    return fd;
+  }
+
+  completeBtn.addEventListener("click", async () => {
+    messageEl.textContent = "";
+
+    if (lines.length === 0) return;
+
+    const totalDamaged = lines.reduce((sum, l) => sum + l.damaged, 0);
+    const damageReason = damageReasonEl.value.trim();
+    if (totalDamaged > 0 && !damageReason) {
+      messageEl.textContent = "Enter a reason for the damaged units.";
+      damageReasonEl.focus();
+      return;
+    }
+
+    completeBtn.disabled = true;
+    const supplierId = supplierSelect.value;
+    let completed = 0;
+
+    for (const line of lines) {
+      const { error: restockError } = await actions.recordInventoryMovement(
+        buildMovementForm({
+          productId: line.productId,
+          movementType: "restock",
+          quantity: String(line.received),
+          supplierId,
+        }),
+      );
+      if (restockError) {
+        messageEl.textContent = `Stopped after ${completed} of ${lines.length} product(s) — ${line.name}: ${restockError.message}`;
+        completeBtn.disabled = false;
+        return;
+      }
+      completed++;
+
+      if (line.damaged > 0) {
+        const { error: damageError } = await actions.recordInventoryMovement(
+          buildMovementForm({
+            productId: line.productId,
+            movementType: "damaged",
+            quantity: String(line.damaged),
+            reason: damageReason,
+          }),
+        );
+        if (damageError) {
+          messageEl.textContent = `Recorded ${completed} of ${lines.length} product(s), but recording damage for ${line.name} failed — ${damageError.message}. The received quantity for ${line.name} is already in stock.`;
+          completeBtn.disabled = false;
+          return;
+        }
+      }
+    }
+
+    window.location.href = `/inventory/receiving?recorded=${completed}`;
+  });
+
+  renderLines();
+
+  // --- Theme + sidebar chrome (same pattern as every other Sales/staff screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
+</script>

@@ -1,130 +1,695 @@
 ---
+// Literal recreation of the Claude Design canvas's Inventory Staff Support
+// Ticket screen (project/StaffTickets.dc.html -> NavSidebar role="staff" +
+// NavTop + PageTickets.dc.html) — same shared --sd-* token shell as
+// /inventory/tickets/[id].astro; see that file's own header comment for
+// the full design-source, structure-match and no-fabrication notes (they
+// apply equally here — this file renders the identical list panel/header,
+// just without a ticket selected yet).
+//
+// ROUTE BEHAVIOR: the real staff artboard (PageTickets.dc.html) is a
+// single split-view screen that always shows a selected ticket's detail
+// next to the list — there is no "list-only" state in the design. Rather
+// than duplicating the full detail+composer markup here for the common
+// case (a ticket already exists to show), this page redirects to
+// /inventory/tickets/{first ticket in the active tab} — giving every
+// ticket one real, bookmarkable URL and matching Warehouse Tasks' own
+// existing direct links to /inventory/tickets/{id}. This page itself only
+// renders when there's genuinely nothing to redirect to (zero tickets in
+// the active tab) — an honest empty right panel instead of a fabricated
+// ticket. No second support system, no new route: this is the same
+// /inventory/tickets index that staffSidebarNav()/NavSidebar.astro/
+// Warehouse Tasks already link to.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
-import Card from "../../../components/ui/Card.astro";
-import Input from "../../../components/ui/Input.astro";
-import Textarea from "../../../components/ui/Textarea.astro";
-import Button from "../../../components/ui/Button.astro";
-import Badge from "../../../components/ui/Badge.astro";
-import EmptyState from "../../../components/catalog/EmptyState.astro";
-import AppShell from "../../../components/layout/AppShell.astro";
-import { staffSidebarNav } from "../../../lib/staffNav";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
 
-const reported = Astro.url.searchParams.get("reported");
 const userId = Astro.locals.user!.id;
+const url = Astro.url;
+const tab = url.searchParams.get("tab") === "resolved" ? "resolved" : "mine";
+const reported = url.searchParams.get("reported");
 
-// RLS (support_tickets_select_assigned_staff) already restricts this to
-// tickets assigned to the caller — filtering explicitly too keeps the
-// query's intent readable, same convention used for customers' own orders.
-const { data: tickets } = await Astro.locals.supabase
+const { data: allTickets } = await Astro.locals.supabase
   .from("support_tickets")
-  .select("id, subject, status, created_at")
+  .select("id, subject, status, created_by, updated_at")
   .eq("assigned_to", userId)
-  .order("created_at", { ascending: false });
+  .order("updated_at", { ascending: false });
 
-const openCount = (tickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status)).length;
+const RESOLVED_STATUSES = new Set(["resolved", "closed"]);
+const mineTickets = (allTickets ?? []).filter((t) => !RESOLVED_STATUSES.has(t.status as string));
+const resolvedTickets = (allTickets ?? []).filter((t) => RESOLVED_STATUSES.has(t.status as string));
+const activeList = tab === "resolved" ? resolvedTickets : mineTickets;
+const openTicketCount = mineTickets.length;
 
-const statusTone: Record<string, "success" | "warning" | "error" | "neutral"> = {
-  open: "warning",
-  in_progress: "warning",
-  waiting: "neutral",
-  resolved: "success",
-  closed: "neutral",
+// Redirect to the first (most recently updated) ticket in the active tab —
+// see the file header comment for why. `reported` is carried forward so
+// the success banner still shows after "Report an issue" redirects here.
+if (activeList.length > 0) {
+  const params = new URLSearchParams();
+  if (tab === "resolved") params.set("tab", "resolved");
+  if (reported) params.set("reported", reported);
+  const qs = params.toString();
+  return Astro.redirect(`/inventory/tickets/${activeList[0].id}${qs ? `?${qs}` : ""}`);
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  waiting: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
 };
+const STATUS_TONE: Record<string, string> = {
+  open: "open",
+  in_progress: "progress",
+  waiting: "waiting",
+  resolved: "resolved",
+  closed: "closed",
+};
+
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+const listRows = activeList.map((t) => ({
+  id: t.id as string,
+  subject: t.subject as string,
+  status: t.status as string,
+  isSelf: t.created_by === userId,
+  updatedAgo: relativeTime(t.updated_at as string),
+  href: `/inventory/tickets/${t.id}${tab === "resolved" ? "?tab=resolved" : ""}`,
+}));
 ---
 
 <BaseLayout title="Support tickets — Inventory">
-  <AppShell active="/inventory/tickets" sidebarNav={staffSidebarNav(openCount)} sidebarBadge="INVENTORY" title="Support tickets">
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-lg">
-      <div class="lg:col-span-2">
-        <h1 class="text-2xl font-bold text-ink">Support tickets assigned to me</h1>
-        <p class="mt-xs text-sm text-muted">
-          Only tickets currently assigned to you — the overall support queue is managed by admin.
-        </p>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Support tickets" role="inventory" ticketBadgeCount={openTicketCount} />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Help" page="Support tickets" />
+
+      <main id="main-content" class="tk__main">
+        <div class="tk__header">
+          <div class="tk__heading-col">
+            <h1>Support tickets</h1>
+            <span class="tk__subtitle">Tickets assigned to you</span>
+          </div>
+          <button type="button" id="tk-report-toggle" class="tk__btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            Report an issue
+          </button>
+        </div>
 
         {
           reported && (
-            <p class="mt-md text-sm text-success" role="status">
+            <p class="tk__banner" role="status">
               Issue reported.
             </p>
           )
         }
 
-        {
-          tickets && tickets.length > 0 ? (
-            <div class="mt-lg overflow-x-auto">
-              <table class="w-full text-sm border-collapse">
-                <thead>
-                  <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
-                    <th class="py-xs pr-md">Subject</th>
-                    <th class="py-xs pr-md">Status</th>
-                    <th class="py-xs pr-md">Reported</th>
-                    <th class="py-xs" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {tickets.map((t) => (
-                    <tr class="border-b border-hairline">
-                      <td class="py-sm pr-md text-ink font-bold">{t.subject}</td>
-                      <td class="py-sm pr-md">
-                        <Badge tone={statusTone[t.status] ?? "neutral"}>{t.status.replace(/_/g, " ")}</Badge>
-                      </td>
-                      <td class="py-sm pr-md text-body">{new Date(t.created_at).toLocaleDateString()}</td>
-                      <td class="py-sm">
-                        <a href={`/inventory/tickets/${t.id}`} class="text-primary font-bold">
-                          Open
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <section id="tk-report-panel" class="tk__report-panel" hidden aria-label="Report an issue">
+          <h2>Report an issue</h2>
+          <p class="tk__report-sub">Reports an operational problem — a note goes to admin for triage.</p>
+          <form id="tk-report-form" class="tk__report-form">
+            <div class="tk__field-col">
+              <label for="tk-report-subject">Subject</label>
+              <input type="text" id="tk-report-subject" name="subject" required />
             </div>
-          ) : (
-            <EmptyState
-              class="mt-lg"
-              title="No tickets assigned to you"
-              message="Operational issues assigned to you by admin will appear here."
-            />
-          )
-        }
-      </div>
+            <div class="tk__field-col">
+              <label for="tk-report-description">Description</label>
+              <textarea id="tk-report-description" name="description" required></textarea>
+            </div>
+            <p id="tk-report-message" class="tk__status-message" role="status"></p>
+            <div class="tk__report-actions">
+              <button type="button" id="tk-report-cancel" class="tk__btn">Cancel</button>
+              <button type="submit" class="tk__btn tk__btn--primary">Report issue</button>
+            </div>
+          </form>
+        </section>
 
-      <Card class="h-fit">
-        <h2 class="text-lg font-bold text-ink">Report an issue</h2>
-        <p class="mt-xs text-xs text-muted">Report an operational problem — a note goes to admin for triage.</p>
-        <form id="report-issue-form" class="mt-md space-y-md">
-          <Input label="Subject" name="subject" required />
-          <Textarea label="Description" name="description" required />
-          <p id="form-message" class="text-sm" role="status" />
-          <Button type="submit" variant="primary">Report issue</Button>
-        </form>
-      </Card>
+        <div class="tk__body">
+          <section aria-label="Tickets" class="tk__list-panel">
+            <div class="tk__list-head">
+              <label class="tk__search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4" /></svg>
+                <input type="search" id="tk-search" aria-label="Search tickets" placeholder="Search tickets…" />
+              </label>
+              <div role="tablist" aria-label="Ticket filter" class="tk__tabs">
+                <a href="/inventory/tickets" role="tab" aria-selected={tab === "mine"} class={`tk__tab ${tab === "mine" ? "is-active" : ""}`}>
+                  Assigned to me <span class="tk__tab-count">{mineTickets.length}</span>
+                </a>
+                <a href="/inventory/tickets?tab=resolved" role="tab" aria-selected={tab === "resolved"} class={`tk__tab ${tab === "resolved" ? "is-active" : ""}`}>
+                  Resolved <span class="tk__tab-count">{resolvedTickets.length}</span>
+                </a>
+              </div>
+            </div>
+            <div id="tk-list-scroll" class="tk__list-scroll">
+              {
+                listRows.length > 0 ? (
+                  listRows.map((r) => (
+                    <a href={r.href} data-subject={r.subject.toLowerCase()} class="tk__list-row">
+                      <span class="tk__list-row-top">
+                        <span class={`tk__pill tk__pill--${STATUS_TONE[r.status]}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
+                        <span class="tk__list-row-time">{r.updatedAgo}</span>
+                      </span>
+                      <span class="tk__list-row-subject">{r.subject}</span>
+                      <span class="tk__list-row-who">{r.isSelf ? "Reported by you" : "—"}</span>
+                    </a>
+                  ))
+                ) : (
+                  <p class="tk__list-empty">
+                    {tab === "resolved" ? "No resolved tickets." : "No tickets assigned to you."}
+                  </p>
+                )
+              }
+            </div>
+          </section>
+
+          <section aria-label="Ticket" class="tk__detail-panel">
+            <div class="tk__empty">
+              <p class="tk__empty-title">No ticket selected</p>
+              <p class="tk__empty-body">
+                {tab === "resolved" ? "You have no resolved tickets." : "Operational issues assigned to you by admin will appear here."}
+              </p>
+            </div>
+          </section>
+        </div>
+      </main>
     </div>
-  </AppShell>
+  </div>
 </BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .tk__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .tk__main {
+      padding: 16px;
+    }
+  }
+
+  .tk__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .tk__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tk__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .tk__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .tk__banner {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-success-fg);
+  }
+
+  .tk__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .tk__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+
+  .tk__report-panel {
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+  }
+  .tk__report-panel h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .tk__report-sub {
+    margin: 2px 0 12px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .tk__report-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 460px;
+  }
+  .tk__field-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .tk__field-col label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .tk__field-col input[type="text"],
+  .tk__report-form textarea {
+    box-sizing: border-box;
+    padding: 8px 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+  }
+  .tk__report-form textarea {
+    height: 72px;
+    resize: vertical;
+  }
+  .tk__report-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .tk__status-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-danger-fg);
+    min-height: 0;
+  }
+
+  .tk__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex-grow: 1;
+    min-height: 0;
+  }
+  @media (min-width: 1050px) {
+    .tk__body {
+      flex-direction: row;
+    }
+  }
+
+  .tk__list-panel {
+    box-sizing: border-box;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  @media (min-width: 1050px) {
+    .tk__list-panel {
+      width: 380px;
+      flex-shrink: 0;
+    }
+  }
+  .tk__list-head {
+    box-sizing: border-box;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .tk__search {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sd-muted-fg);
+  }
+  .tk__search input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    flex-grow: 1;
+    color: var(--sd-fg);
+  }
+  .tk__tabs {
+    display: flex;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--sd-muted);
+    gap: 2px;
+  }
+  .tk__tab {
+    flex: 1;
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .tk__tab.is-active {
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    box-shadow: var(--sd-shadow);
+  }
+  .tk__tab-count {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+  }
+
+  .tk__list-scroll {
+    max-height: 640px;
+    overflow-y: auto;
+  }
+  .tk__list-row {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-decoration: none;
+    color: var(--sd-fg);
+    background: var(--sd-card);
+  }
+  .tk__list-row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tk__list-row-time {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .tk__list-row-subject {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tk__list-row-who {
+    font-size: 12px;
+    color: var(--sd-fg2);
+  }
+  .tk__list-empty {
+    margin: 0;
+    padding: 32px 16px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .tk__detail-panel {
+    flex-grow: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .tk__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tk__pill--open {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg);
+  }
+  .tk__pill--progress {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .tk__pill--waiting {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .tk__pill--resolved {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .tk__pill--closed {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+
+  .tk__empty {
+    padding: 48px 24px;
+    text-align: center;
+  }
+  .tk__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .tk__empty-body {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
 
 <script>
   import { actions } from "astro:actions";
 
-  const form = document.querySelector<HTMLFormElement>("#report-issue-form")!;
-  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message")!;
-  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    button.disabled = true;
-    messageEl.textContent = "";
-    messageEl.classList.remove("text-error", "text-success");
-
-    const { error } = await actions.createSupportTicket(new FormData(form));
-
-    if (error) {
-      button.disabled = false;
-      messageEl.textContent = error.message;
-      messageEl.classList.add("text-error");
-      return;
-    }
-
-    window.location.href = "/inventory/tickets?reported=1";
+  // --- Report an issue toggle ---
+  const reportToggle = document.getElementById("tk-report-toggle");
+  const reportPanel = document.getElementById("tk-report-panel") as HTMLElement;
+  const reportCancel = document.getElementById("tk-report-cancel");
+  reportToggle?.addEventListener("click", () => {
+    reportPanel.hidden = !reportPanel.hidden;
   });
+  reportCancel?.addEventListener("click", () => {
+    reportPanel.hidden = true;
+  });
+
+  const reportForm = document.querySelector<HTMLFormElement>("#tk-report-form");
+  if (reportForm) {
+    const messageEl = document.querySelector<HTMLParagraphElement>("#tk-report-message")!;
+    const button = reportForm.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    reportForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      messageEl.textContent = "";
+      const { error } = await actions.createSupportTicket(new FormData(reportForm));
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        return;
+      }
+      window.location.href = "/inventory/tickets?reported=1";
+    });
+  }
+
+  // --- Real client-side subject search over the currently rendered list ---
+  const searchInput = document.querySelector<HTMLInputElement>("#tk-search");
+  const listScroll = document.getElementById("tk-list-scroll");
+  searchInput?.addEventListener("input", () => {
+    const needle = searchInput.value.trim().toLowerCase();
+    const rows = listScroll?.querySelectorAll<HTMLAnchorElement>(".tk__list-row") ?? [];
+    rows.forEach((row) => {
+      const subject = row.dataset.subject ?? "";
+      row.style.display = !needle || subject.includes(needle) ? "" : "none";
+    });
+  });
+
+  // --- Theme + sidebar chrome (same pattern as every other Sales/staff screen) ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
+  // centrally in NavSidebar.astro — see that file's header comment.
 </script>

@@ -23,6 +23,10 @@ const { title, description = "A modern CRM and inventory management platform." }
     />
     <meta name="generator" content={Astro.generator} />
     <title>{title}</title>
+    <!-- Optional per-page head injection (e.g. an additional webfont a
+         single screen's Claude Design artboard requires) — every existing
+         page omits this slot and renders exactly as before. -->
+    <slot name="head" />
   </head>
   <body class="min-h-screen bg-canvas text-body">
     <a

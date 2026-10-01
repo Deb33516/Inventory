@@ -41,8 +41,10 @@ test("login page renders and rejects bad credentials with a friendly message", a
 test("register page renders with all required fields", async ({ page }) => {
   await page.goto("/register");
   await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
-  await expect(page.getByLabel("Full name")).toBeVisible();
-  await expect(page.getByLabel("Email")).toBeVisible();
+  // Matches the Claude Design canvas's SignUp.dc.html copy — "Your name"
+  // and "Work email" label the same real fullName/email fields as before.
+  await expect(page.getByLabel("Your name")).toBeVisible();
+  await expect(page.getByLabel("Work email")).toBeVisible();
   await expect(page.getByLabel("Password")).toBeVisible();
 });
 
@@ -62,8 +64,22 @@ test("reset-password without a recovery session shows an invalid-link message, n
 });
 
 test("every auth page links back to the homepage", async ({ page }) => {
-  for (const path of ["/login", "/register", "/forgot-password", "/reset-password"]) {
+  // All four auth pages now match their Claude Design canvas artboards
+  // exactly — the brand-panel logo link is plain "Inventory", no
+  // back-arrow (the arrow was this app's own earlier addition, not part
+  // of the supplied design).
+  for (const path of ["/login", "/forgot-password", "/reset-password", "/register"]) {
     await page.goto(path);
-    await expect(page.getByRole("link", { name: "← Inventory" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Inventory", exact: true })).toBeVisible();
   }
+});
+
+test("forgot-password links back to sign in", async ({ page }) => {
+  await page.goto("/forgot-password");
+  await expect(page.getByRole("link", { name: "Back to sign in" })).toBeVisible();
+});
+
+test("reset-password links back to sign in", async ({ page }) => {
+  await page.goto("/reset-password");
+  await expect(page.getByRole("link", { name: "Back to sign in" })).toBeVisible();
 });
