@@ -1,16 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { ROLE_DASHBOARD, CUSTOMER_ONLY_PREFIXES, ROLE_GATED_PREFIXES, isSafeInternalRedirect, getSafeInternalRedirect } from "./roles";
+import {
+  ROLE_DASHBOARD,
+  CUSTOMER_ONLY_PREFIXES,
+  ROLE_GATED_PREFIXES,
+  isSafeInternalRedirect,
+  getSafeInternalRedirect,
+  getRoleDashboard,
+} from "./roles";
 
-// This mapping drives three things that must never drift apart: the
-// PublicHeader "Go to dashboard" link for a staff/admin role browsing the
-// storefront, middleware.ts's redirect for a non-customer landing on
-// /cart or /checkout, and actions/index.ts's signIn post-login redirect.
-// admin -> /admin, super_admin -> /super: two separate application areas
-// (as of the routing/shell-separation fix — previously both pointed at
-// /admin, which was the root cause of super_admin rendering the Admin
-// shell/badge after login). super_admin's separate, still-intact
-// authorization to also visit /admin directly is a different concern
-// (ROLE_GATED_PREFIXES["/admin"]) — see the second test below.
 describe("ROLE_DASHBOARD", () => {
   it("maps every non-customer role to its actual app section route", () => {
     expect(ROLE_DASHBOARD.sales_staff).toBe("/sales");
@@ -25,6 +22,21 @@ describe("ROLE_DASHBOARD", () => {
       expect(allowedRoles, `no role gate found for ${href}`).toBeDefined();
       expect(allowedRoles).toContain(role);
     }
+  });
+});
+
+describe("getRoleDashboard", () => {
+  it("resolves the correct landing dashboard for all user roles", () => {
+    expect(getRoleDashboard("customer")).toBe("/account");
+    expect(getRoleDashboard("sales_staff")).toBe("/sales");
+    expect(getRoleDashboard("inventory_staff")).toBe("/inventory");
+    expect(getRoleDashboard("admin")).toBe("/admin");
+    expect(getRoleDashboard("super_admin")).toBe("/super");
+  });
+
+  it("falls back to /account for null or undefined role", () => {
+    expect(getRoleDashboard(null)).toBe("/account");
+    expect(getRoleDashboard(undefined)).toBe("/account");
   });
 });
 

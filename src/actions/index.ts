@@ -2,7 +2,7 @@ import { defineAction, ActionError } from "astro:actions";
 import { z } from "astro/zod";
 import { createClient } from "../lib/supabase/server";
 import { createAdminClient } from "../lib/supabase/admin";
-import { ROLE_DASHBOARD } from "../lib/roles";
+import { getRoleDashboard } from "../lib/roles";
 import type { UserRole } from "../lib/types";
 import { validateLogoFile, generateLogoStoragePath, BRAND_ASSETS_BUCKET } from "../lib/brandLogo";
 
@@ -82,7 +82,7 @@ export const server = {
         .single();
 
       const role = (profile?.role as UserRole) ?? "customer";
-      const redirectTo = role === "customer" ? "/account" : ROLE_DASHBOARD[role];
+      const redirectTo = getRoleDashboard(role);
 
       return { message: "Signed in.", redirectTo };
     },

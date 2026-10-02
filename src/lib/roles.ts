@@ -91,3 +91,8 @@ export function getSafeInternalRedirect(path: string | null | undefined, fallbac
   return isSafeInternalRedirect(path) ? path! : fallback;
 }
 
+export function getRoleDashboard(role: UserRole | null | undefined): string {
+  if (!role || role === "customer") return "/account";
+  return ROLE_DASHBOARD[role] ?? "/account";
+}
+

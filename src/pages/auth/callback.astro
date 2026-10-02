@@ -1,36 +1,63 @@
 ---
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "../../lib/supabase/server";
-import { getSafeInternalRedirect } from "../../lib/roles";
+import { getSafeInternalRedirect, getRoleDashboard } from "../../lib/roles";
+import type { UserRole } from "../../lib/types";
 
 // @supabase/ssr defaults every client to the PKCE flow, so the links
-// Supabase emails for signup confirmation and password recovery redirect
-// here with a `?code=...` param (exchanged via exchangeCodeForSession) —
-// not a `token_hash`. `token_hash` is kept as a fallback for OTP-style
-// flows (e.g. if the email templates are ever customized to use it).
+// Supabase emails for signup confirmation and password recovery, as well as
+// OAuth redirects from Google, redirect here with a `?code=...` param
+// (exchanged via exchangeCodeForSession). `token_hash` is kept as a fallback
+// for OTP-style flows.
 const supabase = createClient({
   request: Astro.request,
   cookies: Astro.cookies,
 });
 
 const nextParam = Astro.url.searchParams.get("next");
-const safeNext = getSafeInternalRedirect(nextParam, "/account");
-
 const code = Astro.url.searchParams.get("code");
 const tokenHash = Astro.url.searchParams.get("token_hash");
 const type = Astro.url.searchParams.get("type") as EmailOtpType | null;
+const errorParam = Astro.url.searchParams.get("error");
+
+if (errorParam) {
+  return Astro.redirect("/login?error=oauth_error");
+}
+
+async function resolveRedirectDestination(): Promise<string> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let roleDashboard = "/account";
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const role = (profile?.role as UserRole) ?? "customer";
+    roleDashboard = getRoleDashboard(role);
+  }
+
+  return getSafeInternalRedirect(nextParam, roleDashboard);
+}
 
 if (code) {
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (!error) {
-    return Astro.redirect(safeNext);
+    const destination = await resolveRedirectDestination();
+    return Astro.redirect(destination);
   }
+  return Astro.redirect("/login?error=oauth_error");
 } else if (tokenHash && type) {
   const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
 
   if (!error) {
-    return Astro.redirect(safeNext);
+    const destination = await resolveRedirectDestination();
+    return Astro.redirect(destination);
   }
 }
 
