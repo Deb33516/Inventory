@@ -696,9 +696,9 @@ const userId = user!.id;
     const { data, error } = await actions.placeOrder({
       customerId: userId,
       items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-      shippingAddress: formData.get("shippingAddress"),
-      paymentMethod: formData.get("paymentMethod"),
-      notes: formData.get("notes") || undefined,
+      shippingAddress: String(formData.get("shippingAddress") ?? ""),
+      paymentMethod: (formData.get("paymentMethod") ?? "card") as any,
+      notes: (formData.get("notes") as string) || undefined,
     });
 
     if (error) {

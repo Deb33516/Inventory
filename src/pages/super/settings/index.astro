@@ -1,0 +1,1536 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+// AUTHORIZATION: Strictly super_admin only.
+if (Astro.locals.role !== "super_admin") {
+  return Astro.redirect("/");
+}
+
+const url = Astro.url;
+const userId = Astro.locals.user!.id;
+
+const SECTIONS = [
+  { id: "general", label: "General" },
+  { id: "company-profile", label: "Company profile" },
+  { id: "security", label: "Security" },
+  { id: "notifications", label: "Notifications" },
+  { id: "email", label: "Email" },
+  { id: "numbering", label: "Numbering" },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+const rawSection = url.searchParams.get("section") ?? "general";
+const activeSection: SectionId = SECTIONS.some((s) => s.id === rawSection) ? (rawSection as SectionId) : "general";
+
+function buildSectionUrl(next: SectionId): string {
+  return `/super/settings?section=${next}`;
+}
+
+const saved = url.searchParams.get("saved");
+
+// Fetch real app_settings (singleton row)
+const { data: settingsRow } = await Astro.locals.supabase
+  .from("app_settings")
+  .select("business_name, gstin, currency, timezone, order_number_prefix, next_order_number, low_stock_alerts_enabled, updated_at, logo_url")
+  .eq("id", true)
+  .single();
+
+// Fetch current super admin profile for display
+const { data: currentProfile } = await Astro.locals.supabase
+  .from("profiles")
+  .select("full_name, role")
+  .eq("id", userId)
+  .single();
+
+const currentUserName = currentProfile?.full_name || "Super Admin";
+
+const businessName = settingsRow?.business_name ?? "";
+const gstin = settingsRow?.gstin ?? "";
+const currency = settingsRow?.currency ?? "INR";
+const timezone = settingsRow?.timezone ?? "Asia/Kolkata";
+const orderNumberPrefix = settingsRow?.order_number_prefix ?? "";
+const nextOrderNumber = settingsRow?.next_order_number ?? 1;
+const lowStockAlertsEnabled = settingsRow?.low_stock_alerts_enabled ?? false;
+const logoUrl = settingsRow?.logo_url ?? null;
+
+// Format last saved info
+const lastSavedDate = settingsRow?.updated_at
+  ? new Date(settingsRow.updated_at).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+    })
+  : "recently";
+
+const subtitle = `Company-wide defaults · last saved ${lastSavedDate} by ${currentUserName}`;
+
+// Real notifications for the logged in Super Admin
+const { data: notificationRows } = await Astro.locals.supabase
+  .from("notifications")
+  .select("id, title, message, created_at, read_at, ignored_at")
+  .eq("recipient_id", userId)
+  .is("ignored_at", null)
+  .order("created_at", { ascending: false });
+
+const notifications = (notificationRows ?? []).map((n) => ({
+  id: n.id as string,
+  title: n.title as string,
+  message: n.message as string,
+  createdAt: new Date(n.created_at as string).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  }),
+  isRead: Boolean(n.read_at),
+}));
+---
+
+<BaseLayout title="Settings — Super Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Settings" role="super" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="System" page="Settings" />
+
+      <main id="main-content" class="st__main">
+        <!-- Page Header -->
+        <header class="st__header">
+          <div class="st__heading-col">
+            <h1 class="st__title">Settings</h1>
+            <span class="st__subtitle">{subtitle}</span>
+          </div>
+          <div class="st__actions">
+            <button type="button" id="st-cancel-btn" class="st__btn st__btn--secondary">
+              Cancel
+            </button>
+            <button type="button" id="st-save-btn" class="st__btn st__btn--primary">
+              Save changes
+            </button>
+          </div>
+        </header>
+
+        {saved === "1" && (
+          <div class="st__alert st__alert--success" role="status">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+            <span>Settings saved successfully to the database.</span>
+          </div>
+        )}
+
+        <div id="st-status-msg" class="st__alert st__alert--dynamic" hidden></div>
+
+        <!-- Body Layout: Sidebar nav + Content area -->
+        <div class="st__body">
+          <!-- Settings Navigation -->
+          <nav aria-label="Settings sections" class="st__nav">
+            {SECTIONS.map((s) => (
+              <a
+                href={buildSectionUrl(s.id)}
+                class={`st__nav-link ${activeSection === s.id ? "is-active" : ""}`}
+              >
+                <span>{s.label}</span>
+              </a>
+            ))}
+          </nav>
+
+          <!-- Settings Content Sections -->
+          <div class="st__content">
+            <!-- SECTION 1: General (Matches PageSettings.dc.html default view) -->
+            {activeSection === "general" && (
+              <form id="st-general-form" class="st__form-col">
+                <!-- Company Details Card -->
+                <section aria-label="General" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">General</h2>
+                    <span class="st__card-desc">Company details used on orders, emails and reports.</span>
+                  </div>
+                  <div class="st__divider"></div>
+                  <div class="st__card-body">
+                    <div class="st__grid">
+                      <div class="st__field">
+                        <label for="company-name" class="st__label">Company name</label>
+                        <input
+                          id="company-name"
+                          name="businessName"
+                          type="text"
+                          value={businessName}
+                          placeholder="e.g. Inventory Trading Co. Pvt Ltd"
+                          class="st__input"
+                        />
+                        <span class="st__help">Shown on orders, emails and reports</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="gstin" class="st__label">GSTIN</label>
+                        <input
+                          id="gstin"
+                          name="gstin"
+                          type="text"
+                          value={gstin}
+                          placeholder="e.g. 27AABCI4821K1Z5"
+                          class="st__input font-mono"
+                        />
+                        <span class="st__help">GST identification number for tax compliance</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="currency" class="st__label">Currency</label>
+                        <div class="st__select-wrap">
+                          <select id="currency" name="currency" class="st__select" disabled>
+                            <option value={currency} selected>₹ {currency} · Indian rupee</option>
+                          </select>
+                        </div>
+                        <span class="st__help">Locked store-wide to INR currency</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="timezone" class="st__label">Time zone</label>
+                        <div class="st__select-wrap">
+                          <select id="timezone" name="timezone" class="st__select">
+                            <option value="Asia/Kolkata" selected={timezone === "Asia/Kolkata"}>Asia/Kolkata (UTC+05:30)</option>
+                            <option value="UTC" selected={timezone === "UTC"}>UTC (UTC+00:00)</option>
+                          </select>
+                        </div>
+                        <span class="st__help">Used for reports, stock logs, and audit trail</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="fy-start" class="st__label">Financial year starts</label>
+                        <div class="st__select-wrap">
+                          <select id="fy-start" class="st__select">
+                            <option value="April" selected>April</option>
+                            <option value="January">January</option>
+                          </select>
+                        </div>
+                        <span class="st__help">FY 2026–27 runs 1 Apr to 31 Mar</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="date-format" class="st__label">Date format</label>
+                        <div class="st__select-wrap">
+                          <select id="date-format" class="st__select">
+                            <option value="DD/MM/YYYY" selected>DD/MM/YYYY</option>
+                            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                          </select>
+                        </div>
+                        <span class="st__help">Example: 29/09/2026</span>
+                      </div>
+                    </div>
+
+                    <!-- Logo Uploader Box -->
+                    <div class="st__logo-col">
+                      <span class="st__label">Logo</span>
+                      <input
+                        type="file"
+                        id="st-logo-file-input"
+                        accept="image/png,image/jpeg,image/webp"
+                        class="sr-only"
+                        style="display: none;"
+                      />
+                      <div class="st__logo-box" id="st-logo-box">
+                        <div id="st-logo-preview-area" class={`st__logo-preview-area ${logoUrl ? "" : "is-hidden"}`}>
+                          <div class="st__logo-preview-wrap">
+                            <img
+                              id="st-logo-img"
+                              src={logoUrl || ""}
+                              alt="Company logo preview"
+                              class="st__logo-img"
+                            />
+                          </div>
+                          <div class="st__logo-actions">
+                            <button type="button" class="st__btn st__btn--secondary st__btn--sm" id="st-logo-replace-btn">
+                              Replace
+                            </button>
+                            <button type="button" class="st__btn st__btn--danger st__btn--sm" id="st-logo-remove-btn">
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+
+                        <div id="st-logo-empty-area" class={`st__logo-empty-area ${logoUrl ? "is-hidden" : ""}`}>
+                          <span class="st__logo-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v4h16v-4"></path></svg>
+                          </span>
+                          <span class="st__logo-title">Upload company logo</span>
+                          <span class="st__logo-desc">PNG, JPEG or WebP, up to 2 MB</span>
+                          <button type="button" class="st__btn st__btn--secondary st__btn--sm" id="st-logo-btn">
+                            Choose file
+                          </button>
+                        </div>
+                        <span class="st__logo-note" id="st-logo-note"></span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Security Card -->
+                <section aria-label="Security" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Security</h2>
+                    <span class="st__card-desc">Sign-in rules for every internal user.</span>
+                  </div>
+                  <div class="st__card-rows">
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Require 2FA for admins</span>
+                        <span class="st__switch-desc">Admins and super admins must sign in with an authenticator app</span>
+                      </div>
+                      <button type="button" role="switch" aria-checked="true" class="st__track is-checked" id="st-2fa-toggle">
+                        <span class="st__knob"></span>
+                      </button>
+                    </div>
+
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Session timeout</span>
+                        <span class="st__switch-desc">Sign people out after a period of inactivity</span>
+                      </div>
+                      <div class="st__select-wrap st__select-wrap--sm">
+                        <select id="st-session-duration" class="st__select st__select--sm">
+                          <option value="15">15 min</option>
+                          <option value="30" selected>30 min</option>
+                          <option value="60">1 hour</option>
+                          <option value="240">4 hours</option>
+                        </select>
+                      </div>
+                      <button type="button" role="switch" aria-checked="true" class="st__track is-checked" id="st-timeout-toggle">
+                        <span class="st__knob"></span>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              </form>
+            )}
+
+            <!-- SECTION 2: Company Profile -->
+            {activeSection === "company-profile" && (
+              <form id="st-profile-form" class="st__form-col">
+                <section aria-label="Company profile" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Company profile</h2>
+                    <span class="st__card-desc">Legal business identity and tax registration information.</span>
+                  </div>
+                  <div class="st__divider"></div>
+                  <div class="st__card-body">
+                    <div class="st__grid">
+                      <div class="st__field">
+                        <label for="prof-company-name" class="st__label">Business / Company name</label>
+                        <input
+                          id="prof-company-name"
+                          name="businessName"
+                          type="text"
+                          value={businessName}
+                          class="st__input"
+                        />
+                        <span class="st__help">Full legal name of the organization</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="prof-gstin" class="st__label">GSTIN</label>
+                        <input
+                          id="prof-gstin"
+                          name="gstin"
+                          type="text"
+                          value={gstin}
+                          class="st__input font-mono"
+                        />
+                        <span class="st__help">Verified GST identification number</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="prof-currency" class="st__label">Default currency</label>
+                        <input
+                          id="prof-currency"
+                          type="text"
+                          value="₹ INR · Indian rupee"
+                          readonly
+                          class="st__input st__input--readonly"
+                        />
+                        <span class="st__help">System-wide transactional currency</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="prof-timezone" class="st__label">Operating timezone</label>
+                        <div class="st__select-wrap">
+                          <select id="prof-timezone" name="timezone" class="st__select">
+                            <option value="Asia/Kolkata" selected={timezone === "Asia/Kolkata"}>Asia/Kolkata (IST · UTC+05:30)</option>
+                            <option value="UTC" selected={timezone === "UTC"}>UTC (UTC+00:00)</option>
+                          </select>
+                        </div>
+                        <span class="st__help">Used for business reporting schedules</span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </form>
+            )}
+
+            <!-- SECTION 3: Security -->
+            {activeSection === "security" && (
+              <div class="st__form-col">
+                <section aria-label="Security controls" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Security controls</h2>
+                    <span class="st__card-desc">Authentication, session control, and access governance.</span>
+                  </div>
+                  <div class="st__card-rows">
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Enforce two-factor authentication (2FA)</span>
+                        <span class="st__switch-desc">Mandate TOTP authenticator verification for admin and super admin sign-in</span>
+                      </div>
+                      <button type="button" role="switch" aria-checked="true" class="st__track is-checked">
+                        <span class="st__knob"></span>
+                      </button>
+                    </div>
+
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Idle session timeout</span>
+                        <span class="st__switch-desc">Automatically terminate inactive staff sessions</span>
+                      </div>
+                      <div class="st__select-wrap st__select-wrap--sm">
+                        <select class="st__select st__select--sm">
+                          <option value="30" selected>30 min</option>
+                          <option value="60">1 hour</option>
+                        </select>
+                      </div>
+                      <button type="button" role="switch" aria-checked="true" class="st__track is-checked">
+                        <span class="st__knob"></span>
+                      </button>
+                    </div>
+
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Audit log retention</span>
+                        <span class="st__switch-desc">Retain full audit trail records for compliance (retained for 365 days)</span>
+                      </div>
+                      <span class="st__badge st__badge--info">1 year (Active)</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+
+            <!-- SECTION 4: Notifications (Real low_stock_alerts_enabled & notifications inbox) -->
+            {activeSection === "notifications" && (
+              <div class="st__form-col">
+                <section aria-label="Alert rules" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Stock alerts & notifications</h2>
+                    <span class="st__card-desc">Automated alerts and notifications dispatched to staff.</span>
+                  </div>
+                  <div class="st__card-rows">
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Low-stock alerts</span>
+                        <span class="st__switch-desc">
+                          Notify admins and super admins whenever product stock reaches or drops below its reorder level
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        id="st-lowstock-toggle"
+                        aria-checked={lowStockAlertsEnabled ? "true" : "false"}
+                        class={`st__track ${lowStockAlertsEnabled ? "is-checked" : ""}`}
+                      >
+                        <span class="st__knob"></span>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Notifications Inbox for Super Admin -->
+                <section aria-label="Notification inbox" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Your notification inbox</h2>
+                    <span class="st__card-desc">
+                      Real in-app notifications generated by the database trigger ({notifications.length} active).
+                    </span>
+                  </div>
+                  <div class="st__divider"></div>
+                  {notifications.length === 0 ? (
+                    <div class="st__empty-box">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="st__empty-icon" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                      <span class="st__empty-title">Inbox is clear</span>
+                      <span class="st__empty-desc">No active notifications for your account.</span>
+                    </div>
+                  ) : (
+                    <div class="st__notif-list">
+                      {notifications.map((n) => (
+                        <div class={`st__notif-item ${n.isRead ? "is-read" : "is-unread"}`} data-notif-id={n.id}>
+                          <div class="st__notif-dot"></div>
+                          <div class="st__notif-content">
+                            <div class="st__notif-head">
+                              <span class="st__notif-title">{n.title}</span>
+                              <span class="st__notif-time">{n.createdAt}</span>
+                            </div>
+                            <p class="st__notif-msg">{n.message}</p>
+                          </div>
+                          <div class="st__notif-actions">
+                            {!n.isRead && (
+                              <button type="button" class="st__btn st__btn--secondary st__btn--xs st-mark-read" data-id={n.id}>
+                                Mark read
+                              </button>
+                            )}
+                            <button type="button" class="st__btn st__btn--secondary st__btn--xs st-ignore" data-id={n.id} title="Dismiss notification">
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
+
+            <!-- SECTION 5: Email Configuration -->
+            {activeSection === "email" && (
+              <div class="st__form-col">
+                <section aria-label="Email settings" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Email configuration</h2>
+                    <span class="st__card-desc">System notification delivery and transactional email templates.</span>
+                  </div>
+                  <div class="st__card-rows">
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Supabase Auth transactional emails</span>
+                        <span class="st__switch-desc">Handles user invitations, password recovery, and email confirmations</span>
+                      </div>
+                      <span class="st__badge st__badge--success">Configured</span>
+                    </div>
+
+                    <div class="st__switch-row">
+                      <div class="st__switch-text">
+                        <span class="st__switch-label">Support ticket response emails</span>
+                        <span class="st__switch-desc">Send customer email notifications when staff reply to tickets</span>
+                      </div>
+                      <span class="st__badge st__badge--muted">Internal Queue</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+
+            <!-- SECTION 6: Numbering Configuration -->
+            {activeSection === "numbering" && (
+              <form id="st-numbering-form" class="st__form-col">
+                <section aria-label="Numbering series" class="st__card">
+                  <div class="st__card-header">
+                    <h2 class="st__card-title">Order numbering sequence</h2>
+                    <span class="st__card-desc">
+                      Configure custom order prefixes and sequence start numbers.
+                    </span>
+                  </div>
+                  <div class="st__divider"></div>
+                  <div class="st__card-body">
+                    <div class="st__grid">
+                      <div class="st__field">
+                        <label for="num-prefix" class="st__label">Order number prefix</label>
+                        <input
+                          id="num-prefix"
+                          name="orderNumberPrefix"
+                          type="text"
+                          value={orderNumberPrefix}
+                          placeholder="e.g. ORD-"
+                          class="st__input font-mono"
+                        />
+                        <span class="st__help">Prepended to human-readable order references</span>
+                      </div>
+
+                      <div class="st__field">
+                        <label for="num-next" class="st__label">Next order number</label>
+                        <input
+                          id="num-next"
+                          name="nextOrderNumber"
+                          type="number"
+                          min="1"
+                          value={nextOrderNumber}
+                          class="st__input font-mono"
+                        />
+                        <span class="st__help">Next numeric sequence value to be assigned</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="st__divider"></div>
+                  <div class="st__notice-box">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    <span>
+                      Order primary keys currently use immutable UUIDs across checkout and customer orders. Custom numbering prefixes persist to app_settings.
+                    </span>
+                  </div>
+                </section>
+              </form>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  /* Base Super Admin Tokens */
+  .sd {
+    --sd-shell: #FAFAFA;
+    --sd-panel: #FFFFFF;
+    --sd-card: #FFFFFF;
+    --sd-fg: #0A0A0A;
+    --sd-fg2: #404040;
+    --sd-muted: #F5F5F5;
+    --sd-muted-fg: #737373;
+    --sd-border: #E5E5E5;
+    --sd-input: #E5E5E5;
+    --sd-grid: #F0F0F0;
+    --sd-primary: #171717;
+    --sd-primary-fg: #FAFAFA;
+    --sd-success-bg: #ECFDF3;
+    --sd-success-fg: #15803D;
+    --sd-warn-bg: #FEF3E2;
+    --sd-warn-fg: #9A3412;
+    --sd-danger-bg: #FEECEC;
+    --sd-danger-fg: #B91C1C;
+    --sd-info-bg: #EEF2FF;
+    --sd-info-fg: #3538CD;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --sd-accent: #2B50E0;
+    --sd-accent-soft: rgba(43, 80, 224, 0.10);
+    --sd-chart2: #D9731F;
+    color-scheme: light;
+
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sd[data-theme="dark"] {
+    --sd-shell: #0A0A0A;
+    --sd-panel: #0F0F0F;
+    --sd-card: #171717;
+    --sd-fg: #FAFAFA;
+    --sd-fg2: #D4D4D4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #A3A3A3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-grid: #232323;
+    --sd-primary: #FAFAFA;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0F2A1C;
+    --sd-success-fg: #4ADE80;
+    --sd-warn-bg: #2E1F0E;
+    --sd-warn-fg: #FDBA74;
+    --sd-danger-bg: #2D1414;
+    --sd-danger-fg: #F87171;
+    --sd-info-bg: #1E2240;
+    --sd-info-fg: #A5B4FC;
+    --sd-shadow: none;
+    --sd-accent: #6B8AFB;
+    --sd-accent-soft: rgba(107, 138, 251, 0.16);
+    --sd-chart2: #E8894A;
+    color-scheme: dark;
+  }
+
+  .sd__sidebar {
+    width: 248px;
+    flex-shrink: 0;
+  }
+  .sd__backdrop {
+    display: none;
+  }
+
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow-y: auto;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .st__main {
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    flex-grow: 1;
+  }
+
+  /* Header */
+  .st__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .st__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .st__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .st__actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* Buttons */
+  .st__btn {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+  .st__btn--secondary {
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+  }
+  .st__btn--secondary:hover {
+    background: var(--sd-muted);
+  }
+  .st__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .st__btn--primary:hover {
+    opacity: 0.9;
+  }
+  .st__btn--sm {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  .st__btn--xs {
+    height: 26px;
+    padding: 0 8px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+
+  /* Alerts */
+  .st__alert {
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .st__alert--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+  }
+  .st__alert--error {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+    border: 1px solid rgba(248, 113, 113, 0.25);
+  }
+
+  /* Body Layout */
+  .st__body {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    gap: 32px;
+  }
+
+  /* Settings Left Nav */
+  .st__nav {
+    width: 208px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .st__nav-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 14px;
+    color: var(--sd-fg2);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .st__nav-link:hover {
+    background: var(--sd-muted);
+    color: var(--sd-fg);
+  }
+  .st__nav-link.is-active {
+    background: var(--sd-muted);
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+
+  /* Content area */
+  .st__content {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .st__form-col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* Cards */
+  .st__card {
+    padding: 20px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .st__card-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__card-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .st__card-desc {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__divider {
+    height: 1px;
+    background: var(--sd-border);
+    margin: 0 -20px;
+  }
+
+  .st__card-body {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+
+  .st__grid {
+    flex-grow: 1;
+    min-width: 280px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+  }
+
+  /* Fields */
+  .st__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .st__label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .st__input {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+  .st__input:focus {
+    border-color: var(--sd-accent);
+  }
+  .st__input--readonly {
+    background: var(--sd-shell);
+    color: var(--sd-muted-fg);
+    cursor: not-allowed;
+  }
+  .st__help {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .st__select-wrap {
+    position: relative;
+    display: flex;
+  }
+  .st__select {
+    width: 100%;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 14px;
+    color: var(--sd-fg);
+    outline: none;
+    cursor: pointer;
+  }
+  .st__select:disabled {
+    background: var(--sd-shell);
+    color: var(--sd-muted-fg);
+    cursor: not-allowed;
+  }
+  .st__select-wrap--sm {
+    width: 100px;
+  }
+  .st__select--sm {
+    height: 34px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  /* Logo Column */
+  .st__logo-col {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .st__logo-box {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 16px;
+    border: 1px dashed var(--sd-input);
+    border-radius: 12px;
+    background: var(--sd-shell);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+  }
+  .st__logo-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .st__logo-title {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .st__logo-desc {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__logo-note {
+    font-size: 11px;
+    color: var(--sd-muted-fg);
+    font-style: italic;
+    word-break: break-word;
+  }
+  .st__logo-empty-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .st__logo-preview-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: 100%;
+  }
+  .st__logo-preview-wrap {
+    width: 100%;
+    min-height: 56px;
+    max-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border-radius: 8px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    box-sizing: border-box;
+  }
+  .st__logo-img {
+    max-width: 100%;
+    max-height: 64px;
+    object-fit: contain;
+  }
+  .st__logo-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .st__btn--danger {
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    background: transparent;
+    color: var(--sd-danger-fg);
+  }
+  .st__btn--danger:hover {
+    background: var(--sd-danger-bg);
+  }
+  .is-hidden {
+    display: none !important;
+  }
+
+  /* Switches / Rows */
+  .st__card-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__switch-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--sd-border);
+  }
+  .st__switch-row:last-child {
+    border-bottom: 0;
+  }
+  .st__switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-grow: 1;
+  }
+  .st__switch-label {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .st__switch-desc {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .st__track {
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 2px;
+    border: 0;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    background: var(--sd-input);
+    justify-content: flex-start;
+    transition: background 0.2s ease, justify-content 0.2s ease;
+  }
+  .st__track.is-checked {
+    background: var(--sd-primary);
+    justify-content: flex-end;
+  }
+  .st__knob {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--sd-card);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: background 0.2s ease;
+  }
+  .st__track.is-checked .st__knob {
+    background: var(--sd-primary-fg);
+  }
+
+  /* Badges */
+  .st__badge {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .st__badge--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .st__badge--info {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg2);
+  }
+  .st__badge--muted {
+    background: var(--sd-muted);
+    color: var(--sd-muted-fg);
+  }
+
+  /* Notifications Inbox */
+  .st__empty-box {
+    padding: 32px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+  }
+  .st__empty-icon {
+    color: var(--sd-muted-fg);
+  }
+  .st__empty-title {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .st__empty-desc {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  .st__notif-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .st__notif-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-border);
+    background: var(--sd-card);
+    transition: background 0.15s ease;
+  }
+  .st__notif-item.is-unread {
+    background: var(--sd-accent-soft);
+    border-color: rgba(43, 80, 224, 0.2);
+  }
+  .st__notif-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 6px;
+    flex-shrink: 0;
+    background: var(--sd-muted-fg);
+  }
+  .st__notif-item.is-unread .st__notif-dot {
+    background: var(--sd-accent);
+  }
+  .st__notif-content {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .st__notif-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .st__notif-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .st__notif-time {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__notif-msg {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-fg2);
+    line-height: 1.4;
+  }
+  .st__notif-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .st__notice-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    line-height: 1.4;
+  }
+
+  /* Responsive Rules */
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 100;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 99;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .sd__backdrop.is-open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .sd__panel {
+      margin: 0;
+      border-radius: 0;
+      border: 0;
+    }
+    .st__body {
+      flex-direction: column;
+      gap: 16px;
+    }
+    .st__nav {
+      width: 100%;
+      flex-direction: row;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .st__nav-link {
+      white-space: nowrap;
+    }
+    .st__logo-col {
+      width: 100%;
+    }
+    .st__grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  // --- Theme Toggle Integration ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.body.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+      document.documentElement.removeAttribute("data-theme");
+      document.body.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // --- Status Banner Helper ---
+  const statusEl = document.getElementById("st-status-msg");
+  function showStatus(text: string, isError = false) {
+    if (!statusEl) return;
+    statusEl.hidden = false;
+    statusEl.textContent = text;
+    statusEl.className = `st__alert ${isError ? "st__alert--error" : "st__alert--success"}`;
+    statusEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  // --- Form Cancel Button ---
+  document.getElementById("st-cancel-btn")?.addEventListener("click", () => {
+    window.location.reload();
+  });
+
+  // --- Save Changes Button ---
+  document.getElementById("st-save-btn")?.addEventListener("click", async () => {
+    const saveBtn = document.getElementById("st-save-btn") as HTMLButtonElement | null;
+    if (saveBtn) saveBtn.disabled = true;
+
+    // Collect data across visible forms
+    let businessNameInput = document.querySelector<HTMLInputElement>("input[name='businessName']");
+    let gstinInput = document.querySelector<HTMLInputElement>("input[name='gstin']");
+    let timezoneSelect = document.querySelector<HTMLSelectElement>("select[name='timezone']");
+    let prefixInput = document.querySelector<HTMLInputElement>("input[name='orderNumberPrefix']");
+    let nextNumInput = document.querySelector<HTMLInputElement>("input[name='nextOrderNumber']");
+
+    const payload: {
+      businessName?: string;
+      gstin?: string;
+      timezone?: string;
+      orderNumberPrefix?: string;
+      nextOrderNumber?: number;
+    } = {};
+
+    if (businessNameInput) payload.businessName = businessNameInput.value.trim();
+    if (gstinInput) payload.gstin = gstinInput.value.trim();
+    if (timezoneSelect) payload.timezone = timezoneSelect.value;
+    if (prefixInput) payload.orderNumberPrefix = prefixInput.value.trim();
+    if (nextNumInput && nextNumInput.value) {
+      const parsed = parseInt(nextNumInput.value, 10);
+      if (!isNaN(parsed) && parsed > 0) payload.nextOrderNumber = parsed;
+    }
+
+    const { error } = await actions.updateAppSettings(payload);
+
+    if (saveBtn) saveBtn.disabled = false;
+
+    if (error) {
+      showStatus(error.message, true);
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("saved", "1");
+    window.location.href = url.toString();
+  });
+
+  // --- Real Low-Stock Alerts Toggle (Instant Apply) ---
+  const lowStockToggle = document.getElementById("st-lowstock-toggle");
+  lowStockToggle?.addEventListener("click", async () => {
+    const isChecked = lowStockToggle.getAttribute("aria-checked") === "true";
+    const nextState = !isChecked;
+
+    lowStockToggle.setAttribute("aria-checked", String(nextState));
+    lowStockToggle.classList.toggle("is-checked", nextState);
+
+    const { error } = await actions.updateAppSettings({ lowStockAlertsEnabled: nextState });
+
+    if (error) {
+      // Revert on failure
+      lowStockToggle.setAttribute("aria-checked", String(isChecked));
+      lowStockToggle.classList.toggle("is-checked", isChecked);
+      showStatus(error.message, true);
+      return;
+    }
+
+    showStatus(
+      nextState
+        ? "Low-stock alerts enabled. Admins will receive in-app notifications when stock dips to or below reorder levels."
+        : "Low-stock alerts disabled."
+    );
+  });
+
+  // --- Security Switches Toggle ---
+  document.querySelectorAll<HTMLButtonElement>("#st-2fa-toggle, #st-timeout-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const isChecked = btn.getAttribute("aria-checked") === "true";
+      btn.setAttribute("aria-checked", String(!isChecked));
+      btn.classList.toggle("is-checked", !isChecked);
+    });
+  });
+
+  // --- Real Company Logo Upload / Replace / Remove ---
+  const logoFileInput = document.getElementById("st-logo-file-input") as HTMLInputElement | null;
+  const logoChooseBtn = document.getElementById("st-logo-btn") as HTMLButtonElement | null;
+  const logoReplaceBtn = document.getElementById("st-logo-replace-btn") as HTMLButtonElement | null;
+  const logoRemoveBtn = document.getElementById("st-logo-remove-btn") as HTMLButtonElement | null;
+  const logoEmptyArea = document.getElementById("st-logo-empty-area");
+  const logoPreviewArea = document.getElementById("st-logo-preview-area");
+  const logoImg = document.getElementById("st-logo-img") as HTMLImageElement | null;
+  const logoNote = document.getElementById("st-logo-note");
+
+  function setLogoNote(msg: string, isError = false) {
+    if (!logoNote) return;
+    logoNote.textContent = msg;
+    logoNote.style.color = isError ? "var(--sd-danger-fg)" : "var(--sd-muted-fg)";
+  }
+
+  function triggerLogoSelect() {
+    if (logoFileInput) {
+      logoFileInput.value = "";
+      logoFileInput.click();
+    }
+  }
+
+  logoChooseBtn?.addEventListener("click", triggerLogoSelect);
+  logoReplaceBtn?.addEventListener("click", triggerLogoSelect);
+
+  logoFileInput?.addEventListener("change", async () => {
+    const file = logoFileInput.files?.[0];
+    if (!file) return;
+
+    // File validation: PNG, JPEG, WebP, max 2 MB
+    const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+    const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
+
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setLogoNote("Invalid file format. Only PNG, JPEG, and WebP images are allowed.", true);
+      showStatus("Invalid file format. Only PNG, JPEG, and WebP images are allowed.", true);
+      return;
+    }
+
+    if (file.size > MAX_SIZE) {
+      setLogoNote("File size exceeds maximum 2 MB limit.", true);
+      showStatus("File size exceeds maximum 2 MB limit.", true);
+      return;
+    }
+
+    // Set uploading state
+    if (logoChooseBtn) logoChooseBtn.disabled = true;
+    if (logoReplaceBtn) logoReplaceBtn.disabled = true;
+    if (logoRemoveBtn) logoRemoveBtn.disabled = true;
+    setLogoNote("Uploading logo...", false);
+
+    const fd = new FormData();
+    fd.append("file", file);
+
+    const { data, error } = await actions.uploadCompanyLogo(fd);
+
+    if (logoChooseBtn) logoChooseBtn.disabled = false;
+    if (logoReplaceBtn) logoReplaceBtn.disabled = false;
+    if (logoRemoveBtn) logoRemoveBtn.disabled = false;
+
+    if (error) {
+      setLogoNote(error.message, true);
+      showStatus(error.message, true);
+      return;
+    }
+
+    if (data?.logoUrl && logoImg) {
+      logoImg.src = data.logoUrl;
+      logoEmptyArea?.classList.add("is-hidden");
+      logoPreviewArea?.classList.remove("is-hidden");
+      setLogoNote("", false);
+      showStatus("Company logo uploaded successfully.");
+    }
+  });
+
+  logoRemoveBtn?.addEventListener("click", async () => {
+    if (logoRemoveBtn) logoRemoveBtn.disabled = true;
+    if (logoReplaceBtn) logoReplaceBtn.disabled = true;
+    setLogoNote("Removing logo...", false);
+
+    const { error } = await actions.removeCompanyLogo({});
+
+    if (logoRemoveBtn) logoRemoveBtn.disabled = false;
+    if (logoReplaceBtn) logoReplaceBtn.disabled = false;
+
+    if (error) {
+      setLogoNote(error.message, true);
+      showStatus(error.message, true);
+      return;
+    }
+
+    if (logoImg) logoImg.src = "";
+    logoPreviewArea?.classList.add("is-hidden");
+    logoEmptyArea?.classList.remove("is-hidden");
+    setLogoNote("", false);
+    showStatus("Company logo removed.");
+  });
+
+  // --- Notifications Mark Read & Ignore Actions ---
+  document.querySelectorAll<HTMLButtonElement>(".st-mark-read").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      if (!id) return;
+      btn.disabled = true;
+
+      const { error } = await actions.updateNotification({ notificationId: id, markRead: true });
+      if (error) {
+        btn.disabled = false;
+        showStatus(error.message, true);
+        return;
+      }
+
+      const item = btn.closest(".st__notif-item");
+      if (item) {
+        item.classList.remove("is-unread");
+        item.classList.add("is-read");
+      }
+      btn.remove();
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>(".st-ignore").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      if (!id) return;
+      btn.disabled = true;
+
+      const { error } = await actions.updateNotification({ notificationId: id, ignore: true });
+      if (error) {
+        btn.disabled = false;
+        showStatus(error.message, true);
+        return;
+      }
+
+      const item = btn.closest(".st__notif-item");
+      item?.remove();
+    });
+  });
+</script>

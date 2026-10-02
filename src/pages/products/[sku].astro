@@ -40,12 +40,23 @@ import NavCustomer from "../../components/customer/NavCustomer.astro";
 
 const { sku } = Astro.params;
 
-const { data: product } = await Astro.locals.supabase
+const { data: rawProduct } = await Astro.locals.supabase
   .from("products")
   .select("id, sku, name, description, price, image_url, category_id, categories(name)")
   .eq("sku", sku)
   .eq("is_active", true)
   .maybeSingle();
+
+const product = rawProduct as unknown as {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  price: number;
+  image_url: string | null;
+  category_id: string | null;
+  categories: { name: string } | null;
+} | null;
 
 if (!product) {
   Astro.response.status = 404;

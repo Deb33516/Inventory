@@ -4,6 +4,7 @@ import { createClient } from "../lib/supabase/server";
 import { createAdminClient } from "../lib/supabase/admin";
 import { ROLE_DASHBOARD } from "../lib/roles";
 import type { UserRole } from "../lib/types";
+import { validateLogoFile, generateLogoStoragePath, BRAND_ASSETS_BUCKET } from "../lib/brandLogo";
 
 // Astro's form-to-object conversion fills any declared field missing from
 // FormData with null (rather than omitting the key), and a present-but-empty
@@ -898,10 +899,30 @@ export const server = {
         throw new ActionError({ code: "BAD_REQUEST", message: "Nothing to update." });
       }
 
-      const { error } = await supabase.from("profiles").update(update).eq("id", input.profileId);
+      const callerRole = context.locals.role;
+      if (callerRole !== "super_admin") {
+        throw new ActionError({
+          code: "FORBIDDEN",
+          message:
+            callerRole === "admin"
+              ? "Staff profile changes by admins require an approval request."
+              : "Only super admin can directly update staff profiles.",
+        });
+      }
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(update)
+        .eq("id", input.profileId)
+        .select("id")
+        .maybeSingle();
 
       if (error) {
         throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+      }
+
+      if (!data) {
+        throw new ActionError({ code: "NOT_FOUND", message: "Profile not found or not modified." });
       }
 
       return { message: "Profile updated." };
@@ -1075,6 +1096,8 @@ export const server = {
       orderNumberPrefix: z.preprocess(emptyToUndefined, z.string().optional()),
       nextOrderNumber: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
       lowStockAlertsEnabled: z.boolean().optional(),
+      currency: z.preprocess(emptyToUndefined, z.string().optional()),
+      timezone: z.preprocess(emptyToUndefined, z.string().optional()),
     }),
     handler: async (input, context) => {
       const supabase = createClient({
@@ -1088,6 +1111,8 @@ export const server = {
       if (input.orderNumberPrefix !== undefined) update.order_number_prefix = input.orderNumberPrefix;
       if (input.nextOrderNumber !== undefined) update.next_order_number = input.nextOrderNumber;
       if (input.lowStockAlertsEnabled !== undefined) update.low_stock_alerts_enabled = input.lowStockAlertsEnabled;
+      if (input.currency !== undefined) update.currency = input.currency;
+      if (input.timezone !== undefined) update.timezone = input.timezone;
 
       if (Object.keys(update).length === 0) {
         throw new ActionError({ code: "BAD_REQUEST", message: "Nothing to update." });
@@ -1143,4 +1168,193 @@ export const server = {
       return { message: "Notification updated." };
     },
   }),
+
+  // Super Admin: Upload and persist company logo to brand-assets bucket
+  uploadCompanyLogo: defineAction({
+    accept: "form",
+    handler: async (formData, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      // 1. Authorization: check authenticated user & super_admin role
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        throw new ActionError({
+          code: "UNAUTHORIZED",
+          message: "Authentication required to upload brand assets.",
+        });
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      if (profile?.role !== "super_admin") {
+        throw new ActionError({
+          code: "FORBIDDEN",
+          message: "Only super administrators can upload the company logo.",
+        });
+      }
+
+      // 2. File extraction & validation
+      const file = formData.get("file");
+      if (!file || !(file instanceof File)) {
+        throw new ActionError({
+          code: "BAD_REQUEST",
+          message: "Please select an image file to upload.",
+        });
+      }
+
+      const validation = validateLogoFile(file);
+      if (!validation.valid) {
+        throw new ActionError({
+          code: "BAD_REQUEST",
+          message: validation.error,
+        });
+      }
+
+      // 3. Remove existing logo files from brand-assets to prevent orphan accumulation
+      try {
+        const { data: existingFiles } = await supabase.storage
+          .from(BRAND_ASSETS_BUCKET)
+          .list("logo");
+        if (existingFiles && existingFiles.length > 0) {
+          const toRemove = existingFiles.map((f) => `logo/${f.name}`);
+          await supabase.storage.from(BRAND_ASSETS_BUCKET).remove(toRemove);
+        }
+      } catch {
+        // non-blocking
+      }
+
+      // 4. Upload file buffer to brand-assets
+      const filePath = generateLogoStoragePath(file.type);
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      const { error: uploadError } = await supabase.storage
+        .from(BRAND_ASSETS_BUCKET)
+        .upload(filePath, buffer, {
+          contentType: file.type,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new ActionError({
+          code: "BAD_REQUEST",
+          message: uploadError.message,
+        });
+      }
+
+      // 5. Get public URL
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from(BRAND_ASSETS_BUCKET).getPublicUrl(filePath);
+
+      // 6. Persist URL to app_settings.logo_url
+      const { data: updatedSettings, error: dbError } = await supabase
+        .from("app_settings")
+        .update({ logo_url: publicUrl })
+        .eq("id", true)
+        .select("logo_url")
+        .maybeSingle();
+
+      if (dbError) {
+        throw new ActionError({
+          code: "BAD_REQUEST",
+          message: dbError.message,
+        });
+      }
+
+      if (!updatedSettings) {
+        throw new ActionError({
+          code: "FORBIDDEN",
+          message: "Failed to update app settings.",
+        });
+      }
+
+      return { logoUrl: publicUrl };
+    },
+  }),
+
+  // Super Admin: Remove company logo from brand-assets bucket & clear app_settings.logo_url
+  removeCompanyLogo: defineAction({
+    handler: async (_input, context) => {
+      const supabase = createClient({
+        request: context.request,
+        cookies: context.cookies,
+      });
+
+      // 1. Authorization: check authenticated user & super_admin role
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        throw new ActionError({
+          code: "UNAUTHORIZED",
+          message: "Authentication required.",
+        });
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      if (profile?.role !== "super_admin") {
+        throw new ActionError({
+          code: "FORBIDDEN",
+          message: "Only super administrators can remove the company logo.",
+        });
+      }
+
+      // 2. Remove files from brand-assets bucket
+      try {
+        const { data: existingFiles } = await supabase.storage
+          .from(BRAND_ASSETS_BUCKET)
+          .list("logo");
+        if (existingFiles && existingFiles.length > 0) {
+          const toRemove = existingFiles.map((f) => `logo/${f.name}`);
+          await supabase.storage.from(BRAND_ASSETS_BUCKET).remove(toRemove);
+        }
+      } catch {
+        // non-blocking
+      }
+
+      // 3. Clear logo_url in app_settings
+      const { data: updatedSettings, error: dbError } = await supabase
+        .from("app_settings")
+        .update({ logo_url: null })
+        .eq("id", true)
+        .select("id")
+        .maybeSingle();
+
+      if (dbError) {
+        throw new ActionError({
+          code: "BAD_REQUEST",
+          message: dbError.message,
+        });
+      }
+
+      if (!updatedSettings) {
+        throw new ActionError({
+          code: "FORBIDDEN",
+          message: "Failed to update app settings.",
+        });
+      }
+
+      return { message: "Logo removed." };
+    },
+  }),
 };
+

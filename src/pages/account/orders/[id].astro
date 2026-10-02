@@ -79,7 +79,7 @@ const { data: payment } = order
   ? await Astro.locals.supabase.from("payments").select("status, method, paid_at").eq("order_id", id).maybeSingle()
   : { data: null };
 
-const items = itemRows ?? [];
+const items = (itemRows ?? []) as unknown as Array<{ id: string; quantity: number; unit_price: number; subtotal: number; products: { sku: string; name: string } | null }>;
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);

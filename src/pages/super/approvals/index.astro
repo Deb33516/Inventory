@@ -1,24 +1,43 @@
 ---
 import BaseLayout from "../../../layouts/BaseLayout.astro";
+import Card from "../../../components/ui/Card.astro";
+import Button from "../../../components/ui/Button.astro";
 import EmptyState from "../../../components/catalog/EmptyState.astro";
 import ApprovalStatusBadge from "../../../components/approvals/ApprovalStatusBadge.astro";
 import NavSidebar from "../../../components/staff/NavSidebar.astro";
-import NavTop from "../../../components/staff/NavTop.astro";
+import SuperNavTop from "../../../components/staff/SuperNavTop.astro";
 
-// Admin sees their own submitted request history (approval_requests_select_own).
-const { data: myRequests } = await Astro.locals.supabase
+// Super Admin approvals review queue (approval_requests_select_super_admin — store-wide).
+const { data: pendingRequests } = await Astro.locals.supabase
   .from("approval_requests")
-  .select("id, action_type, target_table, target_id, payload, reason, status, reviewed_at, review_note, created_at")
-  .order("created_at", { ascending: false });
+  .select("id, action_type, target_table, target_id, reason, payload, status, requested_by, created_at")
+  .eq("status", "pending")
+  .order("created_at", { ascending: true });
 
-const allRequests = myRequests ?? [];
+const { data: reviewedRequests } = await Astro.locals.supabase
+  .from("approval_requests")
+  .select("id, action_type, target_table, target_id, payload, status, requested_by, reviewed_by, reviewed_at, review_note")
+  .neq("status", "pending")
+  .order("reviewed_at", { ascending: false })
+  .limit(25);
+
+const allRequests = [...(pendingRequests ?? []), ...(reviewedRequests ?? [])];
 
 const productIds = [...new Set(allRequests.filter((r) => r.target_table === "products").map((r) => r.target_id))];
 const profileTargetIds = [...new Set(allRequests.filter((r) => r.target_table === "profiles").map((r) => r.target_id))];
 const orderIds = [...new Set(allRequests.filter((r) => r.target_table === "orders").map((r) => r.target_id))];
 const paymentIds = [...new Set(allRequests.filter((r) => r.target_table === "payments").map((r) => r.target_id))];
 
-const [{ data: products }, { data: profileTargets }, { data: orders }, { data: payments }] =
+const actorIds = [
+  ...new Set(
+    allRequests.flatMap((r) => [
+      "requested_by" in r ? r.requested_by : undefined,
+      "reviewed_by" in r ? r.reviewed_by : undefined,
+    ].filter((v): v is string => Boolean(v)))
+  ),
+];
+
+const [{ data: products }, { data: profileTargets }, { data: orders }, { data: payments }, { data: actors }] =
   await Promise.all([
     productIds.length > 0
       ? Astro.locals.supabase.from("products").select("id, sku, name").in("id", productIds)
@@ -32,12 +51,16 @@ const [{ data: products }, { data: profileTargets }, { data: orders }, { data: p
     paymentIds.length > 0
       ? Astro.locals.supabase.from("payments").select("id, amount").in("id", paymentIds)
       : Promise.resolve({ data: [] }),
+    actorIds.length > 0
+      ? Astro.locals.supabase.from("profiles").select("id, full_name").in("id", actorIds)
+      : Promise.resolve({ data: [] }),
   ]);
 
 const productById = new Map((products ?? []).map((p) => [p.id, p]));
 const profileById = new Map((profileTargets ?? []).map((p) => [p.id, p]));
 const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
 const paymentById = new Map((payments ?? []).map((p) => [p.id, p]));
+const actorNameById = new Map((actors ?? []).map((a) => [a.id, a.full_name ?? "Unknown"]));
 
 function targetLabel(targetTable: string, targetId: string) {
   if (targetTable === "products") {
@@ -60,7 +83,7 @@ function targetLabel(targetTable: string, targetId: string) {
 }
 ---
 
-<BaseLayout title="Approvals — Admin">
+<BaseLayout title="Approvals — Super Admin">
   <Fragment slot="head">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
   </Fragment>
@@ -69,37 +92,77 @@ function targetLabel(targetTable: string, targetId: string) {
     <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
 
     <div id="sd-sidebar" class="sd__sidebar">
-      <NavSidebar active="Approvals" role="admin" />
+      <NavSidebar active="Approvals" role="super" />
     </div>
 
     <div class="sd__panel">
-      <NavTop section="Manage" page="Approvals" />
+      <SuperNavTop section="Access" page="Approvals" />
 
       <main id="main-content" class="ap__main">
         <div class="ap__header">
           <div class="ap__heading-col">
             <h1 class="text-2xl font-bold text-ink">Approvals</h1>
-            <p class="text-sm text-muted">Track status of sensitive operation requests submitted for Super Admin review.</p>
+            <p class="text-sm text-muted">Review sensitive operations submitted by admins and staff.</p>
           </div>
         </div>
 
-        <h2 class="mt-lg text-lg font-bold text-ink">My submitted requests</h2>
+        <h2 class="mt-lg text-lg font-bold text-ink">Pending review</h2>
         {
-          allRequests.length > 0 ? (
+          (pendingRequests ?? []).length > 0 ? (
+            <div class="mt-md space-y-md">
+              {(pendingRequests ?? []).map((r) => (
+                <Card class="approval-review-card" data-request-id={r.id}>
+                  <div class="flex items-center justify-between flex-wrap gap-sm">
+                    <div>
+                      <p class="text-sm font-bold text-ink capitalize">{r.action_type.replace(/_/g, " ")}</p>
+                      <p class="text-xs text-muted">
+                        Target: {targetLabel(r.target_table, r.target_id)} · Requested by{" "}
+                        {actorNameById.get(r.requested_by) ?? "Unknown"} on{" "}
+                        {new Date(r.created_at).toLocaleString()}
+                      </p>
+                      {r.action_type === "change_role" && (r as any).payload?.new_role && (
+                        <p class="mt-xs text-xs font-semibold text-primary">
+                          Requested role change to: <span class="capitalize">{((r as any).payload.new_role as string).replace(/_/g, " ")}</span>
+                        </p>
+                      )}
+                    </div>
+                    <ApprovalStatusBadge status={r.status} />
+                  </div>
+                  <p class="mt-sm text-sm text-body">{r.reason}</p>
+                  <div class="mt-md flex items-center gap-sm flex-wrap">
+                    <Button class="review-btn" data-decision="approved">
+                      Approve
+                    </Button>
+                    <Button variant="secondary" class="review-btn" data-decision="rejected">
+                      Reject
+                    </Button>
+                    <p class="review-message text-sm w-full" role="status" />
+                  </div>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <EmptyState class="mt-md" title="No pending approvals" />
+          )
+        }
+
+        <h2 class="mt-xl text-lg font-bold text-ink">Recently reviewed</h2>
+        {
+          (reviewedRequests ?? []).length > 0 ? (
             <div class="mt-md overflow-x-auto">
               <table class="w-full text-sm border-collapse">
                 <thead>
                   <tr class="border-b border-hairline text-left text-muted uppercase text-xs tracking-[0.5px]">
                     <th class="py-xs pr-md">Action</th>
                     <th class="py-xs pr-md">Target</th>
-                    <th class="py-xs pr-md">Reason</th>
-                    <th class="py-xs pr-md">Submitted</th>
+                    <th class="py-xs pr-md">Requested by</th>
+                    <th class="py-xs pr-md">Reviewed by</th>
                     <th class="py-xs pr-md">Status</th>
                     <th class="py-xs pr-md">Review note</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {allRequests.map((r) => (
+                  {(reviewedRequests ?? []).map((r) => (
                     <tr class="border-b border-hairline">
                       <td class="py-sm pr-md text-ink capitalize">
                         {r.action_type.replace(/_/g, " ")}
@@ -108,8 +171,10 @@ function targetLabel(targetTable: string, targetId: string) {
                         )}
                       </td>
                       <td class="py-sm pr-md text-body">{targetLabel(r.target_table, r.target_id)}</td>
-                      <td class="py-sm pr-md text-body">{r.reason}</td>
-                      <td class="py-sm pr-md text-muted text-xs">{new Date(r.created_at).toLocaleDateString()}</td>
+                      <td class="py-sm pr-md text-body">{actorNameById.get(r.requested_by) ?? "Unknown"}</td>
+                      <td class="py-sm pr-md text-body">
+                        {r.reviewed_by ? actorNameById.get(r.reviewed_by) ?? "Unknown" : "—"}
+                      </td>
                       <td class="py-sm pr-md">
                         <ApprovalStatusBadge status={r.status} />
                       </td>
@@ -120,7 +185,7 @@ function targetLabel(targetTable: string, targetId: string) {
               </table>
             </div>
           ) : (
-            <EmptyState class="mt-md" title="No approval requests yet" />
+            <EmptyState class="mt-md" title="No reviewed requests yet" />
           )
         }
       </main>
@@ -212,3 +277,34 @@ function targetLabel(targetTable: string, targetId: string) {
     gap: 4px;
   }
 </style>
+
+<script>
+  import { actions } from "astro:actions";
+
+  document.querySelectorAll<HTMLElement>(".approval-review-card").forEach((card) => {
+    const requestId = card.dataset.requestId!;
+    const messageEl = card.querySelector<HTMLParagraphElement>(".review-message")!;
+
+    card.querySelectorAll<HTMLButtonElement>(".review-btn").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const decision = button.dataset.decision as "approved" | "rejected";
+        const reviewNote = window.prompt(decision === "rejected" ? "Reason for rejection (optional):" : "Review note (optional):") ?? undefined;
+
+        card.querySelectorAll<HTMLButtonElement>(".review-btn").forEach((b) => (b.disabled = true));
+        messageEl.textContent = "";
+        messageEl.classList.remove("text-error", "text-success");
+
+        const { error } = await actions.reviewApprovalRequest({ requestId, decision, reviewNote });
+
+        if (error) {
+          card.querySelectorAll<HTMLButtonElement>(".review-btn").forEach((b) => (b.disabled = false));
+          messageEl.textContent = error.message;
+          messageEl.classList.add("text-error");
+          return;
+        }
+
+        window.location.reload();
+      });
+    });
+  });
+</script>

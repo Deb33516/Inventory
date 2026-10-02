@@ -21,6 +21,7 @@
 //    visual result as the design's JS-driven version, simpler and more
 //    robust than reimplementing per-item React-style state by hand).
 import BaseLayout from "../layouts/BaseLayout.astro";
+import HeroDashboardPreview from "../components/landing/HeroDashboardPreview.astro";
 
 const user = Astro.locals.user;
 
@@ -71,35 +72,102 @@ const roles = [
   },
 ];
 
+const kanban = [
+  {
+    stage: "Pending",
+    orders: [
+      { co: "Meera Traders", amt: "₹31,800", stock: "Back 3 Oct", status: "out" },
+      { co: "Galaxy Retail", amt: "₹1.86L", stock: "In stock", status: "ok" },
+    ],
+  },
+  {
+    stage: "Processing",
+    orders: [
+      { co: "BuildRight", amt: "₹1.48L", stock: "In stock", status: "ok" },
+      { co: "Sharma Hardware", amt: "₹64,200", stock: "12 left", status: "low" },
+    ],
+  },
+  {
+    stage: "Shipped",
+    orders: [
+      { co: "Meera Traders", amt: "₹86,400", stock: "Due 30 Sep", status: "ok" },
+      { co: "Patel Electricals", amt: "₹1.13L", stock: "Due 1 Oct", status: "ok" },
+    ],
+  },
+  {
+    stage: "Delivered",
+    orders: [
+      { co: "Aarav Homes", amt: "₹74,500", stock: "Delivered", status: "ok" },
+      { co: "Nova Lights", amt: "₹1.6L", stock: "Delivered", status: "ok" },
+    ],
+  },
+];
+
 const benefits = [
-  { title: "Five roles, clear access", desc: "Super admin, admin, sales staff, inventory staff and customers each see only what their job needs." },
-  { title: "Live stock in every order", desc: "Sales and customers see real availability before an order is placed." },
-  { title: "Made for the warehouse floor", desc: "A scan-first workflow for receiving, adjustments and lookups." },
-  { title: "Stock you can trust", desc: "Every receipt, sale, adjustment and damage record is logged as a stock movement." },
-  { title: "Customer self-service", desc: "Customers shop, check out, track their orders and raise tickets on their own." },
-  { title: "Support that closes the loop", desc: "Tickets move from customer to staff and back with a clear resolution." },
+  {
+    icon: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
+    title: "Five roles, clear access",
+    desc: "Super admin, admin, sales staff, inventory staff and customers each see only what their job needs.",
+  },
+  {
+    icon: "M12 3 2 8l10 5 10-5zM2 13l10 5 10-5",
+    title: "Live stock in every order",
+    desc: "Sales and customers see real availability before an order is placed.",
+  },
+  {
+    icon: "M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2",
+    title: "Made for the warehouse floor",
+    desc: "Large touch targets and scanner input for receiving, adjustments and lookups.",
+  },
+  {
+    icon: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6",
+    title: "Stock you can trust",
+    desc: "Every receipt, sale, adjustment and damage record is logged as a stock movement.",
+  },
+  {
+    icon: "M3 4h2l2.4 11h11l2-8H6.2M9 20a1 1 0 1 0 2 0a1 1 0 1 0-2 0M17 20a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
+    title: "Customer self-service",
+    desc: "Customers shop, check out, track their orders and raise tickets on their own.",
+  },
+  {
+    icon: "M4 4h16v12H8l-4 4z",
+    title: "Support that closes the loop",
+    desc: "Tickets move from customer to admin to inventory staff and back with a clear resolution.",
+  },
 ];
 
 const plans = [
   {
     name: "Starter",
     desc: "For a single shop or warehouse getting organised.",
+    price: "₹[price]",
+    unit: "per month",
+    unitYearly: "per month, billed yearly",
     popular: false,
     cta: "Start free trial",
+    href: user ? "/account" : "/register",
     features: ["Up to 5 users", "Customers and orders", "Products, categories and stock", "Customer shop and portal", "Support tickets", "Email support"],
   },
   {
     name: "Growth",
     desc: "For growing distributors with a sales team and a warehouse crew.",
+    price: "₹[price]",
+    unit: "per month",
+    unitYearly: "per month, billed yearly",
     popular: true,
     cta: "Start free trial",
+    href: user ? "/account" : "/register",
     features: ["Up to 25 users", "All five roles", "Receiving, adjustments and damage records", "Stock movements history", "Sales and inventory reports", "Priority support"],
   },
   {
     name: "Enterprise",
     desc: "For larger teams that need extra control and onboarding help.",
+    price: "Custom",
+    unit: "talk to us",
+    unitYearly: "talk to us",
     popular: false,
     cta: "Contact sales",
+    href: "#faq",
     features: ["Unlimited users", "Audit log", "Two-factor sign-in for staff", "Guided data setup", "Dedicated onboarding manager", "Uptime commitment"],
   },
 ];
@@ -114,7 +182,7 @@ const faqs = [
 ];
 
 const footerCols = [
-  { title: "Product", links: ["Features", "Roles", "FAQ"] },
+  { title: "Product", links: ["Features", "Roles", "Pricing", "FAQ"] },
   { title: "Company", links: ["About", "Careers", "Contact"] },
   { title: "Resources", links: ["Help center", "Guides", "API docs"] },
   { title: "Legal", links: ["Privacy", "Terms", "Security"] },
@@ -152,14 +220,35 @@ const signupHref = user ? "/account" : "/register";
         <span>{user ? "Go to dashboard" : "Sign Up"}</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
       </a>
+      <button type="button" id="landing-menu-toggle" class="landing-nav__burger" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="landing-mobile-menu">
+        <svg class="icon-burger" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
+        <svg class="icon-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
     </header>
+
+    <!-- ================= MOBILE MENU (floating dropdown) ================= -->
+    <div id="landing-mobile-menu" class="landing-mobile-menu" hidden>
+      <nav class="landing-mobile-menu__links">
+        <a href="#roles" class="landing-mobile-link">Roles</a>
+        <a href="#features" class="landing-mobile-link">Features</a>
+        <a href="#pricing" class="landing-mobile-link">Pricing</a>
+        <a href="#faq" class="landing-mobile-link">FAQ</a>
+      </nav>
+      <div class="landing-mobile-menu__actions">
+        <a href={loginHref} class="landing-mobile-menu__btn btn-secondary">{user ? "My account" : "Log in"}</a>
+        <a href={signupHref} class="landing-mobile-menu__btn btn-primary">
+          <span>{user ? "Go to dashboard" : "Sign Up"}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+        </a>
+      </div>
+    </div>
 
     <!-- ================= HERO ================= -->
     <section class="landing-hero" id="top">
       <div class="landing-hero__inner">
         <a href="#roles" class="landing-badge">
           <span class="landing-badge__dot"></span>
-          Role-based dashboards for every login
+          <span class="landing-badge__text">Role-based dashboards for every login</span>
           <span class="landing-badge__cta">See how <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></span>
         </a>
         <h1 class="landing-hero__title">Sell, stock and ship from one calm workspace</h1>
@@ -175,17 +264,8 @@ const signupHref = user ? "/account" : "/register";
 
       <div class="landing-frame">
         <div class="landing-frame__inner">
-          <div class="landing-frame__mock" role="img" aria-label="Illustrative preview of the Admin dashboard">
-            <div class="mock-topbar"></div>
-            <div class="mock-body">
-              <div class="mock-sidebar"></div>
-              <div class="mock-main">
-                <div class="mock-kpis">
-                  <span></span><span></span><span></span><span></span>
-                </div>
-                <div class="mock-chart"></div>
-              </div>
-            </div>
+          <div class="landing-frame__scaler">
+            <HeroDashboardPreview />
           </div>
         </div>
       </div>
@@ -194,17 +274,31 @@ const signupHref = user ? "/account" : "/register";
     <!-- ================= BUILT FOR ================= -->
     <section aria-label="Built for" class="landing-industries">
       <span class="landing-industries__label">Built for businesses that move physical products</span>
-      <div class="landing-industries__list">
-        {
-          industries.map((i) => (
-            <span>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d={i.icon} />
-              </svg>
-              {i.label}
-            </span>
-          ))
-        }
+      <div class="landing-industries__carousel">
+        <div class="landing-industries__track">
+          {
+            [...industries, ...industries].map((i) => (
+              <span class="landing-industry-item">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d={i.icon} />
+                </svg>
+                {i.label}
+              </span>
+            ))
+          }
+        </div>
+        <div class="landing-industries__track" aria-hidden="true">
+          {
+            [...industries, ...industries].map((i) => (
+              <span class="landing-industry-item">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d={i.icon} />
+                </svg>
+                {i.label}
+              </span>
+            ))
+          }
+        </div>
       </div>
     </section>
 
@@ -259,13 +353,25 @@ const signupHref = user ? "/account" : "/register";
       <div class="landing-bento">
         <div class="landing-bento__row landing-bento__row--top">
           <div class="bento-card bento-card--orders">
-            <div class="bento-card__visual">
-              <svg width="100%" height="100%" viewBox="0 0 520 220" preserveAspectRatio="none" aria-hidden="true">
-                <rect x="8" y="8" width="120" height="204" rx="8" class="bento-swatch" />
-                <rect x="140" y="8" width="120" height="204" rx="8" class="bento-swatch" />
-                <rect x="272" y="8" width="120" height="204" rx="8" class="bento-swatch" />
-                <rect x="404" y="8" width="108" height="204" rx="8" class="bento-swatch" />
-              </svg>
+            <div class="bento-card__visual bento-card__visual--kanban">
+              <div class="bento-kanban">
+                {
+                  kanban.map((c) => (
+                    <div class="bento-kanban__col">
+                      <span class="bento-kanban__stage">{c.stage}</span>
+                      {c.orders.map((d) => (
+                        <div class="bento-kanban__card">
+                          <div class="bento-kanban__card-head">
+                            <span>{d.co}</span>
+                            <span>{d.amt}</span>
+                          </div>
+                          <span class={`bento-kanban__badge bento-kanban__badge--${d.status}`}>{d.stock}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                }
+              </div>
             </div>
             <div class="bento-card__text">
               <h3>Orders that know what's on the shelf</h3>
@@ -273,14 +379,18 @@ const signupHref = user ? "/account" : "/register";
             </div>
           </div>
           <div class="bento-card bento-card--reorder">
-            <div class="bento-card__visual bento-card__visual--center">
-              <svg width="220" height="150" viewBox="0 0 220 150" aria-hidden="true">
-                <line x1="8" y1="70" x2="212" y2="70" class="bento-dash" />
-                <rect x="14" y="30" width="24" height="110" rx="5" class="bento-bar" />
-                <rect x="52" y="48" width="24" height="92" rx="5" class="bento-bar" />
-                <rect x="90" y="94" width="24" height="46" rx="5" class="bento-bar bento-bar--accent" />
-                <rect x="128" y="42" width="24" height="98" rx="5" class="bento-bar" />
-                <rect x="166" y="110" width="24" height="30" rx="5" class="bento-bar bento-bar--accent" />
+            <div class="bento-card__visual bento-card__visual--reorder">
+              <svg width="300" height="200" viewBox="0 0 300 200" role="img" aria-label="Stock levels for six products, two below the reorder line">
+                <path d="M10 92H290" class="bento-reorder-line" stroke-width="2" stroke-dasharray="6 6"></path>
+                <text x="290" y="84" text-anchor="end" class="bento-reorder-label">Reorder level</text>
+                <rect x="20" y="40" width="30" height="160" rx="6" class="bento-bar"></rect>
+                <rect x="66" y="64" width="30" height="136" rx="6" class="bento-bar"></rect>
+                <rect x="112" y="128" width="30" height="72" rx="6" class="bento-bar bento-bar--accent"></rect>
+                <rect x="158" y="56" width="30" height="144" rx="6" class="bento-bar"></rect>
+                <rect x="204" y="150" width="30" height="50" rx="6" class="bento-bar bento-bar--accent"></rect>
+                <rect x="250" y="72" width="30" height="128" rx="6" class="bento-bar"></rect>
+                <rect x="96" y="100" width="62" height="22" rx="6" class="bento-restock-badge"></rect>
+                <text x="127" y="115" text-anchor="middle" class="bento-restock-text">Restock</text>
               </svg>
             </div>
             <div class="bento-card__text">
@@ -297,8 +407,9 @@ const signupHref = user ? "/account" : "/register";
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M7 12h10"></path></svg>
                 Scan barcode or type SKU
               </div>
-              <div class="mock-scan-row"><span class="mock-scan-dot">✓</span><span>LED panel 12W × 4</span><span class="mock-scan-bin">A-03-2</span></div>
-              <div class="mock-scan-row"><span class="mock-scan-dot">✓</span><span>Steel hinge 4" × 20</span><span class="mock-scan-bin">A-02-6</span></div>
+              <div class="mock-scan-row"><span class="mock-scan-dot"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg></span><span>LED panel 12W × 4</span><span class="mock-scan-bin">A-03-2</span></div>
+              <div class="mock-scan-row"><span class="mock-scan-dot"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg></span><span>Steel hinge 4" × 20</span><span class="mock-scan-bin">A-02-6</span></div>
+              <div class="mock-scan-row"><span class="mock-scan-dot"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg></span><span>Cable tie 200mm × 2</span><span class="mock-scan-bin">C-01-1</span></div>
             </div>
             <div class="bento-card__text bento-card__text--small">
               <h3>Scan-first warehouse</h3>
@@ -309,7 +420,7 @@ const signupHref = user ? "/account" : "/register";
             <div class="bento-card__visual bento-card__visual--center">
               <div class="mock-ticket">
                 <div class="mock-ticket__head"><span>Ticket TK-1191</span><span class="mock-pill">In Progress</span></div>
-                <span class="mock-ticket__sub">Damaged items · assigned to inventory staff</span>
+                <span class="mock-ticket__sub">Damaged items · Meera Traders · assigned to inventory staff</span>
                 <div class="mock-ticket__actions"><span>Reply</span><span>Assign</span></div>
               </div>
             </div>
@@ -350,7 +461,7 @@ const signupHref = user ? "/account" : "/register";
           benefits.map((b) => (
             <div class="landing-benefit">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M6 11h12v10H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3" />
+                <path d={b.icon} />
               </svg>
               <span class="landing-benefit__title">{b.title}</span>
               <span class="landing-benefit__desc">{b.desc}</span>
@@ -381,9 +492,9 @@ const signupHref = user ? "/account" : "/register";
                 <span class="landing-plan__desc">{p.desc}</span>
               </div>
               <div class="landing-plan__price">
-                <span class="landing-plan__amount">₹[price]</span>
-                <span class="landing-plan__unit" data-unit-monthly="per month" data-unit-yearly="per month, billed yearly">
-                  per month
+                <span class="landing-plan__amount">{p.price}</span>
+                <span class="landing-plan__unit" data-unit-monthly={p.unit} data-unit-yearly={p.unitYearly}>
+                  {p.unit}
                 </span>
               </div>
               <div class="landing-plan__features">
@@ -396,7 +507,7 @@ const signupHref = user ? "/account" : "/register";
                   </span>
                 ))}
               </div>
-              <a href={p.cta === "Contact sales" ? "#faq" : signupHref} class={p.popular ? "btn-primary" : "btn-muted"}>
+              <a href={p.href} class={p.popular ? "btn-primary" : "btn-muted"}>
                 {p.cta}
               </a>
             </div>
@@ -491,6 +602,8 @@ const signupHref = user ? "/account" : "/register";
     --primary-fg: #fafafa;
     --success-bg: #ecfdf3;
     --success-fg: #15803d;
+    --warn-bg: #fef3e2;
+    --warn-fg: #9a3412;
     --danger-bg: #feecec;
     --danger-fg: #b91c1c;
     --info-bg: #eef2ff;
@@ -498,6 +611,7 @@ const signupHref = user ? "/account" : "/register";
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     --accent: #2b50e0;
     --accent-soft: rgba(43, 80, 224, 0.1);
+    --chart2: #d9731f;
     color-scheme: light;
 
     background: var(--shell);
@@ -521,6 +635,8 @@ const signupHref = user ? "/account" : "/register";
     --primary-fg: #171717;
     --success-bg: #0f2a1c;
     --success-fg: #4ade80;
+    --warn-bg: #2e1f0e;
+    --warn-fg: #fdba74;
     --danger-bg: #2d1414;
     --danger-fg: #f87171;
     --info-bg: #1e2240;
@@ -528,6 +644,7 @@ const signupHref = user ? "/account" : "/register";
     --shadow: none;
     --accent: #6b8afb;
     --accent-soft: rgba(107, 138, 251, 0.16);
+    --chart2: #e8894a;
     color-scheme: dark;
   }
 
@@ -641,6 +758,110 @@ const signupHref = user ? "/account" : "/register";
     white-space: nowrap;
   }
 
+  /* Burger toggle button */
+  .landing-nav__burger {
+    display: none;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--input);
+    background: var(--card);
+    color: var(--fg);
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .landing-nav__burger .icon-close {
+    display: none;
+  }
+  .landing-nav__burger[aria-expanded="true"] .icon-burger {
+    display: none;
+  }
+  .landing-nav__burger[aria-expanded="true"] .icon-close {
+    display: block;
+  }
+
+  /* Mobile menu dropdown */
+  .landing-mobile-menu {
+    display: none;
+    position: fixed;
+    top: 84px;
+    left: 16px;
+    right: 16px;
+    z-index: 30;
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+    flex-direction: column;
+    gap: 16px;
+    animation: menu-slide-down 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes menu-slide-down {
+    from {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .landing-mobile-menu:not([hidden]) {
+    display: flex;
+  }
+  .landing-mobile-menu__links {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .landing-mobile-link {
+    height: 42px;
+    padding: 0 14px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    font-size: 15px;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--fg);
+    transition: background-color 0.15s ease;
+  }
+  .landing-mobile-link:hover,
+  .landing-mobile-link:active {
+    background: var(--muted);
+  }
+  .landing-mobile-menu__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .landing-mobile-menu__btn {
+    width: 100%;
+    height: 44px;
+  }
+
+  @media (max-width: 768px) {
+    .landing-nav__links,
+    .landing-nav__login,
+    .landing-nav__signup {
+      display: none;
+    }
+    .landing-nav__burger {
+      display: flex;
+    }
+    .landing-nav {
+      max-width: calc(100% - 32px);
+      margin: 0 16px;
+    }
+  }
+
   /* ---------- hero ---------- */
   .landing-hero {
     box-sizing: border-box;
@@ -659,25 +880,44 @@ const signupHref = user ? "/account" : "/register";
     padding: 0 20px;
     background: var(--panel);
     border-radius: 24px;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   .landing-badge {
     height: 32px;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     padding: 0 5px 0 12px;
     border-radius: 999px;
     border: 1px solid var(--border);
     background: var(--card);
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 10px;
     font-size: 13px;
     text-decoration: none;
     color: var(--fg2);
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .landing-badge:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   }
   .landing-badge__dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: var(--accent);
+    flex-shrink: 0;
+  }
+  .landing-badge__text {
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .landing-badge__cta {
     height: 24px;
@@ -689,6 +929,44 @@ const signupHref = user ? "/account" : "/register";
     display: flex;
     align-items: center;
     gap: 4px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    .landing-hero {
+      padding: 32px 12px 0;
+    }
+    .landing-hero__inner {
+      padding: 0 8px;
+      width: 100%;
+    }
+    .landing-badge {
+      height: 30px;
+      padding: 0 4px 0 8px;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .landing-badge__cta {
+      height: 22px;
+      padding: 0 8px;
+      font-size: 11px;
+    }
+  }
+  @media (max-width: 380px) {
+    .landing-badge {
+      font-size: 11px;
+      padding: 0 3px 0 6px;
+      gap: 5px;
+    }
+    .landing-badge__cta {
+      height: 20px;
+      padding: 0 6px;
+      font-size: 10px;
+    }
+    .landing-badge__dot {
+      width: 6px;
+      height: 6px;
+    }
   }
   .landing-hero__title {
     margin: 28px 0 0;
@@ -730,17 +1008,32 @@ const signupHref = user ? "/account" : "/register";
     justify-content: center;
     gap: 8px;
     box-sizing: border-box;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, opacity 0.2s ease;
   }
   .btn-primary {
     background: var(--primary);
     color: var(--primary-fg);
     border: 0;
   }
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  }
   .btn-secondary,
   .btn-outline {
     border: 1px solid var(--input);
     background: var(--card);
     color: var(--fg);
+  }
+  .btn-secondary:hover,
+  .btn-outline:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  }
+  .btn-primary:active,
+  .btn-secondary:active,
+  .btn-outline:active {
+    transform: translateY(0);
   }
   .btn-muted {
     background: var(--muted);
@@ -757,83 +1050,118 @@ const signupHref = user ? "/account" : "/register";
     border: 1px solid var(--border);
     background: var(--muted);
     box-shadow: 0 30px 80px rgba(0, 0, 0, 0.12);
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.5s ease;
+    animation: hero-frame-appear 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: transform;
   }
+  .landing-frame:hover {
+    transform: translateY(-6px) scale(1.008);
+    box-shadow: 0 42px 100px rgba(0, 0, 0, 0.18);
+  }
+  @keyframes hero-frame-appear {
+    from {
+      opacity: 0;
+      transform: translateY(28px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
   .landing-frame__inner {
+    width: 100%;
+    aspect-ratio: 1440 / 1000;
     border-radius: 12px;
     overflow: hidden;
     border: 1px solid var(--border);
     background: var(--panel);
+    position: relative;
   }
-  .landing-frame__mock {
-    aspect-ratio: 1440 / 900;
-    display: flex;
-    flex-direction: column;
+  .landing-frame__scaler {
+    width: 1440px;
+    height: 1000px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: top left;
+    transform: scale(var(--frame-scale, 0.7));
+    transition: transform 0.1s ease-out;
   }
-  .mock-topbar {
-    height: 8%;
-    background: var(--card);
-    border-bottom: 1px solid var(--border);
-  }
-  .mock-body {
-    flex-grow: 1;
-    display: flex;
-  }
-  .mock-sidebar {
-    width: 17%;
-    background: var(--card);
-    border-right: 1px solid var(--border);
-  }
-  .mock-main {
-    flex-grow: 1;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .mock-kpis {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    height: 64px;
-  }
-  .mock-kpis span {
-    border-radius: 8px;
-    background: var(--card);
-    border: 1px solid var(--border);
-  }
-  .mock-chart {
-    flex-grow: 1;
-    border-radius: 8px;
-    background: var(--card);
-    border: 1px solid var(--border);
+  @media (min-width: 1032px) {
+    .landing-frame__scaler {
+      transform: scale(var(--frame-scale, 0.7));
+    }
   }
 
-  /* ---------- industries ---------- */
+  /* ---------- industries (infinite carousel) ---------- */
   .landing-industries {
-    padding: 48px 24px;
+    padding: 48px 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 28px;
+    width: 100%;
   }
   .landing-industries__label {
     font-size: 15px;
     color: var(--muted-fg);
+    text-align: center;
+    padding: 0 24px;
   }
-  .landing-industries__list {
+  .landing-industries__carousel {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 32px;
-    color: var(--fg2);
+    overflow: hidden;
+    user-select: none;
+    gap: 48px;
+    width: 100%;
+    max-width: 100%;
+    mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
   }
-  .landing-industries__list span {
+  .landing-industries__track {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    animation: scroll-industries 35s linear infinite;
+    will-change: transform;
+  }
+  .landing-industries__carousel:hover .landing-industries__track {
+    animation-play-state: paused;
+  }
+  .landing-industry-item {
     display: flex;
     align-items: center;
     gap: 10px;
     font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.01em;
+    color: var(--fg2);
+    white-space: nowrap;
+    transition: color 0.2s ease, transform 0.2s ease;
+    cursor: default;
+  }
+  .landing-industry-item:hover {
+    color: var(--fg);
+    transform: scale(1.04);
+  }
+  .landing-industry-item svg {
+    flex-shrink: 0;
+  }
+  @keyframes scroll-industries {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(calc(-100% - 48px));
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .landing-industries__track {
+      animation: none;
+    }
   }
 
   /* ---------- shared section head ---------- */
@@ -884,11 +1212,15 @@ const signupHref = user ? "/account" : "/register";
   .landing-roles {
     width: 100%;
     max-width: 1120px;
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 16px;
+    justify-content: center;
   }
   .landing-role-card {
+    flex: 1 1 200px;
+    min-width: 200px;
+    max-width: 100%;
     padding: 20px;
     border: 1px solid var(--border);
     border-radius: 14px;
@@ -897,6 +1229,19 @@ const signupHref = user ? "/account" : "/register";
     display: flex;
     flex-direction: column;
     gap: 14px;
+    box-sizing: border-box;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  @media (max-width: 640px) {
+    .landing-role-card {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+  }
+  .landing-role-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.08);
+    border-color: var(--accent);
   }
   .landing-role-card__icon {
     width: 40px;
@@ -957,14 +1302,26 @@ const signupHref = user ? "/account" : "/register";
     gap: 16px;
   }
   .landing-bento__row--top {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
+    display: flex;
+    flex-wrap: wrap;
     gap: 16px;
   }
+  .landing-bento__row--top .bento-card--orders {
+    flex: 2 1 540px;
+    min-width: 280px;
+  }
+  .landing-bento__row--top .bento-card--reorder {
+    flex: 1 1 300px;
+    min-width: 280px;
+  }
   .landing-bento__row--bottom {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 16px;
+  }
+  .landing-bento__row--bottom .bento-card {
+    flex: 1 1 300px;
+    min-width: 280px;
   }
   .bento-card {
     border: 1px solid var(--border);
@@ -974,6 +1331,21 @@ const signupHref = user ? "/account" : "/register";
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  @media (max-width: 640px) {
+    .landing-bento__row--top .bento-card--orders,
+    .landing-bento__row--top .bento-card--reorder,
+    .landing-bento__row--bottom .bento-card {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+  }
+  .bento-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.08);
+    border-color: var(--accent);
   }
   .bento-card__visual {
     flex-grow: 1;
@@ -981,6 +1353,7 @@ const signupHref = user ? "/account" : "/register";
     background: var(--shell);
     border-bottom: 1px solid var(--border);
     display: flex;
+    box-sizing: border-box;
   }
   .bento-card__visual--center {
     align-items: center;
@@ -995,6 +1368,115 @@ const signupHref = user ? "/account" : "/register";
   .bento-card__visual--column {
     justify-content: center;
   }
+  .bento-card__visual--kanban {
+    padding: 24px 24px 0;
+    box-sizing: border-box;
+    align-items: flex-start;
+  }
+  .bento-kanban {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    width: 100%;
+  }
+  .bento-kanban__col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .bento-kanban__stage {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-fg);
+  }
+  .bento-kanban__card {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .bento-kanban__card-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .bento-kanban__badge {
+    align-self: flex-start;
+    padding: 1px 7px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .bento-kanban__badge--ok {
+    background: var(--success-bg);
+    color: var(--success-fg);
+  }
+  .bento-kanban__badge--low {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+  }
+  .bento-kanban__badge--out {
+    background: var(--danger-bg);
+    color: var(--danger-fg);
+  }
+  .bento-card__visual--reorder {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 28px 24px 0;
+    box-sizing: border-box;
+  }
+  .bento-card__visual--reorder svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+  .bento-reorder-line {
+    stroke: var(--chart2);
+  }
+  .bento-reorder-label {
+    font-size: 11px;
+    font-family: "Geist", system-ui, sans-serif;
+    fill: var(--muted-fg);
+  }
+  .bento-restock-badge {
+    fill: var(--primary);
+  }
+  .bento-restock-text {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: "Geist", system-ui, sans-serif;
+    fill: var(--primary-fg);
+  }
+
+  @media (max-width: 640px) {
+    .bento-card__visual--kanban {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      display: block;
+    }
+    .bento-kanban {
+      display: grid;
+      grid-template-columns: repeat(4, 130px);
+      gap: 10px;
+      width: max-content;
+    }
+    .bento-card__visual--pad {
+      padding: 16px;
+    }
+    .mock-ticket {
+      margin: 16px auto;
+      max-width: calc(100% - 32px);
+    }
+  }
+
   .bento-swatch {
     fill: var(--input);
   }
@@ -1014,6 +1496,8 @@ const signupHref = user ? "/account" : "/register";
     display: flex;
     flex-direction: column;
     gap: 6px;
+    box-sizing: border-box;
+    text-align: left;
   }
   .bento-card__text--small {
     padding: 18px 22px 22px;
@@ -1035,6 +1519,14 @@ const signupHref = user ? "/account" : "/register";
   }
   .bento-card__text--small p {
     font-size: 14px;
+  }
+  @media (max-width: 640px) {
+    .bento-card__text {
+      padding: 16px 16px 20px;
+    }
+    .bento-card__text--small {
+      padding: 16px 16px 20px;
+    }
   }
 
   .mock-scan-input {
@@ -1181,6 +1673,7 @@ const signupHref = user ? "/account" : "/register";
     grid-template-columns: repeat(3, minmax(0, 1fr));
     border-top: 1px solid var(--border);
     border-left: 1px solid var(--border);
+    box-sizing: border-box;
   }
   .landing-benefit {
     padding: 36px 32px;
@@ -1189,6 +1682,11 @@ const signupHref = user ? "/account" : "/register";
     display: flex;
     flex-direction: column;
     gap: 12px;
+    box-sizing: border-box;
+    transition: background-color 0.25s ease, transform 0.25s ease;
+  }
+  .landing-benefit:hover {
+    background-color: var(--panel);
   }
   .landing-benefit svg {
     color: var(--fg2);
@@ -1203,6 +1701,44 @@ const signupHref = user ? "/account" : "/register";
     font-size: 15px;
     line-height: 1.55;
     color: var(--muted-fg);
+  }
+  @media (max-width: 768px) {
+    .landing-benefits {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .landing-benefit {
+      padding: 24px 18px;
+      gap: 10px;
+    }
+    .landing-benefit__title {
+      font-size: 16px;
+      margin-top: 4px;
+    }
+    .landing-benefit__desc {
+      font-size: 13.5px;
+      line-height: 1.5;
+    }
+  }
+  @media (max-width: 480px) {
+    .landing-benefits {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .landing-benefit {
+      padding: 18px 12px;
+      gap: 8px;
+    }
+    .landing-benefit svg {
+      width: 24px;
+      height: 24px;
+    }
+    .landing-benefit__title {
+      font-size: 15px;
+      margin-top: 2px;
+    }
+    .landing-benefit__desc {
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
   }
 
   /* ---------- pricing ---------- */
@@ -1256,6 +1792,11 @@ const signupHref = user ? "/account" : "/register";
     display: flex;
     flex-direction: column;
     gap: 24px;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+  }
+  .landing-plan:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.12);
   }
   .landing-plan--popular {
     border: 1.5px solid var(--accent);
@@ -1559,4 +2100,52 @@ const signupHref = user ? "/account" : "/register";
 
   monthlyBtn?.addEventListener("click", () => setPeriod("monthly"));
   yearlyBtn?.addEventListener("click", () => setPeriod("yearly"));
+
+  const frameInner = document.querySelector<HTMLElement>(".landing-frame__inner");
+  if (frameInner) {
+    const updateFrameScale = () => {
+      const scale = frameInner.clientWidth / 1440;
+      frameInner.style.setProperty("--frame-scale", String(scale));
+    };
+    updateFrameScale();
+    window.addEventListener("resize", updateFrameScale, { passive: true });
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(updateFrameScale).observe(frameInner);
+    }
+  }
+
+  const menuToggle = document.getElementById("landing-menu-toggle");
+  const mobileMenu = document.getElementById("landing-mobile-menu");
+
+  function toggleMobileMenu(open?: boolean) {
+    if (!menuToggle || !mobileMenu) return;
+    const isExpanded = menuToggle.getAttribute("aria-expanded") === "true";
+    const shouldOpen = open !== undefined ? open : !isExpanded;
+    menuToggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+    if (shouldOpen) {
+      mobileMenu.removeAttribute("hidden");
+    } else {
+      mobileMenu.setAttribute("hidden", "");
+    }
+  }
+
+  menuToggle?.addEventListener("click", () => toggleMobileMenu());
+
+  mobileMenu?.querySelectorAll("a").forEach((link) => {
+    link.addEventListener("click", () => toggleMobileMenu(false));
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!mobileMenu || mobileMenu.hasAttribute("hidden")) return;
+    const target = e.target as HTMLElement;
+    if (!mobileMenu.contains(target) && !menuToggle?.contains(target)) {
+      toggleMobileMenu(false);
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      toggleMobileMenu(false);
+    }
+  });
 </script>

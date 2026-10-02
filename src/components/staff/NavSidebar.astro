@@ -227,6 +227,7 @@ const ADMIN_NAV = [
   { isHeader: false, label: "Stock", href: "/admin/stock", disabled: false, icon: "M4 9h16l-1-5H5zM5 9v11h14V9M9 20v-6h6v6" },
   { isHeader: true, label: "Manage" },
   { isHeader: false, label: "Support tickets", href: "/admin/tickets", disabled: false, icon: "M4 4h16v12H8l-4 4z" },
+  { isHeader: false, label: "Approvals", href: "/admin/approvals", disabled: false, icon: "M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0" },
   { isHeader: false, label: "Team", href: "/admin/staff", disabled: false, icon: "M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2" },
   { isHeader: false, label: "Reports", href: "/admin/reports", disabled: false, icon: "M4 20V10M10 20V4M16 20v-7M2 20h20" },
   { isHeader: false, label: "Settings", href: "/admin/settings", disabled: false, icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" },
@@ -248,11 +249,12 @@ const ADMIN_NAV = [
 const SUPER_NAV = [
   { isHeader: false, label: "Overview", href: "/super", disabled: false, icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" },
   { isHeader: true, label: "Access" },
-  { isHeader: false, label: "Users", href: "", disabled: true, icon: "M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2" },
-  { isHeader: false, label: "Roles & permissions", href: "", disabled: true, icon: "M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6zM9 12l2 2 4-4" },
+  { isHeader: false, label: "Users", href: "/super/users", disabled: false, icon: "M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2" },
+  { isHeader: false, label: "Roles & permissions", href: "/super/roles", disabled: false, icon: "M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6zM9 12l2 2 4-4" },
+  { isHeader: false, label: "Approvals", href: "/super/approvals", disabled: false, icon: "M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0" },
   { isHeader: true, label: "System" },
-  { isHeader: false, label: "Audit log", href: "", disabled: true, icon: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
-  { isHeader: false, label: "Settings", href: "", disabled: true, icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" },
+  { isHeader: false, label: "Audit log", href: "/super/audit-log", disabled: false, icon: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
+  { isHeader: false, label: "Settings", href: "/super/settings", disabled: false, icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" },
 ] as const;
 
 const NAV = role === "admin" ? ADMIN_NAV : role === "inventory" ? INVENTORY_NAV : role === "super" ? SUPER_NAV : SALES_NAV;

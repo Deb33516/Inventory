@@ -1,0 +1,1033 @@
+---
+// Renders the literal Admin Dashboard artboard (Admin.dc.html + NavSidebar.dc.html)
+// scaled inside the hero product frame, adapting automatically to light and dark themes.
+---
+
+<div class="dash-preview" aria-hidden="true">
+  <!-- NavSidebar (248px) -->
+  <aside class="dash-sidebar">
+    <div class="dash-sidebar__brand">
+      <div class="dash-sidebar__logo">
+        <span class="dash-sidebar__dot"></span>
+      </div>
+      <span class="dash-sidebar__title">Inventory</span>
+      <span class="dash-sidebar__badge">ADMIN</span>
+    </div>
+
+    <div class="dash-nav-group">
+      <span class="dash-nav-header">MAIN</span>
+      <div class="dash-nav-item is-active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"></path></svg>
+        <span>Overview</span>
+      </div>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h8l5 5v15H6zM14 2v5h5"></path></svg>
+        <span>Orders</span>
+      </div>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9"></path></svg>
+        <span>Products</span>
+      </div>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5zM2 13l10 5 10-5"></path></svg>
+        <span>Stock movements</span>
+      </div>
+    </div>
+
+    <div class="dash-nav-group">
+      <span class="dash-nav-header">CRM</span>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2"></path></svg>
+        <span>Customers</span>
+      </div>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0"></path></svg>
+        <span>Sales staff</span>
+      </div>
+    </div>
+
+    <div class="dash-nav-group">
+      <span class="dash-nav-header">OPERATIONS</span>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h12v10H2zM14 10h4l4 3v3h-8M4 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0"></path></svg>
+        <span>Restocks</span>
+      </div>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"></path></svg>
+        <span>Damage & returns</span>
+      </div>
+    </div>
+
+    <div class="dash-nav-group">
+      <span class="dash-nav-header">SUPPORT</span>
+      <div class="dash-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4z"></path></svg>
+        <span class="dash-nav-flex">Tickets</span>
+        <span class="dash-badge-warn">5</span>
+      </div>
+    </div>
+
+    <div class="dash-sidebar__spacer"></div>
+
+    <div class="dash-user">
+      <div class="dash-user__avatar">RA</div>
+      <div class="dash-user__meta">
+        <span class="dash-user__name">Rohan Agarwal</span>
+        <span class="dash-user__role">Administrator</span>
+      </div>
+      <div class="dash-user__action">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"></path></svg>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Container -->
+  <div class="dash-main-wrap">
+    <!-- Topbar -->
+    <header class="dash-topbar">
+      <div class="dash-topbar__btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18"></path></svg>
+      </div>
+      <div class="dash-topbar__sep"></div>
+      <div class="dash-breadcrumb">
+        <span>Dashboard</span>
+        <span class="dash-breadcrumb__sep">/</span>
+        <span class="dash-breadcrumb__curr">Overview</span>
+      </div>
+      <div class="dash-topbar__spacer"></div>
+      <div class="dash-search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
+        <span>Search customers, orders, SKUs…</span>
+        <span class="dash-kbd">⌘K</span>
+      </div>
+      <div class="dash-bell">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4zM10 21h4"></path></svg>
+        <span class="dash-bell__dot"></span>
+      </div>
+      <div class="dash-new-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+        <span>New</span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="dash-content">
+      <!-- Page Header -->
+      <div class="dash-page-head">
+        <div class="dash-page-head__title">
+          <h2>Business overview</h2>
+          <span>All stock locations · September 2026</span>
+        </div>
+        <div class="dash-page-head__actions">
+          <div class="dash-period-toggle">
+            <span>Week</span>
+            <span class="is-active">Month</span>
+            <span>Quarter</span>
+            <span>Year</span>
+          </div>
+          <div class="dash-btn-export">Export</div>
+        </div>
+      </div>
+
+      <!-- KPIs (4 cards) -->
+      <div class="dash-kpis">
+        <div class="dash-kpi">
+          <span class="dash-kpi__label">Revenue this month</span>
+          <div class="dash-kpi__body">
+            <div class="dash-kpi__nums">
+              <span class="dash-kpi__val">₹38.6L</span>
+              <span class="dash-kpi__sub"><span class="dash-up">▲ 8.2%</span> vs Aug</span>
+            </div>
+            <svg width="96" height="36" viewBox="0 0 96 36" class="dash-sparkline">
+              <path d="M0 30 L12 27 L24 29 L36 22 L48 24 L60 16 L72 18 L84 9 L96 4" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </div>
+        </div>
+
+        <div class="dash-kpi">
+          <span class="dash-kpi__label">Open orders</span>
+          <div class="dash-kpi__body">
+            <div class="dash-kpi__nums">
+              <span class="dash-kpi__val">46 orders</span>
+              <span class="dash-kpi__sub">₹18.6L · 12 to ship this week</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-kpi">
+          <span class="dash-kpi__label">Inventory value</span>
+          <div class="dash-kpi__body">
+            <div class="dash-kpi__nums">
+              <span class="dash-kpi__val">₹92.4L</span>
+              <span class="dash-kpi__sub">3,418 SKUs · 4 categories</span>
+            </div>
+            <svg width="96" height="36" viewBox="0 0 96 36" class="dash-sparkline">
+              <path d="M0 12 L12 14 L24 11 L36 15 L48 13 L60 17 L72 15 L84 18 L96 16" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </div>
+        </div>
+
+        <div class="dash-kpi">
+          <div class="dash-kpi__top">
+            <span class="dash-kpi__label">Low-stock items</span>
+            <span class="dash-badge-warn">Needs action</span>
+          </div>
+          <div class="dash-kpi__nums">
+            <span class="dash-kpi__val">17</span>
+            <span class="dash-kpi__sub">4 out of stock · 3 restocks due</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts Row -->
+      <div class="dash-charts">
+        <!-- Sales vs Target Chart -->
+        <section class="dash-chart-card">
+          <div class="dash-chart-head">
+            <div class="dash-chart-head__text">
+              <h3>Sales vs target</h3>
+              <span>Last 12 months · ₹ lakh</span>
+            </div>
+            <div class="dash-chart-legend">
+              <span class="dash-legend-item"><span class="dash-legend-line dash-legend-line--rev"></span>Revenue</span>
+              <span class="dash-legend-item"><span class="dash-legend-line dash-legend-line--tgt"></span>Target</span>
+            </div>
+          </div>
+          <svg width="700" height="222" viewBox="0 0 700 222" class="dash-sales-svg">
+            <g class="dash-grid-lines" stroke="var(--grid)" stroke-width="1"><path d="M40 10H700M40 55H700M40 100H700M40 145H700"></path></g>
+            <path d="M40 190H700" stroke="var(--input)" stroke-width="1"></path>
+            <g font-size="11" fill="var(--muted-fg)" text-anchor="end" font-family="'Geist', sans-serif">
+              <text x="30" y="14">40</text><text x="30" y="59">30</text><text x="30" y="104">20</text><text x="30" y="149">10</text><text x="30" y="194">0</text>
+            </g>
+            <path d="M40 91 L100 82 L160 86.5 L220 73 L280 77.5 L340 55 L400 64 L460 50.5 L520 41.5 L580 46 L640 29.4 L700 16.3 L700 190 L40 190 Z" fill="var(--accent)" fill-opacity="0.10"></path>
+            <path d="M40 82 L100 82 L160 77.5 L220 73 L280 68.5 L340 64 L400 59.5 L460 55 L520 50.5 L580 46 L640 37 L700 28" fill="none" stroke="var(--chart2, #D9731F)" stroke-width="2" stroke-dasharray="5 5" stroke-linecap="round"></path>
+            <path d="M40 91 L100 82 L160 86.5 L220 73 L280 77.5 L340 55 L400 64 L460 50.5 L520 41.5 L580 46 L640 29.4 L700 16.3" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>
+            <circle cx="700" cy="16.3" r="5" fill="var(--primary-fg)" stroke="var(--accent)" stroke-width="2.5"></circle>
+            <g font-family="'Geist', sans-serif"><rect x="590" y="0" width="92" height="26" rx="6" fill="var(--fg)"></rect><text x="636" y="17" text-anchor="middle" font-size="12" font-weight="600" fill="var(--primary-fg)">Sep · ₹38.6L</text></g>
+            <g font-size="11" fill="var(--muted-fg)" text-anchor="middle" font-family="'Geist', sans-serif">
+              <text x="40" y="212">Oct</text><text x="100" y="212">Nov</text><text x="160" y="212">Dec</text><text x="220" y="212">Jan</text><text x="280" y="212">Feb</text><text x="340" y="212">Mar</text><text x="400" y="212">Apr</text><text x="460" y="212">May</text><text x="520" y="212">Jun</text><text x="580" y="212">Jul</text><text x="640" y="212">Aug</text><text x="690" y="212">Sep</text>
+            </g>
+          </svg>
+        </section>
+
+        <!-- Support Queue -->
+        <section class="dash-queue-card">
+          <div class="dash-queue-head">
+            <div class="dash-queue-head__text">
+              <h3>Support queue</h3>
+              <span>5 active tickets · by status</span>
+            </div>
+            <span class="dash-queue-link">Open queue</span>
+          </div>
+          <div class="dash-queue-bars">
+            <div class="dash-queue-item">
+              <div class="dash-queue-item__row"><span>Open</span><span><strong>2</strong> <em>tickets</em></span></div>
+              <div class="dash-queue-item__bar"><div class="dash-bar-fill" style="width: 66%; background: var(--accent);"></div></div>
+            </div>
+            <div class="dash-queue-item">
+              <div class="dash-queue-item__row"><span>In Progress</span><span><strong>2</strong> <em>tickets</em></span></div>
+              <div class="dash-queue-item__bar"><div class="dash-bar-fill" style="width: 66%; background: var(--accent);"></div></div>
+            </div>
+            <div class="dash-queue-item">
+              <div class="dash-queue-item__row"><span>Waiting</span><span><strong>1</strong> <em>ticket</em></span></div>
+              <div class="dash-queue-item__bar"><div class="dash-bar-fill" style="width: 33%; background: var(--accent);"></div></div>
+            </div>
+            <div class="dash-queue-item">
+              <div class="dash-queue-item__row"><span>Resolved this week</span><span><strong>3</strong> <em>this week</em></span></div>
+              <div class="dash-queue-item__bar"><div class="dash-bar-fill" style="width: 100%; background: var(--success-fg);"></div></div>
+            </div>
+          </div>
+          <div class="dash-queue-foot">
+            <span class="dash-dot-info"></span>
+            <span class="dash-queue-foot__text"><strong>TK-1191</strong> assigned to Rahul Singh</span>
+            <span class="dash-queue-foot__date">28 Sep</span>
+          </div>
+        </section>
+      </div>
+
+      <!-- Bottom Row (Stock alerts + Sales reps) -->
+      <div class="dash-bottom-row">
+        <!-- Stock alerts table -->
+        <section class="dash-alerts-card">
+          <div class="dash-alerts-head">
+            <h3>Stock alerts</h3>
+            <span class="dash-alerts-link">View all 17</span>
+          </div>
+          <div class="dash-alerts-table-head">
+            <span>SKU</span><span>Product</span><span>Location</span><span class="dash-num">On hand</span><span class="dash-num">Reorder at</span><span>Status</span><span></span>
+          </div>
+          <div class="dash-alerts-table-body">
+            <div class="dash-alerts-row">
+              <span class="dash-sku">SKU-2210</span><span>LED panel 18W</span><span class="dash-wh">A-04-1</span><span class="dash-num"><strong>0</strong></span><span class="dash-num">20</span>
+              <span><span class="dash-status-out">Out</span></span>
+              <span class="dash-restock-link">Request restock</span>
+            </div>
+            <div class="dash-alerts-row">
+              <span class="dash-sku">SKU-1190</span><span>Door handle set</span><span class="dash-wh">B-02-4</span><span class="dash-num"><strong>6</strong></span><span class="dash-num">25</span>
+              <span><span class="dash-status-low">Low</span></span>
+              <span class="dash-restock-link">Request restock</span>
+            </div>
+            <div class="dash-alerts-row">
+              <span class="dash-sku">SKU-1042</span><span>Steel hinge 4"</span><span class="dash-wh">B-01-3</span><span class="dash-num"><strong>18</strong></span><span class="dash-num">50</span>
+              <span><span class="dash-status-low">Low</span></span>
+              <span class="dash-restock-link">Request restock</span>
+            </div>
+            <div class="dash-alerts-row">
+              <span class="dash-sku">SKU-0876</span><span>PVC pipe 1"</span><span class="dash-wh">C-05-2</span><span class="dash-num"><strong>34</strong></span><span class="dash-num">60</span>
+              <span><span class="dash-status-low">Low</span></span>
+              <span class="dash-restock-link">Request restock</span>
+            </div>
+            <div class="dash-alerts-row">
+              <span class="dash-sku">SKU-3302</span><span>Cable tie 200mm</span><span class="dash-wh">C-01-1</span><span class="dash-num"><strong>120</strong></span><span class="dash-num">150</span>
+              <span><span class="dash-status-low">Low</span></span>
+              <span class="dash-restock-link">Request restock</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Sales team vs target -->
+        <section class="dash-reps-card">
+          <div class="dash-reps-head">
+            <h3>Sales team vs target</h3>
+            <span>September</span>
+          </div>
+          <div class="dash-reps-list">
+            <div class="dash-rep-row">
+              <div class="dash-rep-avatar">PS</div>
+              <div class="dash-rep-info">
+                <div class="dash-rep-meta"><span>Priya Shah</span><span><strong>₹11.2L</strong> · 88%</span></div>
+                <div class="dash-rep-bar"><div class="dash-bar-fill" style="width: 88%; background: var(--accent);"></div></div>
+              </div>
+            </div>
+            <div class="dash-rep-row">
+              <div class="dash-rep-avatar">AM</div>
+              <div class="dash-rep-info">
+                <div class="dash-rep-meta"><span>Arjun Mehta</span><span><strong>₹9.8L</strong> · 72%</span></div>
+                <div class="dash-rep-bar"><div class="dash-bar-fill" style="width: 72%; background: var(--accent);"></div></div>
+              </div>
+            </div>
+            <div class="dash-rep-row">
+              <div class="dash-rep-avatar">NI</div>
+              <div class="dash-rep-info">
+                <div class="dash-rep-meta"><span>Neha Iyer</span><span><strong>₹8.4L</strong> · 64%</span></div>
+                <div class="dash-rep-bar"><div class="dash-bar-fill" style="width: 64%; background: var(--accent);"></div></div>
+              </div>
+            </div>
+            <div class="dash-rep-row">
+              <div class="dash-rep-avatar">KR</div>
+              <div class="dash-rep-info">
+                <div class="dash-rep-meta"><span>Kabir Rao</span><span><strong>₹7.1L</strong> · 55%</span></div>
+                <div class="dash-rep-bar"><div class="dash-bar-fill" style="width: 55%; background: var(--accent);"></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+
+<style>
+  .dash-preview {
+    width: 1440px;
+    height: 1000px;
+    display: flex;
+    background: var(--shell);
+    color: var(--fg);
+    font-family: 'Geist', system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    box-sizing: border-box;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Sidebar */
+  .dash-sidebar {
+    width: 248px;
+    height: 1000px;
+    box-sizing: border-box;
+    padding: 20px 14px;
+    background: var(--shell);
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .dash-sidebar__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 8px 14px;
+  }
+  .dash-sidebar__logo {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dash-sidebar__dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+  }
+  .dash-sidebar__title {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .dash-sidebar__badge {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg2);
+  }
+  .dash-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dash-nav-header {
+    padding: 14px 12px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-fg);
+  }
+  .dash-nav-item {
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 8px;
+    color: var(--fg2);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+  }
+  .dash-nav-item.is-active {
+    background: var(--card);
+    color: var(--fg);
+    font-weight: 600;
+    box-shadow: var(--shadow);
+  }
+  .dash-nav-flex {
+    flex-grow: 1;
+  }
+  .dash-badge-warn {
+    padding: 1px 7px;
+    border-radius: 6px;
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .dash-sidebar__spacer {
+    flex-grow: 1;
+  }
+  .dash-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 8px 0;
+    border-top: 1px solid var(--border);
+  }
+  .dash-user__avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dash-user__meta {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+  }
+  .dash-user__name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .dash-user__role {
+    font-size: 12px;
+    color: var(--muted-fg);
+  }
+  .dash-user__action {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-fg);
+  }
+
+  /* Main Wrapper */
+  .dash-main-wrap {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    margin: 8px 8px 8px 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  /* Topbar */
+  .dash-topbar {
+    height: 64px;
+    box-sizing: border-box;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .dash-topbar__btn {
+    width: 32px;
+    height: 32px;
+    margin-left: -8px;
+    border-radius: 8px;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dash-topbar__sep {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+  }
+  .dash-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--muted-fg);
+  }
+  .dash-breadcrumb__curr {
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .dash-topbar__spacer {
+    flex-grow: 1;
+  }
+  .dash-search {
+    width: 300px;
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--input);
+    border-radius: 8px;
+    background: var(--shell);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted-fg);
+    font-size: 14px;
+  }
+  .dash-search span:first-of-type {
+    flex-grow: 1;
+  }
+  .dash-kbd {
+    font-size: 11px;
+    padding: 1px 6px;
+    border: 1px solid var(--input);
+    border-radius: 5px;
+  }
+  .dash-bell {
+    position: relative;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    border: 1px solid var(--input);
+    background: var(--card);
+    color: var(--fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dash-bell__dot {
+    position: absolute;
+    top: 8px;
+    right: 9px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--chart2, #d9731f);
+  }
+  .dash-new-btn {
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: var(--primary);
+    color: var(--primary-fg);
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Content */
+  .dash-content {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .dash-page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: 56px;
+  }
+  .dash-page-head__title {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .dash-page-head__title h2 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--fg);
+  }
+  .dash-page-head__title span {
+    font-size: 14px;
+    color: var(--muted-fg);
+  }
+  .dash-page-head__actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .dash-period-toggle {
+    display: flex;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--muted);
+    gap: 2px;
+  }
+  .dash-period-toggle span {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--muted-fg);
+    display: flex;
+    align-items: center;
+  }
+  .dash-period-toggle span.is-active {
+    background: var(--card);
+    font-weight: 600;
+    color: var(--fg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+  .dash-btn-export {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--input);
+    background: var(--card);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+  }
+
+  /* KPIs */
+  .dash-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .dash-kpi {
+    height: 118px;
+    box-sizing: border-box;
+    padding: 18px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .dash-kpi__top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .dash-kpi__label {
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+  .dash-kpi__body {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .dash-kpi__nums {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .dash-kpi__val {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--fg);
+  }
+  .dash-kpi__sub {
+    font-size: 12px;
+    color: var(--muted-fg);
+  }
+  .dash-up {
+    color: var(--success-fg);
+    font-weight: 600;
+  }
+  .dash-sparkline {
+    flex-shrink: 0;
+  }
+
+  /* Charts */
+  .dash-charts {
+    display: flex;
+    gap: 16px;
+    height: 300px;
+  }
+  .dash-chart-card {
+    width: 740px;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .dash-chart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .dash-chart-head__text h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .dash-chart-head__text span {
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+  .dash-chart-legend {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--fg2);
+  }
+  .dash-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dash-legend-line {
+    width: 14px;
+    border-radius: 2px;
+  }
+  .dash-legend-line--rev {
+    height: 3px;
+    background: var(--accent);
+  }
+  .dash-legend-line--tgt {
+    height: 0;
+    border-top: 2px dashed var(--chart2, #d9731f);
+  }
+  .dash-sales-svg {
+    display: block;
+    width: 700px;
+    height: 222px;
+  }
+
+  /* Support Queue */
+  .dash-queue-card {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .dash-queue-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .dash-queue-head__text h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .dash-queue-head__text span {
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+  .dash-queue-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  .dash-queue-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dash-queue-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .dash-queue-item__row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .dash-queue-item__row em {
+    font-style: normal;
+    color: var(--muted-fg);
+  }
+  .dash-queue-item__bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .dash-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+  }
+  .dash-queue-foot {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .dash-dot-info {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--info-fg);
+  }
+  .dash-queue-foot__text {
+    flex-grow: 1;
+    color: var(--fg);
+  }
+  .dash-queue-foot__date {
+    color: var(--muted-fg);
+  }
+
+  /* Bottom Row */
+  .dash-bottom-row {
+    display: flex;
+    gap: 16px;
+    flex-grow: 1;
+  }
+  .dash-alerts-card {
+    width: 740px;
+    box-sizing: border-box;
+    padding: 20px 0 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .dash-alerts-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px 12px;
+  }
+  .dash-alerts-head h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .dash-alerts-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  .dash-alerts-table-head {
+    display: grid;
+    grid-template-columns: 96px 1fr 90px 80px 90px 70px 112px;
+    gap: 8px;
+    padding: 0 20px;
+    height: 34px;
+    align-items: center;
+    background: var(--shell);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted-fg);
+  }
+  .dash-alerts-table-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .dash-alerts-row {
+    display: grid;
+    grid-template-columns: 96px 1fr 90px 80px 90px 70px 112px;
+    gap: 8px;
+    padding: 0 20px;
+    height: 44px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--fg);
+  }
+  .dash-alerts-row:last-child {
+    border-bottom: 0;
+  }
+  .dash-sku {
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+  .dash-wh {
+    color: var(--fg2);
+  }
+  .dash-num {
+    text-align: right;
+  }
+  .dash-status-out {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--danger-bg);
+    color: var(--danger-fg);
+  }
+  .dash-status-low {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+  }
+  .dash-restock-link {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* Sales Reps */
+  .dash-reps-card {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .dash-reps-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .dash-reps-head h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .dash-reps-head span {
+    font-size: 13px;
+    color: var(--muted-fg);
+  }
+  .dash-reps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .dash-rep-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .dash-rep-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .dash-rep-info {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .dash-rep-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .dash-rep-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border);
+    overflow: hidden;
+  }
+</style>

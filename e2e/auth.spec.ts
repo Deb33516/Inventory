@@ -83,3 +83,23 @@ test("reset-password links back to sign in", async ({ page }) => {
   await page.goto("/reset-password");
   await expect(page.getByRole("link", { name: "Back to sign in" })).toBeVisible();
 });
+
+test("login form sets data-redirect-to strictly for safe internal paths and omits malicious values", async ({ page }) => {
+  // Valid internal paths
+  await page.goto("/login?redirect=/admin");
+  await expect(page.locator("#login-form")).toHaveAttribute("data-redirect-to", "/admin");
+
+  await page.goto("/login?redirect=/super/users");
+  await expect(page.locator("#login-form")).toHaveAttribute("data-redirect-to", "/super/users");
+
+  // Malicious / open-redirect attempts
+  await page.goto("/login?redirect=//evil.com");
+  await expect(page.locator("#login-form")).toHaveAttribute("data-redirect-to", "");
+
+  await page.goto("/login?redirect=https://evil.com");
+  await expect(page.locator("#login-form")).toHaveAttribute("data-redirect-to", "");
+
+  await page.goto("/login?redirect=/\\evil.com");
+  await expect(page.locator("#login-form")).toHaveAttribute("data-redirect-to", "");
+});
+

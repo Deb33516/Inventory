@@ -87,11 +87,11 @@ const formatCurrency = (value: number) =>
                 id="crm-customer-growth"
                 type="bar"
                 data={{
-                  labels: growthRows.map((r) => r.day),
+                  labels: growthRows.map((r: any) => r.day),
                   datasets: [
                     {
                       label: "New customers",
-                      data: growthRows.map((r) => Number(r.new_customers)),
+                      data: growthRows.map((r: any) => Number(r.new_customers)),
                       backgroundColor: CHART_COLORS.ink,
                     },
                   ],

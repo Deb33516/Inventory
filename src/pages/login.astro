@@ -18,18 +18,19 @@
 //    there is nothing behind it to wire up, so it's omitted rather than
 //    faked.
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { ROLE_DASHBOARD, isSafeInternalRedirect } from "../lib/roles";
 
 if (Astro.locals.user) {
-  return Astro.redirect("/account");
+  const role = Astro.locals.role;
+  return Astro.redirect(role && role !== "customer" ? ROLE_DASHBOARD[role] : "/account");
 }
 
 const redirectParam = Astro.url.searchParams.get("redirect");
-// Only ever redirect back to a same-app path — never an absolute/external
-// URL. Empty (not "/account") when absent: an explicit ?redirect= must win
-// over the role-aware destination the signIn action computes, and the only
-// way to express "no explicit redirect was requested" is to not default it
-// here at all.
-const explicitRedirect = redirectParam && redirectParam.startsWith("/") ? redirectParam : "";
+// Only ever redirect back to a safe internal path — never an external,
+// protocol-relative (//evil.com), or malformed (/\evil.com) URL.
+// Empty when absent or invalid: an explicit valid ?redirect= must win
+// over the role-aware destination the signIn action computes.
+const explicitRedirect = isSafeInternalRedirect(redirectParam) ? redirectParam! : "";
 
 const errorParam = Astro.url.searchParams.get("error");
 const resetParam = Astro.url.searchParams.get("reset");

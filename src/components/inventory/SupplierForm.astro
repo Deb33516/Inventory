@@ -51,27 +51,30 @@ const isEdit = Boolean(supplier);
   // correctly by Vite.
   import { actions } from "astro:actions";
 
-  const form = document.querySelector("#supplier-form");
-  const messageEl = document.querySelector("#form-message");
-  const button = form.querySelector("button[type=submit]");
-  const action = form.dataset.action;
-  const isEdit = form.dataset.isEdit === "1";
+  const form = document.querySelector<HTMLFormElement>("#supplier-form");
+  const messageEl = document.querySelector<HTMLParagraphElement>("#form-message");
+  const button = form?.querySelector<HTMLButtonElement>("button[type=submit]");
+  const action = form?.dataset.action as "createSupplier" | "updateSupplier" | undefined;
+  const isEdit = form?.dataset.isEdit === "1";
 
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    button.disabled = true;
-    messageEl.textContent = "";
-    messageEl.classList.remove("text-error", "text-success");
+  if (form && messageEl && button && action) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      messageEl.textContent = "";
+      messageEl.classList.remove("text-error", "text-success");
 
-    const { error } = await actions[action](new FormData(form));
+      const actionFn = action === "updateSupplier" ? actions.updateSupplier : actions.createSupplier;
+      const { error } = await actionFn(new FormData(form));
 
-    if (error) {
-      button.disabled = false;
-      messageEl.textContent = error.message;
-      messageEl.classList.add("text-error");
-      return;
-    }
+      if (error) {
+        button.disabled = false;
+        messageEl.textContent = error.message;
+        messageEl.classList.add("text-error");
+        return;
+      }
 
-    window.location.href = isEdit ? "/inventory/suppliers?updated=1" : "/inventory/suppliers?created=1";
-  });
+      window.location.href = isEdit ? "/inventory/suppliers?updated=1" : "/inventory/suppliers?created=1";
+    });
+  }
 </script>

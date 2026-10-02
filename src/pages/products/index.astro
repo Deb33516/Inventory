@@ -101,7 +101,15 @@ if (maxPrice !== null && !Number.isNaN(maxPrice)) {
 
 query = query.order(sortConfig.column, { ascending: sortConfig.ascending }).range(from, to);
 
-const { data: products, count } = await query;
+const { data: rawProducts, count } = await query;
+const products = (rawProducts ?? []) as unknown as Array<{
+  id: string;
+  sku: string;
+  name: string;
+  price: number;
+  image_url: string | null;
+  categories: { name: string } | null;
+}>;
 
 const totalPages = count ? Math.ceil(count / PAGE_SIZE) : 1;
 

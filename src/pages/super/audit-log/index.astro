@@ -1,0 +1,1886 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+// AUTHORIZATION: Strictly super_admin only.
+if (Astro.locals.role !== "super_admin") {
+  return Astro.redirect("/");
+}
+
+const url = Astro.url;
+const search = url.searchParams.get("search")?.trim() ?? "";
+const rangeParam = url.searchParams.get("range") ?? "7d";
+const userFilter = url.searchParams.get("user") ?? "";
+const actionFilter = url.searchParams.get("action") ?? "";
+const severityFilter = url.searchParams.get("severity") ?? "";
+const pageParam = parseInt(url.searchParams.get("page") ?? "1", 10);
+const requestedPage = isNaN(pageParam) || pageParam < 1 ? 1 : pageParam;
+
+// Fetch real audit logs, profiles, and approval requests from Supabase
+const [{ data: auditRows }, { data: profileRows }, { data: approvalRows }] = await Promise.all([
+  Astro.locals.supabase
+    .from("audit_logs")
+    .select("id, actor_id, action, entity_table, entity_id, old_value, new_value, approval_request_id, created_at")
+    .order("created_at", { ascending: false }),
+  Astro.locals.supabase
+    .from("profiles")
+    .select("id, full_name, role"),
+  Astro.locals.supabase
+    .from("approval_requests")
+    .select("id, action_type, status, target_table, target_id, payload, review_note"),
+]);
+
+// Map profiles for fast actor resolution
+interface ProfileData {
+  name: string;
+  role: string;
+  initials: string;
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  super_admin: "Super admin",
+  admin: "Admin",
+  sales_staff: "Sales staff",
+  inventory_staff: "Inventory staff",
+  customer: "Customer",
+};
+
+function getInitials(name: string): string {
+  const parts = name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase());
+  return parts.length > 0 ? parts.join("") : "—";
+}
+
+const profileMap = new Map<string, ProfileData>();
+for (const p of profileRows ?? []) {
+  const name = (p.full_name as string | null) || "Unnamed";
+  const role = ROLE_LABEL[p.role as string] ?? p.role;
+  profileMap.set(p.id, {
+    name,
+    role,
+    initials: getInitials(name),
+  });
+}
+
+// Map approval requests for action resolution
+const approvalMap = new Map<string, any>();
+for (const a of approvalRows ?? []) {
+  approvalMap.set(a.id, a);
+}
+
+// Severity mapping per action type
+type SeverityLevel = "Info" | "Low" | "Medium" | "High" | "Critical";
+
+function getSeverity(action: string): SeverityLevel {
+  switch (action) {
+    case "staff_invited":
+      return "Info";
+    case "approval_approved":
+      return "Medium";
+    case "approval_rejected":
+    case "deactivate_staff":
+    case "staff_deactivated":
+    case "delete_product":
+    case "product_deleted":
+    case "refund_payment":
+      return "High";
+    case "change_role":
+    case "role_changed":
+    case "cancel_paid_order":
+      return "Medium";
+    case "adjust_stock":
+    case "record_damage":
+    case "stock_adjusted":
+    case "damage_recorded":
+    case "changed_settings":
+    case "settings_updated":
+      return "Low";
+    case "ticket_assigned":
+    case "ticket_resolved":
+      return "Info";
+    default:
+      if (action.includes("delete") || action.includes("lock") || action.includes("reject")) {
+        return "High";
+      }
+      if (action.includes("change") || action.includes("update") || action.includes("cancel")) {
+        return "Medium";
+      }
+      return "Low";
+  }
+}
+
+function formatAction(action: string): string {
+  switch (action) {
+    case "staff_invited":
+      return "Invited user";
+    case "approval_approved":
+      return "Approved request";
+    case "approval_rejected":
+      return "Rejected request";
+    case "change_role":
+    case "role_changed":
+      return "Changed role";
+    case "deactivate_staff":
+    case "staff_deactivated":
+      return "Deactivated staff";
+    case "delete_product":
+    case "product_deleted":
+      return "Deleted product";
+    case "cancel_paid_order":
+      return "Cancelled order";
+    case "refund_payment":
+      return "Refunded payment";
+    case "adjust_stock":
+    case "stock_adjusted":
+      return "Adjusted stock";
+    case "record_damage":
+    case "damage_recorded":
+      return "Recorded damage";
+    default:
+      return action
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+  }
+}
+
+function formatTarget(row: any, approval: any): string {
+  if (row.action === "staff_invited") {
+    const nv = row.new_value as { email?: string; role?: string } | null;
+    if (nv?.email) {
+      const roleTxt = nv.role ? ` · ${ROLE_LABEL[nv.role] ?? nv.role}` : "";
+      return `${nv.email}${roleTxt}`;
+    }
+  }
+
+  if (approval) {
+    const actionTxt = approval.action_type
+      ? approval.action_type.replace(/_/g, " ")
+      : "request";
+    return `${approval.target_table} · ${actionTxt} (${approval.status})`;
+  }
+
+  if (row.new_value && typeof row.new_value === "object") {
+    const nv = row.new_value as Record<string, any>;
+    if (nv.name) return `${row.entity_table} · ${nv.name}`;
+    if (nv.title) return `${row.entity_table} · ${nv.title}`;
+    if (nv.email) return `${row.entity_table} · ${nv.email}`;
+    if (nv.review_note) return `${row.entity_table} · Note: ${nv.review_note}`;
+  }
+
+  if (row.entity_table && row.entity_id) {
+    return `${row.entity_table} · ${row.entity_id.slice(0, 8)}…`;
+  }
+
+  return row.entity_table ? `${row.entity_table}` : "—";
+}
+
+// Date calculations
+const now = new Date();
+let rangeStart: Date | null = null;
+if (rangeParam === "7d") {
+  rangeStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+} else if (rangeParam === "30d") {
+  rangeStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+}
+
+const rangeLabel = rangeParam === "7d" ? "Last 7 days" : rangeParam === "30d" ? "Last 30 days" : "All time";
+const rangeDates = rangeStart
+  ? `${rangeStart.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}–${now.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+  : "All recorded";
+
+// Trailing 7 days for the chart
+const daysList = Array.from({ length: 7 }, (_, i) => {
+  const d = new Date(now.getTime() - (6 - i) * 24 * 60 * 60 * 1000);
+  const isoDay = d.toISOString().slice(0, 10);
+  const dayName = d.toLocaleDateString("en-GB", { weekday: "short" });
+  return { date: d, isoDay, dayName, allCount: 0, sensCount: 0 };
+});
+
+const dayMap = new Map(daysList.map((d) => [d.isoDay, d]));
+
+// Format all entries
+const allEntries = (auditRows ?? []).map((row) => {
+  const actor = row.actor_id ? profileMap.get(row.actor_id) : null;
+  const actorName = actor ? actor.name : "System";
+  const actorRole = actor ? actor.role : "System automation";
+  const actorInitials = actor ? actor.initials : "SY";
+  const approval = row.approval_request_id ? approvalMap.get(row.approval_request_id) : null;
+  const sev = getSeverity(row.action);
+  const targetText = formatTarget(row, approval);
+  const actionLabel = formatAction(row.action);
+
+  const createdAtDate = new Date(row.created_at);
+  const timeStr = createdAtDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  
+  // Relative / formatted date
+  const isToday = createdAtDate.toDateString() === now.toDateString();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const isYesterday = createdAtDate.toDateString() === yesterday.toDateString();
+  const dateStr = isToday ? "Today" : isYesterday ? "Yesterday" : createdAtDate.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+  // Update daily chart buckets
+  const isoDay = (row.created_at as string).slice(0, 10);
+  const dayBucket = dayMap.get(isoDay);
+  if (dayBucket) {
+    dayBucket.allCount++;
+    if (sev === "High" || sev === "Critical" || row.action.startsWith("approval_") || row.action.includes("role") || row.action.includes("staff")) {
+      dayBucket.sensCount++;
+    }
+  }
+
+  return {
+    id: row.id as string,
+    actor_id: row.actor_id as string | null,
+    actorName,
+    actorRole,
+    actorInitials,
+    action: row.action as string,
+    actionLabel,
+    entity_table: row.entity_table as string,
+    entity_id: row.entity_id as string | null,
+    old_value: row.old_value,
+    new_value: row.new_value,
+    approval_request_id: row.approval_request_id as string | null,
+    created_at: row.created_at as string,
+    time: timeStr,
+    date: dateStr,
+    fullDateTime: createdAtDate.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "medium" }),
+    targetText,
+    severity: sev,
+    ip: "—", // Honestly not stored in database schema
+  };
+});
+
+// KPIs in active date range
+const rangeEntries = allEntries.filter((e) => {
+  if (rangeStart && new Date(e.created_at) < rangeStart) return false;
+  return true;
+});
+
+const totalRangeEvents = rangeEntries.length;
+const totalRangeSecurity = rangeEntries.filter((e) => e.severity === "High" || e.severity === "Critical" || e.action.startsWith("approval_") || e.action.includes("role")).length;
+const totalRangeHighCritical = rangeEntries.filter((e) => e.severity === "High" || e.severity === "Critical").length;
+
+// Chart calculation
+const maxAll = Math.max(...daysList.map((d) => d.allCount), 5);
+const centerBars = daysList.map((d, index) => {
+  const x = 51.9 + index * 63.7;
+  const width = 28;
+  const h = d.allCount > 0 ? Math.max(6, Math.round((d.allCount / maxAll) * 76)) : 0;
+  const y = 96 - h;
+  const centerX = x + width / 2;
+  const textY = Math.max(16, y - 4);
+  return {
+    ...d,
+    x: x.toFixed(1),
+    y: y.toFixed(1),
+    width,
+    height: h.toFixed(1),
+    centerX: centerX.toFixed(1),
+    textY: textY.toFixed(1),
+  };
+});
+
+const maxSens = Math.max(...daysList.map((d) => d.sensCount), 5);
+const rightBars = daysList.map((d, index) => {
+  const x = 37.4 + index * 38.8;
+  const width = 20;
+  const h = d.sensCount > 0 ? Math.max(6, Math.round((d.sensCount / maxSens) * 72)) : 0;
+  const y = 96 - h;
+  const centerX = x + width / 2;
+  const textY = Math.max(16, y - 4);
+  return {
+    ...d,
+    x: x.toFixed(1),
+    y: y.toFixed(1),
+    width,
+    height: h.toFixed(1),
+    centerX: centerX.toFixed(1),
+    textY: textY.toFixed(1),
+  };
+});
+
+// Unique facets for filter selectors
+const uniqueUsers = Array.from(new Set(allEntries.map((e) => e.actor_id).filter(Boolean)))
+  .map((id) => ({ id: id!, name: profileMap.get(id!)?.name ?? id! }));
+
+const uniqueActions = Array.from(new Set(allEntries.map((e) => e.action)))
+  .map((a) => ({ action: a, label: formatAction(a) }));
+
+const SEVERITIES: SeverityLevel[] = ["Info", "Low", "Medium", "High", "Critical"];
+
+// Apply all filters for Table display
+const filteredEntries = allEntries.filter((e) => {
+  if (rangeStart && new Date(e.created_at) < rangeStart) return false;
+  if (userFilter && e.actor_id !== userFilter) return false;
+  if (actionFilter && e.action !== actionFilter) return false;
+  if (severityFilter && e.severity !== severityFilter) return false;
+
+  if (search) {
+    const q = search.toLowerCase();
+    const matches =
+      e.actorName.toLowerCase().includes(q) ||
+      e.actorRole.toLowerCase().includes(q) ||
+      e.action.toLowerCase().includes(q) ||
+      e.actionLabel.toLowerCase().includes(q) ||
+      e.targetText.toLowerCase().includes(q) ||
+      e.entity_table.toLowerCase().includes(q) ||
+      (e.entity_id && e.entity_id.toLowerCase().includes(q)) ||
+      (e.new_value && JSON.stringify(e.new_value).toLowerCase().includes(q));
+    if (!matches) return false;
+  }
+
+  return true;
+});
+
+// Pagination
+const PAGE_SIZE = 9;
+const totalCount = filteredEntries.length;
+const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+const currentPage = Math.max(1, Math.min(requestedPage, totalPages));
+const startIndex = (currentPage - 1) * PAGE_SIZE;
+const endIndex = Math.min(startIndex + PAGE_SIZE, totalCount);
+const displayedRows = filteredEntries.slice(startIndex, endIndex);
+
+// Helper for generating query URLs
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const next = new URLSearchParams(url.search);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined && value !== null && value !== "") {
+      next.set(key, value);
+    } else {
+      next.delete(key);
+    }
+  }
+  const qs = next.toString();
+  return qs ? `/super/audit-log?${qs}` : "/super/audit-log";
+}
+---
+
+<BaseLayout title="Audit log — Super Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Audit log" role="super" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="System" page="Audit log" />
+
+      <main id="main-content" class="al__main">
+        <!-- Page Header -->
+        <header class="al__header">
+          <div class="al__heading-col">
+            <h1 class="al__title">Audit log</h1>
+            <span class="al__subtitle">Every sign-in, permission change and data action · kept for 1 year</span>
+          </div>
+          <div class="al__actions">
+            <button type="button" id="al-alert-rules-btn" class="al__btn al__btn--secondary">
+              Alert rules
+            </button>
+            <button type="button" id="al-export-btn" class="al__btn al__btn--primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>
+              Export log
+            </button>
+          </div>
+        </header>
+
+        <!-- Filters Toolbar -->
+        <div class="al__toolbar">
+          <!-- Date range button with dropdown -->
+          <div class="al__dropdown-wrap">
+            <button type="button" id="al-range-trigger" class="al__btn al__btn--filter" aria-expanded="false" aria-haspopup="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM3 9h18M8 2v4M16 2v4"></path></svg>
+              <span>{rangeLabel}</span>
+              <span class="al__range-sub">{rangeDates}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
+            <div id="al-range-menu" class="al__menu" hidden>
+              <a href={buildUrl({ range: "7d", page: "1" })} class={`al__menu-item ${rangeParam === "7d" ? "is-active" : ""}`}>Last 7 days</a>
+              <a href={buildUrl({ range: "30d", page: "1" })} class={`al__menu-item ${rangeParam === "30d" ? "is-active" : ""}`}>Last 30 days</a>
+              <a href={buildUrl({ range: "all", page: "1" })} class={`al__menu-item ${rangeParam === "all" ? "is-active" : ""}`}>All time</a>
+            </div>
+          </div>
+
+          <!-- Search form -->
+          <form method="get" action="/super/audit-log" class="al__search-form">
+            {rangeParam && <input type="hidden" name="range" value={rangeParam} />}
+            {userFilter && <input type="hidden" name="user" value={userFilter} />}
+            {actionFilter && <input type="hidden" name="action" value={actionFilter} />}
+            {severityFilter && <input type="hidden" name="severity" value={severityFilter} />}
+            <input
+              type="search"
+              name="search"
+              aria-label="Search audit log"
+              placeholder="Search target or IP…"
+              value={search}
+              class="al__search-input"
+            />
+          </form>
+
+          <!-- Facets -->
+          <!-- User Facet -->
+          <div class="al__dropdown-wrap">
+            <button
+              type="button"
+              id="al-user-trigger"
+              class={`al__facet-btn ${userFilter ? "is-selected" : ""}`}
+              aria-expanded="false"
+              aria-haspopup="true"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              <span>{userFilter ? `User: ${profileMap.get(userFilter)?.name ?? "Selected"}` : "User"}</span>
+            </button>
+            <div id="al-user-menu" class="al__menu" hidden>
+              <a href={buildUrl({ user: undefined, page: "1" })} class={`al__menu-item ${!userFilter ? "is-active" : ""}`}>All users</a>
+              {uniqueUsers.map((u) => (
+                <a href={buildUrl({ user: u.id, page: "1" })} class={`al__menu-item ${userFilter === u.id ? "is-active" : ""}`}>{u.name}</a>
+              ))}
+            </div>
+          </div>
+
+          <!-- Action Facet -->
+          <div class="al__dropdown-wrap">
+            <button
+              type="button"
+              id="al-action-trigger"
+              class={`al__facet-btn ${actionFilter ? "is-selected" : ""}`}
+              aria-expanded="false"
+              aria-haspopup="true"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              <span>{actionFilter ? `Action: ${formatAction(actionFilter)}` : "Action type"}</span>
+            </button>
+            <div id="al-action-menu" class="al__menu" hidden>
+              <a href={buildUrl({ action: undefined, page: "1" })} class={`al__menu-item ${!actionFilter ? "is-active" : ""}`}>All actions</a>
+              {uniqueActions.map((a) => (
+                <a href={buildUrl({ action: a.action, page: "1" })} class={`al__menu-item ${actionFilter === a.action ? "is-active" : ""}`}>{a.label}</a>
+              ))}
+            </div>
+          </div>
+
+          <!-- Severity Facet -->
+          <div class="al__dropdown-wrap">
+            <button
+              type="button"
+              id="al-sev-trigger"
+              class={`al__facet-btn ${severityFilter ? "is-selected" : ""}`}
+              aria-expanded="false"
+              aria-haspopup="true"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              <span>{severityFilter ? `Severity: ${severityFilter}` : "Severity"}</span>
+            </button>
+            <div id="al-sev-menu" class="al__menu" hidden>
+              <a href={buildUrl({ severity: undefined, page: "1" })} class={`al__menu-item ${!severityFilter ? "is-active" : ""}`}>All severities</a>
+              {SEVERITIES.map((s) => (
+                <a href={buildUrl({ severity: s, page: "1" })} class={`al__menu-item ${severityFilter === s ? "is-active" : ""}`}>{s}</a>
+              ))}
+            </div>
+          </div>
+
+          {(userFilter || actionFilter || severityFilter || search) && (
+            <a href={`/super/audit-log?range=${rangeParam}`} class="al__clear-filters" title="Clear all filters">
+              Reset
+            </a>
+          )}
+
+          <div class="al__spacer"></div>
+
+          <!-- Toggle View button -->
+          <button type="button" id="al-toggle-charts" class="al__btn al__btn--filter" title="Toggle activity charts view">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 4v4M8 10v4M16 16v4"></path></svg>
+            <span>View</span>
+          </button>
+        </div>
+
+        <!-- Activity Chart Card -->
+        <div id="al-charts-card" class="al__activity-card">
+          <!-- Left Column: KPIs -->
+          <div class="al__kpis-col">
+            <div class="al__kpi-item">
+              <span class="al__kpi-label">
+                <span class="al__dot al__dot--accent"></span>
+                Events
+              </span>
+              <span class="al__kpi-val">{totalRangeEvents}</span>
+            </div>
+            <div class="al__kpi-item">
+              <span class="al__kpi-label">
+                <span class="al__dot al__dot--chart2"></span>
+                Security & approvals
+              </span>
+              <span class="al__kpi-val">{totalRangeSecurity}</span>
+            </div>
+            <div class="al__kpi-item">
+              <span class="al__kpi-label">
+                <span class="al__dot al__dot--danger"></span>
+                High or critical
+              </span>
+              <span class="al__kpi-val">{totalRangeHighCritical}</span>
+            </div>
+          </div>
+
+          <div class="al__v-divider"></div>
+
+          <!-- Middle: All events per day -->
+          <div class="al__chart-main">
+            <span class="al__chart-title">All events per day</span>
+            <svg class="al__svg-chart" viewBox="0 0 480 122" role="img" aria-label="Audit events per day bar chart">
+              <g class="al__grid-lines" stroke-width="1">
+                <path d="M34 6H480M34 42H480M34 78H480"></path>
+              </g>
+              <path d="M34 96H480" class="al__grid-baseline" stroke-width="1"></path>
+              <g font-size="11" class="al__chart-ticks" text-anchor="end" font-family="'Geist', sans-serif">
+                <text x="26" y="10">{maxAll}</text>
+                <text x="26" y="46">{Math.round(maxAll * 0.6)}</text>
+                <text x="26" y="82">{Math.round(maxAll * 0.2)}</text>
+                <text x="26" y="100">0</text>
+              </g>
+              <g class="al__bars-accent">
+                {centerBars.map((b) => (
+                  <rect x={b.x} y={b.y} width={b.width} height={b.height} rx="3" />
+                ))}
+              </g>
+              <g font-size="11" font-weight="500" class="al__chart-bar-labels" text-anchor="middle" font-family="'Geist', sans-serif">
+                {centerBars.map((b) => (
+                  <text x={b.centerX} y={b.textY}>{b.allCount}</text>
+                ))}
+              </g>
+              <g font-size="11" class="al__chart-ticks" text-anchor="middle" font-family="'Geist', sans-serif">
+                {centerBars.map((b) => (
+                  <text x={b.centerX} y="116">{b.dayName}</text>
+                ))}
+              </g>
+            </svg>
+          </div>
+
+          <div class="al__v-divider"></div>
+
+          <!-- Right: Security & approvals per day -->
+          <div class="al__chart-side">
+            <span class="al__chart-title">Security & approvals per day</span>
+            <svg class="al__svg-chart" viewBox="0 0 300 122" role="img" aria-label="Security and approval events per day bar chart">
+              <g class="al__grid-lines" stroke-width="1">
+                <path d="M28 6H300M28 51H300"></path>
+              </g>
+              <path d="M28 96H300" class="al__grid-baseline" stroke-width="1"></path>
+              <g font-size="11" class="al__chart-ticks" text-anchor="end" font-family="'Geist', sans-serif">
+                <text x="20" y="10">{maxSens}</text>
+                <text x="20" y="55">{Math.round(maxSens / 2)}</text>
+                <text x="20" y="100">0</text>
+              </g>
+              <g class="al__bars-chart2">
+                {rightBars.map((b) => (
+                  <rect x={b.x} y={b.y} width={b.width} height={b.height} rx="3" />
+                ))}
+              </g>
+              <g font-size="11" font-weight="500" class="al__chart-bar-labels" text-anchor="middle" font-family="'Geist', sans-serif">
+                {rightBars.map((b) => (
+                  <text x={b.centerX} y={b.textY}>{b.sensCount}</text>
+                ))}
+              </g>
+              <g font-size="11" class="al__chart-ticks" text-anchor="middle" font-family="'Geist', sans-serif">
+                {rightBars.map((b) => (
+                  <text x={b.centerX} y="116">{b.dayName}</text>
+                ))}
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Log Table Card -->
+        <div class="al__table-card">
+          <div class="al__table-scroll">
+            <div class="al__table-header">
+              <span>Time</span>
+              <span>User</span>
+              <span>Action</span>
+              <span>Target</span>
+              <span>IP address</span>
+              <span>Severity</span>
+              <span></span>
+            </div>
+
+            {displayedRows.length === 0 ? (
+              <div class="al__empty-state">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="al__empty-icon" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"></path></svg>
+                <h2 class="al__empty-title">No audit events found</h2>
+                <p class="al__empty-desc">
+                  No records match your current filters or date range. All database audit logs are preserved.
+                </p>
+                {(userFilter || actionFilter || severityFilter || search) && (
+                  <a href={`/super/audit-log?range=${rangeParam}`} class="al__btn al__btn--secondary al__empty-reset">
+                    Reset filters
+                  </a>
+                )}
+              </div>
+            ) : (
+              displayedRows.map((r) => (
+                <div class="al__row" data-log-id={r.id}>
+                  <span class="al__time-cell">
+                    <span class="al__time-val">{r.time}</span>
+                    <span class="al__date-val">{r.date}</span>
+                  </span>
+                  <span class="al__user-cell">
+                    <span class="al__avatar">{r.actorInitials}</span>
+                    <span class="al__user-info">
+                      <span class="al__user-name">{r.actorName}</span>
+                      <span class="al__user-role">{r.actorRole}</span>
+                    </span>
+                  </span>
+                  <span class="al__action-cell">{r.actionLabel}</span>
+                  <span class="al__target-cell" title={r.targetText}>{r.targetText}</span>
+                  <span class="al__ip-cell">{r.ip}</span>
+                  <span class="al__sev-cell">
+                    <span class={`al__pill al__pill--${r.severity.toLowerCase()}`}>{r.severity}</span>
+                  </span>
+                  <button
+                    type="button"
+                    class="al__row-view-btn"
+                    aria-label={`View event details for ${r.actionLabel}`}
+                    data-json={JSON.stringify(r)}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <!-- Pagination Footer -->
+          <div class="al__footer">
+            <span class="al__footer-info">
+              {totalCount > 0 ? (
+                `Showing ${startIndex + 1}–${endIndex} of ${totalCount} events`
+              ) : (
+                "Showing 0 events"
+              )}
+            </span>
+            <span class="al__footer-rows">
+              Rows per page <span class="al__footer-bold">9</span>
+            </span>
+            <span class="al__footer-page">
+              Page <span class="al__footer-bold">{currentPage}</span> of <span class="al__footer-bold">{totalPages}</span>
+            </span>
+            <div class="al__nav-btns">
+              <a
+                href={currentPage > 1 ? buildUrl({ page: String(currentPage - 1) }) : undefined}
+                class={`al__page-btn ${currentPage <= 1 ? "is-disabled" : ""}`}
+                aria-label="Previous page"
+                tabindex={currentPage <= 1 ? -1 : undefined}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+              </a>
+              <a
+                href={currentPage < totalPages ? buildUrl({ page: String(currentPage + 1) }) : undefined}
+                class={`al__page-btn ${currentPage >= totalPages ? "is-disabled" : ""}`}
+                aria-label="Next page"
+                tabindex={currentPage >= totalPages ? -1 : undefined}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+              </a>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Details Dialog Modal -->
+    <dialog id="al-details-dialog" class="al__dialog">
+      <div class="al__dialog-card">
+        <div class="al__dialog-header">
+          <div class="al__dialog-title-group">
+            <h2 id="al-dialog-title" class="al__dialog-title">Event details</h2>
+            <span id="al-dialog-subtitle" class="al__dialog-subtitle"></span>
+          </div>
+          <button type="button" id="al-dialog-close" class="al__dialog-close-btn" aria-label="Close dialog">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+
+        <div class="al__dialog-body">
+          <div class="al__dialog-grid">
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">Event ID</span>
+              <span id="al-dialog-id" class="al__dialog-val al__dialog-mono"></span>
+            </div>
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">Timestamp</span>
+              <span id="al-dialog-time" class="al__dialog-val"></span>
+            </div>
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">User / Actor</span>
+              <span id="al-dialog-actor" class="al__dialog-val"></span>
+            </div>
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">Severity</span>
+              <span id="al-dialog-sev-container"></span>
+            </div>
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">Action</span>
+              <span id="al-dialog-action" class="al__dialog-val"></span>
+            </div>
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">Entity Table & ID</span>
+              <span id="al-dialog-entity" class="al__dialog-val"></span>
+            </div>
+            <div class="al__dialog-field">
+              <span class="al__dialog-label">IP Address</span>
+              <span class="al__dialog-val al__dialog-untracked">Not tracked in schema</span>
+            </div>
+            <div class="al__dialog-field" id="al-dialog-approval-row">
+              <span class="al__dialog-label">Approval Request ID</span>
+              <span id="al-dialog-approval" class="al__dialog-val al__dialog-mono"></span>
+            </div>
+          </div>
+
+          <div class="al__dialog-json-wrap">
+            <div class="al__dialog-json-box" id="al-dialog-old-box">
+              <span class="al__json-box-title">Old value</span>
+              <pre class="al__json-pre"><code id="al-dialog-old-code"></code></pre>
+            </div>
+            <div class="al__dialog-json-box" id="al-dialog-new-box">
+              <span class="al__json-box-title">New value</span>
+              <pre class="al__json-pre"><code id="al-dialog-new-code"></code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="al__dialog-footer">
+          <button type="button" id="al-dialog-dismiss" class="al__btn al__btn--secondary">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Alert Rules Info Dialog -->
+    <dialog id="al-alert-rules-dialog" class="al__dialog">
+      <div class="al__dialog-card al__dialog-card--narrow">
+        <div class="al__dialog-header">
+          <div class="al__dialog-title-group">
+            <h2 class="al__dialog-title">Alert rules</h2>
+            <span class="al__dialog-subtitle">Automated notification and anomaly policies</span>
+          </div>
+          <button type="button" id="al-alert-rules-close" class="al__dialog-close-btn" aria-label="Close dialog">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div class="al__dialog-body">
+          <p class="al__notice-p">
+            Automated alerting webhooks and threshold policies are not configured in this deployment.
+          </p>
+          <p class="al__notice-p al__notice-p--muted">
+            All sign-in, permission, role changes, and inventory actions are immutably preserved in the database audit log table with full event context.
+          </p>
+        </div>
+        <div class="al__dialog-footer">
+          <button type="button" id="al-alert-rules-dismiss" class="al__btn al__btn--primary">Got it</button>
+        </div>
+      </div>
+    </dialog>
+  </div>
+</BaseLayout>
+
+<style>
+  /* Base Super Admin Tokens */
+  .sd {
+    --sd-shell: #FAFAFA;
+    --sd-panel: #FFFFFF;
+    --sd-card: #FFFFFF;
+    --sd-fg: #0A0A0A;
+    --sd-fg2: #404040;
+    --sd-muted: #F5F5F5;
+    --sd-muted-fg: #737373;
+    --sd-border: #E5E5E5;
+    --sd-input: #E5E5E5;
+    --sd-grid: #F0F0F0;
+    --sd-primary: #171717;
+    --sd-primary-fg: #FAFAFA;
+    --sd-success-bg: #ECFDF3;
+    --sd-success-fg: #15803D;
+    --sd-warn-bg: #FEF3E2;
+    --sd-warn-fg: #9A3412;
+    --sd-danger-bg: #FEECEC;
+    --sd-danger-fg: #B91C1C;
+    --sd-info-bg: #EEF2FF;
+    --sd-info-fg: #3538CD;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --sd-accent: #2B50E0;
+    --sd-accent-soft: rgba(43, 80, 224, 0.10);
+    --sd-chart2: #D9731F;
+    color-scheme: light;
+
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sd[data-theme="dark"] {
+    --sd-shell: #0A0A0A;
+    --sd-panel: #0F0F0F;
+    --sd-card: #171717;
+    --sd-fg: #FAFAFA;
+    --sd-fg2: #D4D4D4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #A3A3A3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-grid: #232323;
+    --sd-primary: #FAFAFA;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0F2A1C;
+    --sd-success-fg: #4ADE80;
+    --sd-warn-bg: #2E1F0E;
+    --sd-warn-fg: #FDBA74;
+    --sd-danger-bg: #2D1414;
+    --sd-danger-fg: #F87171;
+    --sd-info-bg: #1E2240;
+    --sd-info-fg: #A5B4FC;
+    --sd-shadow: none;
+    --sd-accent: #6B8AFB;
+    --sd-accent-soft: rgba(107, 138, 251, 0.16);
+    --sd-chart2: #E8894A;
+    color-scheme: dark;
+  }
+
+  .sd__sidebar {
+    width: 248px;
+    flex-shrink: 0;
+  }
+  .sd__backdrop {
+    display: none;
+  }
+
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow-y: auto;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .al__main {
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    flex-grow: 1;
+  }
+
+  /* Page Header */
+  .al__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .al__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .al__title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .al__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .al__actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* Buttons */
+  .al__btn {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .al__btn--secondary {
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+  }
+  .al__btn--secondary:hover {
+    background: var(--sd-muted);
+  }
+  .al__btn--primary {
+    border: 0;
+    background: var(--sd-primary);
+    color: var(--sd-primary-fg);
+  }
+  .al__btn--primary:hover {
+    opacity: 0.9;
+  }
+  .al__btn--filter {
+    height: 34px;
+    padding: 0 12px;
+    font-size: 13px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+  }
+  .al__btn--filter:hover {
+    background: var(--sd-muted);
+  }
+
+  /* Toolbar */
+  .al__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .al__range-sub {
+    color: var(--sd-muted-fg);
+    font-weight: 400;
+    margin-left: 2px;
+  }
+
+  .al__search-form {
+    display: inline-flex;
+  }
+  .al__search-input {
+    width: 220px;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--sd-input);
+    border-radius: 8px;
+    background: var(--sd-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--sd-fg);
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+  .al__search-input:focus {
+    border-color: var(--sd-accent);
+  }
+
+  .al__dropdown-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .al__facet-btn {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--sd-input);
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .al__facet-btn:hover {
+    background: var(--sd-muted);
+  }
+  .al__facet-btn.is-selected {
+    border-style: solid;
+    border-color: var(--sd-accent);
+    background: var(--sd-accent-soft);
+    color: var(--sd-accent);
+  }
+
+  .al__menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 180px;
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--sd-border, #E5E5E5);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    padding: 4px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sd[data-theme="dark"] .al__menu,
+  [data-theme="dark"] .al__menu {
+    background: rgba(23, 23, 23, 0.98);
+    border: 1px solid #262626;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  .al__menu-item {
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--sd-fg);
+    text-decoration: none;
+    border-radius: 6px;
+    transition: background 0.15s ease;
+    white-space: nowrap;
+  }
+  .al__menu-item:hover {
+    background: var(--sd-muted);
+  }
+  .al__menu-item.is-active {
+    font-weight: 600;
+    background: var(--sd-muted);
+    color: var(--sd-accent);
+  }
+
+  .al__clear-filters {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    text-decoration: underline;
+    cursor: pointer;
+    margin-left: 4px;
+  }
+  .al__clear-filters:hover {
+    color: var(--sd-fg);
+  }
+
+  .al__spacer {
+    flex-grow: 1;
+  }
+
+  /* Activity Chart */
+  .al__activity-card {
+    height: 176px;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    gap: 24px;
+    transition: opacity 0.2s ease;
+  }
+  .al__activity-card.is-collapsed {
+    display: none;
+  }
+
+  .al__kpis-col {
+    width: 170px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .al__kpi-item {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .al__kpi-label {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .al__kpi-val {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .al__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+  .al__dot--accent {
+    background: var(--sd-accent);
+  }
+  .al__dot--chart2 {
+    background: var(--sd-chart2);
+  }
+  .al__dot--danger {
+    background: var(--sd-danger-fg);
+  }
+
+  .al__v-divider {
+    width: 1px;
+    background: var(--sd-border);
+    flex-shrink: 0;
+  }
+
+  .al__chart-main {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .al__chart-side {
+    width: 300px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .al__chart-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .al__svg-chart {
+    width: 100%;
+    height: 122px;
+    display: block;
+  }
+  .al__grid-lines {
+    stroke: var(--sd-grid);
+  }
+  .al__grid-baseline {
+    stroke: var(--sd-input);
+  }
+  .al__chart-ticks {
+    fill: var(--sd-muted-fg);
+  }
+  .al__chart-bar-labels {
+    fill: var(--sd-fg2);
+  }
+  .al__bars-accent {
+    fill: var(--sd-accent);
+  }
+  .al__bars-chart2 {
+    fill: var(--sd-chart2);
+  }
+
+  /* Log Table */
+  .al__table-card {
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .al__table-scroll {
+    overflow-x: auto;
+    width: 100%;
+  }
+
+  .al__table-header,
+  .al__row {
+    display: grid;
+    grid-template-columns: 76px 1.35fr 1.05fr 1.7fr 104px 76px 30px;
+    gap: 12px;
+    align-items: center;
+    padding: 0 16px;
+    min-width: 820px;
+    box-sizing: border-box;
+  }
+
+  .al__table-header {
+    height: 40px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+
+  .al__row {
+    height: 48px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+    transition: background 0.15s ease;
+  }
+  .al__row:hover {
+    background: var(--sd-muted);
+  }
+
+  .al__time-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .al__time-val {
+    font-weight: 500;
+  }
+  .al__date-val {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+
+  .al__user-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .al__avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sd-muted);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .al__user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .al__user-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .al__user-role {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .al__action-cell {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .al__target-cell {
+    font-size: 13px;
+    color: var(--sd-fg2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .al__ip-cell {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Pills */
+  .al__pill {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    display: inline-block;
+  }
+  .al__pill--info {
+    border: 1px solid var(--sd-input);
+    color: var(--sd-fg2);
+  }
+  .al__pill--low {
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+  }
+  .al__pill--medium {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .al__pill--high {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .al__pill--critical {
+    background: var(--sd-danger-fg);
+    color: var(--sd-primary-fg);
+  }
+
+  .al__row-view-btn {
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .al__row-view-btn:hover {
+    color: var(--sd-fg);
+    background: var(--sd-border);
+  }
+
+  /* Empty State */
+  .al__empty-state {
+    padding: 48px 24px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .al__empty-icon {
+    color: var(--sd-muted-fg);
+    margin-bottom: 4px;
+  }
+  .al__empty-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .al__empty-desc {
+    margin: 0;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    max-width: 400px;
+  }
+  .al__empty-reset {
+    margin-top: 8px;
+  }
+
+  /* Footer */
+  .al__footer {
+    height: 52px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    border-top: 1px solid var(--sd-border);
+    min-width: 820px;
+    box-sizing: border-box;
+  }
+  .al__footer-info {
+    flex-grow: 1;
+  }
+  .al__footer-bold {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .al__nav-btns {
+    display: flex;
+    gap: 4px;
+  }
+  .al__page-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    transition: background 0.15s ease;
+  }
+  .al__page-btn:hover:not(.is-disabled) {
+    background: var(--sd-muted);
+  }
+  .al__page-btn.is-disabled {
+    color: var(--sd-muted-fg);
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  /* Modal Dialog */
+  .al__dialog {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    max-width: 680px;
+    width: 90vw;
+  }
+  .al__dialog::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .al__dialog-card {
+    background: rgba(255, 255, 255, 0.97);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    color: var(--sd-fg, #0A0A0A);
+    border: 1px solid var(--sd-border, #E5E5E5);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .sd[data-theme="dark"] .al__dialog-card,
+  [data-theme="dark"] .al__dialog-card,
+  :root[data-theme="dark"] .al__dialog-card {
+    background: rgba(23, 23, 23, 0.97);
+    color: var(--sd-fg, #FAFAFA);
+    border: 1px solid #262626;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  .al__dialog-card--narrow {
+    max-width: 480px;
+  }
+  .al__dialog-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--sd-border, #E5E5E5);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .sd[data-theme="dark"] .al__dialog-header,
+  [data-theme="dark"] .al__dialog-header {
+    border-bottom: 1px solid #262626;
+  }
+  .al__dialog-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .al__dialog-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .al__dialog-subtitle {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .al__dialog-close-btn {
+    border: 0;
+    background: transparent;
+    color: var(--sd-muted-fg);
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .al__dialog-close-btn:hover {
+    color: var(--sd-fg);
+    background: var(--sd-muted);
+  }
+
+  .al__dialog-body {
+    padding: 20px;
+    overflow-y: auto;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .al__dialog-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 16px;
+    font-size: 13px;
+  }
+  .al__dialog-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .al__dialog-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--sd-muted-fg);
+  }
+  .al__dialog-val {
+    color: var(--sd-fg);
+    font-weight: 500;
+  }
+  .al__dialog-mono {
+    font-family: monospace;
+    font-size: 12px;
+  }
+  .al__dialog-untracked {
+    color: var(--sd-muted-fg);
+    font-style: italic;
+  }
+
+  .al__dialog-json-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .al__dialog-json-box {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .al__json-box-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sd-muted-fg);
+  }
+  .al__json-pre {
+    margin: 0;
+    padding: 12px;
+    border-radius: 8px;
+    background: rgba(245, 245, 245, 0.95);
+    color: #0A0A0A;
+    font-size: 12px;
+    font-family: monospace;
+    overflow-x: auto;
+    max-height: 180px;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+  .sd[data-theme="dark"] .al__json-pre,
+  [data-theme="dark"] .al__json-pre {
+    background: rgba(38, 38, 38, 0.95);
+    color: #FAFAFA;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .al__notice-p {
+    margin: 0 0 8px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .al__notice-p--muted {
+    color: var(--sd-muted-fg);
+    font-size: 13px;
+  }
+
+  .al__dialog-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--sd-border, #E5E5E5);
+    display: flex;
+    justify-content: flex-end;
+  }
+  .sd[data-theme="dark"] .al__dialog-footer,
+  [data-theme="dark"] .al__dialog-footer {
+    border-top: 1px solid #262626;
+  }
+
+  /* Responsive Rules */
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 100;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 99;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .sd__backdrop.is-open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .sd__panel {
+      margin: 0;
+      border-radius: 0;
+      border: 0;
+    }
+    .al__activity-card {
+      height: auto;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .al__v-divider {
+      width: 100%;
+      height: 1px;
+    }
+    .al__kpis-col,
+    .al__chart-side {
+      width: 100%;
+    }
+    .al__svg-chart {
+      max-width: 480px;
+    }
+  }
+</style>
+
+<script>
+  // --- Theme Toggle Integration ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.body.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+      document.documentElement.removeAttribute("data-theme");
+      document.body.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  // --- Dropdown menus toggle ---
+  function setupDropdown(triggerId: string, menuId: string) {
+    const trigger = document.getElementById(triggerId);
+    const menu = document.getElementById(menuId);
+    if (!trigger || !menu) return;
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isHidden = menu.hidden;
+      // Close any other open menu
+      document.querySelectorAll(".al__menu").forEach((m) => {
+        (m as HTMLElement).hidden = true;
+      });
+      menu.hidden = !isHidden;
+      trigger.setAttribute("aria-expanded", String(!isHidden));
+    });
+  }
+
+  setupDropdown("al-range-trigger", "al-range-menu");
+  setupDropdown("al-user-trigger", "al-user-menu");
+  setupDropdown("al-action-trigger", "al-action-menu");
+  setupDropdown("al-sev-trigger", "al-sev-menu");
+
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".al__menu").forEach((m) => {
+      (m as HTMLElement).hidden = true;
+    });
+  });
+
+  // --- Toggle Charts View ---
+  const toggleChartsBtn = document.getElementById("al-toggle-charts");
+  const chartsCard = document.getElementById("al-charts-card");
+  toggleChartsBtn?.addEventListener("click", () => {
+    if (chartsCard) {
+      chartsCard.classList.toggle("is-collapsed");
+    }
+  });
+
+  // --- Export Log to CSV ---
+  document.getElementById("al-export-btn")?.addEventListener("click", () => {
+    const rows = Array.from(document.querySelectorAll<HTMLButtonElement>(".al__row-view-btn"));
+    if (rows.length === 0) {
+      alert("No audit logs available to export.");
+      return;
+    }
+
+    const headers = [
+      "ID",
+      "Timestamp",
+      "Actor Name",
+      "Actor Role",
+      "Actor ID",
+      "Action",
+      "Entity Table",
+      "Entity ID",
+      "Target",
+      "Severity",
+      "New Value",
+      "Old Value",
+      "Approval Request ID",
+    ];
+
+    const csvLines = [headers.map((h) => `"${h}"`).join(",")];
+
+    rows.forEach((btn) => {
+      try {
+        const d = JSON.parse(btn.dataset.json || "{}");
+        const line = [
+          d.id || "",
+          d.created_at || "",
+          d.actorName || "",
+          d.actorRole || "",
+          d.actor_id || "",
+          d.action || "",
+          d.entity_table || "",
+          d.entity_id || "",
+          d.targetText || "",
+          d.severity || "",
+          d.new_value ? JSON.stringify(d.new_value).replace(/"/g, '""') : "",
+          d.old_value ? JSON.stringify(d.old_value).replace(/"/g, '""') : "",
+          d.approval_request_id || "",
+        ];
+        csvLines.push(line.map((v) => `"${v}"`).join(","));
+      } catch {
+        // ignore malformed item
+      }
+    });
+
+    const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `audit_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // --- Event Details Dialog ---
+  const detailsDialog = document.getElementById("al-details-dialog") as HTMLDialogElement | null;
+  const dialogTitle = document.getElementById("al-dialog-title");
+  const dialogSubtitle = document.getElementById("al-dialog-subtitle");
+  const dialogId = document.getElementById("al-dialog-id");
+  const dialogTime = document.getElementById("al-dialog-time");
+  const dialogActor = document.getElementById("al-dialog-actor");
+  const dialogSevContainer = document.getElementById("al-dialog-sev-container");
+  const dialogAction = document.getElementById("al-dialog-action");
+  const dialogEntity = document.getElementById("al-dialog-entity");
+  const dialogApprovalRow = document.getElementById("al-dialog-approval-row");
+  const dialogApproval = document.getElementById("al-dialog-approval");
+  const dialogOldBox = document.getElementById("al-dialog-old-box");
+  const dialogOldCode = document.getElementById("al-dialog-old-code");
+  const dialogNewBox = document.getElementById("al-dialog-new-box");
+  const dialogNewCode = document.getElementById("al-dialog-new-code");
+
+  function openDetails(data: any) {
+    if (!detailsDialog) return;
+    if (dialogTitle) dialogTitle.textContent = `Event details · ${data.actionLabel || data.action}`;
+    if (dialogSubtitle) dialogSubtitle.textContent = `Recorded on ${data.fullDateTime}`;
+    if (dialogId) dialogId.textContent = data.id;
+    if (dialogTime) dialogTime.textContent = `${data.fullDateTime} (${data.date} at ${data.time})`;
+    if (dialogActor) dialogActor.textContent = `${data.actorName} (${data.actorRole})`;
+    if (dialogAction) dialogAction.textContent = `${data.actionLabel} [${data.action}]`;
+    if (dialogEntity) dialogEntity.textContent = `${data.entity_table} ${data.entity_id ? `· ${data.entity_id}` : ""}`;
+
+    if (dialogSevContainer) {
+      dialogSevContainer.innerHTML = `<span class="al__pill al__pill--${data.severity.toLowerCase()}">${data.severity}</span>`;
+    }
+
+    if (dialogApprovalRow && dialogApproval) {
+      if (data.approval_request_id) {
+        dialogApprovalRow.style.display = "flex";
+        dialogApproval.textContent = data.approval_request_id;
+      } else {
+        dialogApprovalRow.style.display = "none";
+      }
+    }
+
+    if (dialogOldBox && dialogOldCode) {
+      if (data.old_value !== null && data.old_value !== undefined) {
+        dialogOldBox.style.display = "flex";
+        dialogOldCode.textContent = JSON.stringify(data.old_value, null, 2);
+      } else {
+        dialogOldBox.style.display = "none";
+      }
+    }
+
+    if (dialogNewBox && dialogNewCode) {
+      if (data.new_value !== null && data.new_value !== undefined) {
+        dialogNewBox.style.display = "flex";
+        dialogNewCode.textContent = JSON.stringify(data.new_value, null, 2);
+      } else {
+        dialogNewBox.style.display = "none";
+      }
+    }
+
+    detailsDialog.showModal();
+  }
+
+  document.querySelectorAll<HTMLButtonElement>(".al__row-view-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      try {
+        const data = JSON.parse(btn.dataset.json || "{}");
+        openDetails(data);
+      } catch {
+        // ignore
+      }
+    });
+  });
+
+  // Clicking row also opens details
+  document.querySelectorAll<HTMLDivElement>(".al__row").forEach((row) => {
+    row.addEventListener("click", () => {
+      const btn = row.querySelector<HTMLButtonElement>(".al__row-view-btn");
+      if (btn) {
+        try {
+          const data = JSON.parse(btn.dataset.json || "{}");
+          openDetails(data);
+        } catch {
+          // ignore
+        }
+      }
+    });
+  });
+
+  const closeDialog = () => detailsDialog?.close();
+  document.getElementById("al-dialog-close")?.addEventListener("click", closeDialog);
+  document.getElementById("al-dialog-dismiss")?.addEventListener("click", closeDialog);
+  detailsDialog?.addEventListener("click", (e) => {
+    if (e.target === detailsDialog) closeDialog();
+  });
+
+  // --- Alert Rules Dialog ---
+  const alertRulesDialog = document.getElementById("al-alert-rules-dialog") as HTMLDialogElement | null;
+  document.getElementById("al-alert-rules-btn")?.addEventListener("click", () => {
+    alertRulesDialog?.showModal();
+  });
+  const closeAlertRules = () => alertRulesDialog?.close();
+  document.getElementById("al-alert-rules-close")?.addEventListener("click", closeAlertRules);
+  document.getElementById("al-alert-rules-dismiss")?.addEventListener("click", closeAlertRules);
+  alertRulesDialog?.addEventListener("click", (e) => {
+    if (e.target === alertRulesDialog) closeAlertRules();
+  });
+</script>

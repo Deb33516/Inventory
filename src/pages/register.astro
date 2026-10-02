@@ -30,9 +30,11 @@
 //    the footer's Privacy/Terms on every other auth screen) — kept as
 //    plain, non-navigating text, not a link to nowhere.
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { ROLE_DASHBOARD } from "../lib/roles";
 
 if (Astro.locals.user) {
-  return Astro.redirect("/account");
+  const role = Astro.locals.role;
+  return Astro.redirect(role && role !== "customer" ? ROLE_DASHBOARD[role] : "/account");
 }
 ---
 

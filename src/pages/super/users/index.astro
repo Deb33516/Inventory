@@ -1,139 +1,24 @@
 ---
-// Literal recreation of the Claude Design canvas's Admin Team screen
-// (project/AdminTeam.dc.html / AdminTeamDark.dc.html -> NavSidebar
-// role="admin" active="Team" + the shared NavTop.astro (section="Manage"
-// page="Team") + PageUsers, imported with role="admin" — a single
-// component parameterized for both the Admin ("Team") and Super Admin
-// ("Users") variants, same dc-import pattern already seen on Admin Ticket
-// Detail's PageAdminTicket) — this REPLACES the old AppShell/DESIGN.md
-// staff page that used to live at this same route (/admin/staff,
-// unchanged), same "redesign in place, don't fork a second URL" precedent
-// already used for /admin (Admin Dashboard). NavSidebar's "Team" item now
-// links here (see that file's own header comment).
-//
-// PERMISSIONS: unchanged — /admin/staff is already gated to
-// admin/super_admin by src/middleware.ts, not touched this turn. Every
-// authorization boundary below is a direct port of what the old page
-// already enforced (both client-side and, authoritatively, server-side
-// inside create_approval_request()/updateStaffProfile's RLS) — nothing was
-// loosened or invented:
-//  - A row whose real role is super_admin is always "Protected account",
-//    for EITHER viewer role — the old page enforced this uniformly
-//    (`isProtected = p.role === "super_admin"`), matching your explicit
-//    "Do NOT allow creation of another super_admin through the normal Team
-//    UI" / "preserve the existing hierarchy" instructions. Another
-//    super_admin cannot be deactivated or role-changed from here by
-//    anyone, including a fellow super_admin.
-//  - Your own row is always "This is you" — no self-service
-//    deactivate/role-change from this screen.
-//  - super_admin viewing any other (non-protected, non-self) row: direct
-//    Deactivate/Reactivate + role-change via the unmodified
-//    updateStaffProfile action (RLS-backed, not approval-gated — this is
-//    the real "unrestricted staff management" capability super_admin
-//    already had).
-//  - admin viewing any other (non-protected, non-self) row: "Request
-//    deactivation" / "Request role change" via the unmodified
-//    requestApproval RPC wrapper (create_approval_request, action types
-//    deactivate_staff/change_role) — exactly the real Phase 9 approval
-//    gate, reviewed at /admin/approvals. Admin never gets direct mutation
-//    power over another staff account merely because the design shows a
-//    single unified table — that capability line is drawn server-side
-//    (updateStaffProfile relies on RLS scoped to super_admin only; an
-//    admin calling it against another profile affects 0 rows) and was not
-//    touched.
-//  - Invite: both admin and super_admin get the exact same real
-//    inviteStaff capability (already authorized for both, confirmed by
-//    reading the action before building anything) — role restricted to
-//    sales_staff/inventory_staff/admin, never super_admin (a closed zod
-//    enum on the action itself, not just a UI restriction).
-//
-// NO-FABRICATION DECISIONS — the design's sample data invents an entire
-// "internal social network" of fields that do not exist in this schema.
-// Every one was checked against the real `profiles` table (id, role,
-// full_name, phone, avatar_url, is_active, created_at, updated_at — no
-// email column) before deciding how to handle it:
-//  - Email: auth.users.email is not exposed to the app for anyone other
-//    than the signed-in user's own session — customer_contact_email()
-//    (the one function that reads auth.users) explicitly returns null for
-//    a non-customer target (checked its source directly). The old
-//    /admin/staff page already reflected this by never displaying email at
-//    all; that omission is preserved here, not newly invented.
-//  - "2FA" column: no MFA/2FA system exists anywhere in this Supabase Auth
-//    setup — omitted entirely, not disabled-with-a-title (a wholly
-//    nonexistent concept, same "full omission" precedent as Category on
-//    Support Tickets/Products).
-//  - "Last active" column: no login/activity timestamp is tracked or
-//    exposed anywhere in this app — omitted entirely. Explicitly listed in
-//    your own instructions as something never to fabricate.
-//  - "Joined" (super variant) / "This month" business-activity metrics
-//    (admin variant, e.g. "38 orders · ₹24.6L", "14 receipts · 6
-//    adjustments"): the business-metric version is entirely fabricated —
-//    no per-staff performance rollup exists. Replaced for BOTH viewer
-//    roles with the one genuinely real, always-available equivalent:
-//    profiles.created_at, labeled "Joined" — an honest substitution of a
-//    real field for the design's intended (but here fake) semantic, same
-//    "relabel to match real semantics" precedent as inventory_value_
-//    summary's "at price" relabel.
-//  - Status ("Active"/"Invited"/"Suspended"): profiles has exactly one
-//    real status signal, the is_active boolean — "Invited" (would require
-//    reading auth.users.last_sign_in_at, a new capability) and "Suspended"
-//    (no distinct value from "deactivated") were dropped; real rows render
-//    only Active/Inactive, matching the old page's own two-state Badge.
-//  - Checkboxes + bulk "Change role…" footer action: no real bulk mutation
-//    action exists — omitted, same precedent as every other Admin list
-//    screen.
-//  - Import CSV / Export / "View" toggle: no real capability behind any of
-//    these — omitted entirely, never stubbed as fake-disabled buttons
-//    (these aren't even honestly-real-but-unavailable concepts, they're
-//    pure design flourishes with zero backend counterpart).
-//  - Pagination ("Page 1 of 6", rows-per-page): real dataset is a handful
-//    of staff rows — replaced with a real "{N} of {M} people" count
-//    footer, same precedent as every other Admin list screen.
-//  - The design's isAdmin banner claims "You can invite Sales staff and
-//    Inventory staff only" — checked against the real inviteStaff action
-//    and found this to be simply WRONG for this app: admin is actually
-//    authorized to invite Admin too (never Super admin). Copying the
-//    design's incorrect claim verbatim would misrepresent a real
-//    capability, so the banner text was corrected to state the real
-//    allowed roles instead of reproducing inaccurate design copy.
-//  - Stats row: the design shows different fabricated stats per role
-//    variant ("Active this week … of 46", "Pending invites … expires in 7
-//    days" — no activity-tracking or invitation-status data exists for
-//    either). Replaced with 5 real cards, real for BOTH viewer roles:
-//    Super admins / Admins / Sales staff / Inventory staff (real per-role
-//    counts) / Inactive (real is_active = false count). "Customers" (the
-//    super variant's 5th card) was left out — already has its own real
-//    page (/admin/customers).
-//  - Row "…" overflow-menu button: replaced with the same inline
-//    real-controls pattern the old page already used (visible
-//    button(s)/select, not a hidden menu) — a menu implies more options
-//    than genuinely exist here, and every other Admin list screen in this
-//    project already favors direct visible controls over a disclosure
-//    menu for real per-row actions.
-//  - Search: design says "Filter by name or email" — narrowed to name only
-//    (no real email field to search).
-//  - Role/Status toolbar facets: real, functional — same dashed-pill
-//    facet-select pattern already established on Admin Support Tickets'
-//    "+ Status"/"+ Assignee", driving real `role`/`status` query params.
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 import NavSidebar from "../../../components/staff/NavSidebar.astro";
 import NavTop from "../../../components/staff/NavTop.astro";
 
-const userId = Astro.locals.user!.id;
-const isSuperAdmin = Astro.locals.role === "super_admin";
-const viewerRole = (isSuperAdmin ? "super_admin" : "admin") as "admin" | "super_admin";
+// AUTHORIZATION: Strictly super_admin only.
+if (Astro.locals.role !== "super_admin") {
+  return Astro.redirect("/");
+}
 
+const userId = Astro.locals.user!.id;
 const url = Astro.url;
 const search = url.searchParams.get("search")?.trim() ?? "";
 const roleFilter = url.searchParams.get("role") ?? "";
 const statusFilter = url.searchParams.get("status") ?? "";
 const invited = url.searchParams.get("invited");
 
-const [{ data: staffRows }, { data: pendingApprovals }] = await Promise.all([
+const [{ data: profileRows }, { data: pendingApprovals }] = await Promise.all([
   Astro.locals.supabase
     .from("profiles")
     .select("id, full_name, role, is_active, created_at")
-    .neq("role", "customer")
     .order("role")
     .order("full_name"),
   Astro.locals.supabase
@@ -144,18 +29,12 @@ const [{ data: staffRows }, { data: pendingApprovals }] = await Promise.all([
 ]);
 
 const pendingRoleChangeByProfileId = new Map<string, { id: string; newRole: string; createdAt: string }>();
-const pendingDeactivationByProfileId = new Map<string, { id: string; createdAt: string }>();
 
 for (const req of (pendingApprovals ?? []) as any[]) {
   if (req.action_type === "change_role" && req.payload?.new_role) {
     pendingRoleChangeByProfileId.set(req.target_id, {
       id: req.id,
       newRole: req.payload.new_role,
-      createdAt: req.created_at,
-    });
-  } else if (req.action_type === "deactivate_staff") {
-    pendingDeactivationByProfileId.set(req.target_id, {
-      id: req.id,
       createdAt: req.created_at,
     });
   }
@@ -166,17 +45,21 @@ const ROLE_LABEL: Record<string, string> = {
   admin: "Admin",
   sales_staff: "Sales staff",
   inventory_staff: "Inventory staff",
+  customer: "Customer",
 };
+
 const ROLE_TONE: Record<string, "solid" | "info" | "outline" | "muted"> = {
   super_admin: "solid",
   admin: "info",
   sales_staff: "outline",
   inventory_staff: "muted",
+  customer: "muted",
 };
-const ALL_ROLES = ["super_admin", "admin", "sales_staff", "inventory_staff"] as const;
-const INVITE_ROLE_OPTIONS = ["sales_staff", "inventory_staff", "admin"] as const;
 
-const allRows = (staffRows ?? []).map((p) => ({
+const ALL_ROLES = ["super_admin", "admin", "sales_staff", "inventory_staff", "customer"] as const;
+const STAFF_ROLE_OPTIONS = ["sales_staff", "inventory_staff", "admin"] as const;
+
+const allRows = (profileRows ?? []).map((p) => ({
   id: p.id as string,
   name: (p.full_name as string | null) ?? "Unnamed",
   role: p.role as string,
@@ -185,8 +68,10 @@ const allRows = (staffRows ?? []).map((p) => ({
   isSelf: p.id === userId,
   isProtected: p.role === "super_admin",
   pendingRoleChange: pendingRoleChangeByProfileId.get(p.id),
-  pendingDeactivation: pendingDeactivationByProfileId.get(p.id),
 }));
+
+const staffRows = allRows.filter((r) => r.role !== "customer");
+const customerCount = allRows.filter((r) => r.role === "customer").length;
 
 const filtered = allRows.filter((r) => {
   if (roleFilter && r.role !== roleFilter) return false;
@@ -203,27 +88,49 @@ function buildUrl(overrides: Record<string, string | undefined>) {
     else next.delete(key);
   }
   const qs = next.toString();
-  return qs ? `/admin/staff?${qs}` : "/admin/staff";
+  return qs ? `/super/users?${qs}` : "/super/users";
 }
 
 function initials(name: string): string {
   const parts = name.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase());
   return parts.length > 0 ? parts.join("") : "—";
 }
+
 function fmtJoined(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
 const stats = [
-  { label: "Super admins", value: allRows.filter((r) => r.role === "super_admin").length, note: viewerRole === "super_admin" ? "incl. you" : "" },
-  { label: "Admins", value: allRows.filter((r) => r.role === "admin").length, note: viewerRole === "admin" ? "incl. you" : "" },
-  { label: "Sales staff", value: allRows.filter((r) => r.role === "sales_staff").length, note: "" },
-  { label: "Inventory staff", value: allRows.filter((r) => r.role === "inventory_staff").length, note: "" },
-  { label: "Inactive", value: allRows.filter((r) => !r.isActive).length, note: `of ${allRows.length}` },
+  {
+    label: "Super admins",
+    value: allRows.filter((r) => r.role === "super_admin").length,
+    note: "incl. you",
+  },
+  {
+    label: "Admins",
+    value: allRows.filter((r) => r.role === "admin").length,
+    note: "full business access",
+  },
+  {
+    label: "Sales staff",
+    value: allRows.filter((r) => r.role === "sales_staff").length,
+    note: "orders & CRM",
+  },
+  {
+    label: "Inventory staff",
+    value: allRows.filter((r) => r.role === "inventory_staff").length,
+    note: "catalog & stock",
+  },
+  {
+    label: "Customers",
+    value: customerCount,
+    note: "managed in Customers",
+    href: "/super/users?role=customer",
+  },
 ];
 ---
 
-<BaseLayout title="Team — Admin">
+<BaseLayout title="Users — Super Admin">
   <Fragment slot="head">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
   </Fragment>
@@ -232,49 +139,53 @@ const stats = [
     <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
 
     <div id="sd-sidebar" class="sd__sidebar">
-      <NavSidebar active="Team" role="admin" viewerRole={viewerRole} />
+      <NavSidebar active="Users" role="super" />
     </div>
 
     <div class="sd__panel">
-      <NavTop section="Manage" page="Team" />
+      <NavTop section="Access" page="Users" />
 
       <main id="main-content" class="tm__main">
-        <div class="tm__header">
+        <header class="tm__header">
           <div class="tm__heading-col">
-            <h1>Team</h1>
-            <span class="tm__subtitle">{allRows.length} people · Customer accounts are managed in Customers</span>
+            <h1>Users</h1>
+            <p class="tm__subtitle">
+              {staffRows.length} internal team member{staffRows.length === 1 ? "" : "s"} · 4 staff roles · {customerCount} customer{customerCount === 1 ? "" : "s"}
+            </p>
+            {invited && <p class="tm__banner" role="status">Invitation sent successfully.</p>}
           </div>
-          <button type="button" id="tm-invite-toggle" class="tm__btn tm__btn--primary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-            Invite staff
-          </button>
-        </div>
 
-        {invited && (
-          <p class="tm__banner" role="status">
-            Invitation sent.
-          </p>
-        )}
+          <div class="tm__actions-header">
+            <button type="button" id="tm-export-btn" class="tm__btn" title="Export users to CSV">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+              Export
+            </button>
+            <button type="button" id="tm-invite-toggle" class="tm__btn tm__btn--primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              Invite user
+            </button>
+          </div>
+        </header>
 
-        <section id="tm-invite-panel" class="tm__invite-panel" hidden aria-label="Invite staff">
-          <h2>Invite staff</h2>
-          <span class="tm__invite-hint">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 11v5M12 8h.01" /></svg>
-            You can invite Sales staff, Inventory staff, or Admin — not Super admin.
-          </span>
+        <section id="tm-invite-panel" class="tm__invite-panel" hidden>
+          <h2>Invite user</h2>
+          <div class="tm__invite-hint">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+            <span>You can invite Admins, Sales staff, and Inventory staff directly.</span>
+          </div>
           <form id="tm-invite-form" class="tm__invite-form">
-            <div class="tm__field-col">
+            <div class="tm__field">
               <label for="tm-invite-name">Full name</label>
-              <input type="text" id="tm-invite-name" name="fullName" required />
+              <input type="text" id="tm-invite-name" name="fullName" required placeholder="e.g. Priya Sharma" class="tm__input" />
             </div>
-            <div class="tm__field-col">
+            <div class="tm__field">
               <label for="tm-invite-email">Email</label>
-              <input type="email" id="tm-invite-email" name="email" required />
+              <input type="email" id="tm-invite-email" name="email" required placeholder="user@company.com" class="tm__input" />
             </div>
-            <div class="tm__field-col">
+            <div class="tm__field">
               <label for="tm-invite-role">Role</label>
-              <select id="tm-invite-role" name="role" required>
-                {INVITE_ROLE_OPTIONS.map((r) => (
+              <select id="tm-invite-role" name="role" required class="tm__select">
+                {STAFF_ROLE_OPTIONS.map((r) => (
                   <option value={r}>{ROLE_LABEL[r]}</option>
                 ))}
               </select>
@@ -293,14 +204,18 @@ const stats = [
               <span class="tm__stat-label">{s.label}</span>
               <div class="tm__stat-body">
                 <span class="tm__stat-value">{s.value}</span>
-                {s.note && <span class="tm__stat-note">{s.note}</span>}
+                {s.href ? (
+                  <a href={s.href} class="tm__stat-note tm__stat-link" title="View customer accounts">{s.note}</a>
+                ) : (
+                  s.note && <span class="tm__stat-note">{s.note}</span>
+                )}
               </div>
             </div>
           ))}
         </div>
 
         <div class="tm__toolbar">
-          <form method="get" action="/admin/staff" class="tm__search-form">
+          <form method="get" action="/super/users" class="tm__search-form">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0M20 20l-4-4"></path></svg>
             <input type="search" name="search" value={search} aria-label="Filter by name" placeholder="Filter by name…" class="tm__search-input" />
             {roleFilter && <input type="hidden" name="role" value={roleFilter} />}
@@ -319,6 +234,10 @@ const stats = [
             <option value={buildUrl({ status: "active" })} selected={statusFilter === "active"}>Active</option>
             <option value={buildUrl({ status: "inactive" })} selected={statusFilter === "inactive"}>Inactive</option>
           </select>
+
+          {(search || roleFilter || statusFilter) && (
+            <a href="/super/users" class="tm__clear-btn" title="Clear all filters">Clear filters</a>
+          )}
         </div>
 
         {
@@ -352,56 +271,44 @@ const stats = [
                       <span class="tm__muted-cell">Protected account</span>
                     ) : r.isSelf ? (
                       <span class="tm__muted-cell">This is you</span>
-                    ) : isSuperAdmin ? (
+                    ) : r.pendingRoleChange ? (
+                      <a href="/super/approvals" class="tm__pill tm__pill--warn" style="text-decoration:none;">Review pending approval</a>
+                    ) : r.role === "customer" ? (
                       <div class="tm__row-controls">
                         <button type="button" class="tm-toggle-active tm__link-btn" data-next-active={(!r.isActive).toString()}>
                           {r.isActive ? "Deactivate" : "Reactivate"}
                         </button>
-                        {r.pendingRoleChange ? (
-                          <a href="/admin/approvals" class="tm__pill tm__pill--warn" style="text-decoration:none;">Review pending approval</a>
-                        ) : (
-                          <>
-                            <select class="tm-role-select tm__mini-select" aria-label={`Change role for ${r.name}`}>
-                              {INVITE_ROLE_OPTIONS.map((opt) => (
-                                <option value={opt} selected={opt === r.role}>{ROLE_LABEL[opt]}</option>
-                              ))}
-                            </select>
-                            <button type="button" class="tm-save-role tm__link-btn">Save role</button>
-                          </>
-                        )}
+                        <select class="tm-role-select tm__mini-select" aria-label={`Assign staff role for ${r.name}`}>
+                          <option value="customer" selected>Customer</option>
+                          {STAFF_ROLE_OPTIONS.map((opt) => (
+                            <option value={opt}>{ROLE_LABEL[opt]}</option>
+                          ))}
+                        </select>
+                        <button type="button" class="tm-save-role tm__link-btn">Promote</button>
                       </div>
                     ) : (
                       <div class="tm__row-controls">
-                        {r.isActive && !r.pendingDeactivation && (
-                          <button type="button" class="tm-request-deactivate tm__link-btn">Request deactivation</button>
-                        )}
-                        {r.pendingRoleChange ? (
-                          <>
-                            <span class="tm__pill tm__pill--warn">Pending approval</span>
-                            <a href="/admin/approvals" class="tm__link-btn" style="font-size: 11px;">View in Approvals</a>
-                          </>
-                        ) : (
-                          <>
-                            <select class="tm-role-select tm__mini-select" aria-label={`Change role for ${r.name}`}>
-                              {INVITE_ROLE_OPTIONS.map((opt) => (
-                                <option value={opt} selected={opt === r.role}>{ROLE_LABEL[opt]}</option>
-                              ))}
-                            </select>
-                            <button type="button" class="tm-request-role tm__link-btn">Request role change</button>
-                          </>
-                        )}
+                        <button type="button" class="tm-toggle-active tm__link-btn" data-next-active={(!r.isActive).toString()}>
+                          {r.isActive ? "Deactivate" : "Reactivate"}
+                        </button>
+                        <select class="tm-role-select tm__mini-select" aria-label={`Change role for ${r.name}`}>
+                          {STAFF_ROLE_OPTIONS.map((opt) => (
+                            <option value={opt} selected={opt === r.role}>{ROLE_LABEL[opt]}</option>
+                          ))}
+                        </select>
+                        <button type="button" class="tm-save-role tm__link-btn">Save role</button>
                       </div>
                     )}
                     <p class="tm-row-message tm__row-message" role="status" />
                   </span>
                 </div>
               ))}
-              <div class="tm__panel-footer">{filtered.length} of {allRows.length} people</div>
+              <div class="tm__panel-footer">{filtered.length} of {allRows.length} users</div>
             </div>
           ) : (
             <div class="tm__empty">
-              <p class="tm__empty-title">No one found</p>
-              <p class="tm__empty-body">Try a different search or filter.</p>
+              <p class="tm__empty-title">No users found</p>
+              <p class="tm__empty-body">Try a different search or filter criteria.</p>
             </div>
           )
         }
@@ -554,6 +461,11 @@ const stats = [
     font-size: 13px;
     color: var(--sd-success-fg);
   }
+  .tm__actions-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 
   .tm__btn {
     height: 36px;
@@ -570,6 +482,7 @@ const stats = [
     align-items: center;
     gap: 6px;
     cursor: pointer;
+    text-decoration: none;
   }
   .tm__btn--primary {
     border: 0;
@@ -597,50 +510,45 @@ const stats = [
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 10px;
-    height: 30px;
-    border-radius: 8px;
-    background: var(--sd-info-bg);
-    color: var(--sd-info-fg);
     font-size: 12px;
-    font-weight: 500;
-    width: fit-content;
+    color: var(--sd-info-fg);
   }
   .tm__invite-form {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    max-width: 420px;
+    gap: 10px;
   }
-  .tm__field-col {
+  .tm__field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
-  .tm__field-col label {
-    font-size: 13px;
+  .tm__field label {
+    font-size: 12px;
     font-weight: 500;
+    color: var(--sd-muted-fg);
   }
-  .tm__field-col input,
-  .tm__field-col select {
+  .tm__input,
+  .tm__select {
+    height: 34px;
     box-sizing: border-box;
-    height: 36px;
-    padding: 0 12px;
-    border: 1px solid var(--sd-input);
+    padding: 0 10px;
     border-radius: 8px;
-    background: var(--sd-card);
-    font: inherit;
-    font-size: 14px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-panel);
     color: var(--sd-fg);
+    font: inherit;
+    font-size: 13px;
   }
   .tm__invite-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+    margin-top: 4px;
   }
   .tm__form-message {
     margin: 0;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--sd-danger-fg);
     min-height: 0;
   }
@@ -650,14 +558,9 @@ const stats = [
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 12px;
   }
-  @media (max-width: 1100px) {
+  @media (max-width: 900px) {
     .tm__stats {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-  @media (max-width: 640px) {
-    .tm__stats {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     }
   }
   .tm__stat-card {
@@ -684,10 +587,18 @@ const stats = [
     font-size: 22px;
     font-weight: 600;
     letter-spacing: -0.02em;
+    color: var(--sd-fg);
   }
   .tm__stat-note {
     font-size: 12px;
     color: var(--sd-muted-fg);
+  }
+  .tm__stat-link {
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .tm__stat-link:hover {
+    color: var(--sd-accent);
   }
 
   .tm__toolbar {
@@ -732,6 +643,15 @@ const stats = [
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
+  }
+  .tm__clear-btn {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .tm__clear-btn:hover {
+    color: var(--sd-fg);
   }
 
   .tm__panel {
@@ -789,6 +709,12 @@ const stats = [
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .tm__role-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
   .tm__pill {
     padding: 2px 8px;
     border-radius: 6px;
@@ -823,12 +749,6 @@ const stats = [
   .tm__pill--warn {
     background: var(--sd-warn-bg);
     color: var(--sd-warn-fg);
-  }
-  .tm__role-cell {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
   }
   .tm__muted-cell {
     color: var(--sd-muted-fg);
@@ -941,7 +861,29 @@ const stats = [
       return;
     }
 
-    window.location.href = "/admin/staff?invited=1";
+    window.location.href = "/super/users?invited=1";
+  });
+
+  // --- Export CSV functionality ---
+  document.getElementById("tm-export-btn")?.addEventListener("click", () => {
+    const rows = Array.from(document.querySelectorAll<HTMLDivElement>(".tm__row"));
+    if (rows.length === 0) return;
+
+    const csvLines = ["User,Role,Status"];
+    rows.forEach((row) => {
+      const name = row.querySelector(".tm__user-name")?.textContent?.trim() || "";
+      const role = row.querySelector(".tm__role-cell .tm__pill")?.textContent?.trim() || "";
+      const status = row.querySelector(".tm__pill--active, .tm__pill--inactive")?.textContent?.trim() || "";
+      csvLines.push(`"${name.replace(/"/g, '""')}","${role}","${status}"`);
+    });
+
+    const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `users_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   });
 
   // --- Role/Status facet navigation ---
@@ -954,12 +896,11 @@ const stats = [
     if (url) window.location.href = url;
   });
 
-  // --- Per-row real staff-management controls ---
+  // --- Per-row staff management controls ---
   document.querySelectorAll<HTMLDivElement>(".tm__row").forEach((row) => {
     const profileId = row.dataset.profileId!;
-    const currentRole = row.dataset.currentRole;
     const messageEl = row.querySelector<HTMLParagraphElement>(".tm-row-message");
-    const roleSelect = row.querySelector<HTMLSelectElement>(".tm-role-select");
+    const roleSelect = row.querySelector<HTMLSelectElement>("select.tm-role-select");
 
     const setMessage = (text: string, isError: boolean) => {
       if (!messageEl) return;
@@ -997,61 +938,9 @@ const stats = [
       }
       window.location.reload();
     });
-
-    row.querySelector<HTMLButtonElement>(".tm-request-deactivate")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget as HTMLButtonElement;
-      const reason = window.prompt("Reason for requesting deactivation:") ?? "";
-      if (!reason.trim()) return;
-      button.disabled = true;
-
-      const { error } = await actions.requestApproval({
-        actionType: "deactivate_staff",
-        targetTable: "profiles",
-        targetId: profileId,
-        reason,
-      });
-
-      if (error) {
-        button.disabled = false;
-        setMessage(error.message, true);
-        return;
-      }
-      setMessage("Request submitted.", false);
-      button.remove();
-    });
-
-    row.querySelector<HTMLButtonElement>(".tm-request-role")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget as HTMLButtonElement;
-      const newRole = roleSelect!.value;
-
-      if (newRole === currentRole) {
-        setMessage("Select a different role first.", true);
-        return;
-      }
-
-      const reason = window.prompt("Reason for requesting this role change:") ?? "";
-      if (!reason.trim()) return;
-      button.disabled = true;
-
-      const { error } = await actions.requestApproval({
-        actionType: "change_role",
-        targetTable: "profiles",
-        targetId: profileId,
-        reason,
-        newRole,
-      });
-
-      if (error) {
-        button.disabled = false;
-        setMessage(error.message, true);
-        return;
-      }
-      setMessage("Request submitted. Refreshing…", false);
-      window.location.reload();
-    });
   });
 
-  // --- Theme + sidebar chrome (same pattern as every other Admin screen) ---
+  // --- Theme + sidebar chrome ---
   const sdRoot = document.getElementById("sd-root");
   const THEME_KEY = "landing-theme";
 
@@ -1068,7 +957,7 @@ const stats = [
     try {
       localStorage.setItem(THEME_KEY, theme);
     } catch {
-      // ignore — private browsing / storage disabled
+      // ignore
     }
   }
 
@@ -1083,7 +972,4 @@ const stats = [
   document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
     applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
   });
-
-  // Sidebar toggle (desktop collapse + mobile drawer) is wired up
-  // centrally in NavSidebar.astro — see that file's header comment.
 </script>

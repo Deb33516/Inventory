@@ -112,7 +112,7 @@ const staffCancelIsDirect = viewerRole === "customer" || canDirectCancel;
           }
         }
 
-        const newStatus = action === "cancel" ? "cancelled" : button.dataset.nextStatus!;
+        const newStatus = (action === "cancel" ? "cancelled" : button.dataset.nextStatus!) as any;
 
         const { error } = await actions.updateOrderStatus({ orderId, newStatus, reason });
 

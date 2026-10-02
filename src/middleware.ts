@@ -14,7 +14,9 @@ import { ROLE_GATED_PREFIXES, ROLE_DASHBOARD, CUSTOMER_ONLY_PREFIXES } from "./l
 const PROTECTED_PREFIXES = ["/account", "/inventory", "/crm", "/checkout", "/sales", "/admin", "/super"];
 
 function matchesPrefix(pathname: string, prefix: string) {
-  return pathname === prefix || pathname.startsWith(prefix + "/");
+  const cleanPath = pathname.endsWith("/") && pathname.length > 1 ? pathname.slice(0, -1) : pathname;
+  const cleanPrefix = prefix.endsWith("/") && prefix.length > 1 ? prefix.slice(0, -1) : prefix;
+  return cleanPath === cleanPrefix || cleanPath.startsWith(cleanPrefix + "/");
 }
 
 export const onRequest = defineMiddleware(async (context, next) => {
@@ -53,6 +55,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return context.redirect(`/login?redirect=${redirectTo}`);
   }
 
+  // Customer-only routes: /account, /cart, /checkout.
+  // Staff/admin users attempting to visit are redirected directly to their role dashboard.
+  const isCustomerOnly = CUSTOMER_ONLY_PREFIXES.some((prefix) => matchesPrefix(context.url.pathname, prefix));
+
+  if (isCustomerOnly && role && role !== "customer") {
+    return context.redirect(ROLE_DASHBOARD[role]);
+  }
+
   const gatedPrefix = Object.keys(ROLE_GATED_PREFIXES).find((prefix) =>
     matchesPrefix(context.url.pathname, prefix)
   );
@@ -61,19 +71,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const allowedRoles = ROLE_GATED_PREFIXES[gatedPrefix];
 
     if (!role || !allowedRoles.includes(role)) {
-      return context.redirect("/");
+      if (role && role in ROLE_DASHBOARD) {
+        return context.redirect(ROLE_DASHBOARD[role as Exclude<UserRole, "customer">]);
+      }
+      return context.redirect(role === "customer" ? "/account" : "/");
     }
-  }
-
-  // /cart and /checkout are the customer purchase flow — a staff/admin
-  // role landing here (nothing stops them navigating directly) gets sent
-  // to their own dashboard instead of an irrelevant customer checkout UI.
-  // Anonymous visitors (role is null) and the `customer` role pass through
-  // unaffected — /cart stays intentionally browsable while signed out.
-  const isCustomerOnly = CUSTOMER_ONLY_PREFIXES.some((prefix) => matchesPrefix(context.url.pathname, prefix));
-
-  if (isCustomerOnly && role && role !== "customer") {
-    return context.redirect(ROLE_DASHBOARD[role]);
   }
 
   return next();

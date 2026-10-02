@@ -1,0 +1,873 @@
+---
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import NavSidebar from "../../../components/staff/NavSidebar.astro";
+import NavTop from "../../../components/staff/NavTop.astro";
+
+// AUTHORIZATION: Strictly super_admin only.
+if (Astro.locals.role !== "super_admin") {
+  return Astro.redirect("/");
+}
+
+const url = Astro.url;
+const selectedRole = url.searchParams.get("role") ?? "super_admin";
+
+// Fetch real profile counts by role
+const { data: profiles } = await Astro.locals.supabase
+  .from("profiles")
+  .select("role");
+
+const roleCounts: Record<string, number> = {
+  super_admin: 0,
+  admin: 0,
+  sales_staff: 0,
+  inventory_staff: 0,
+  customer: 0,
+};
+
+for (const p of profiles ?? []) {
+  if (p.role in roleCounts) {
+    roleCounts[p.role]++;
+  }
+}
+
+interface RoleDef {
+  key: string;
+  name: string;
+  purpose: string;
+  desc: string;
+  data: string;
+  userFilterParam: string;
+}
+
+const ROLES: Record<string, RoleDef> = {
+  super_admin: {
+    key: "super_admin",
+    name: "Super admin",
+    purpose: "Users, roles, settings, audit",
+    desc: "Owns the system: users, roles, settings and the audit log. Full access to all business data.",
+    data: "Everything · all records",
+    userFilterParam: "super_admin",
+  },
+  admin: {
+    key: "admin",
+    name: "Admin",
+    purpose: "Runs sales, stock and support",
+    desc: "Runs the business day to day: customers, orders, inventory, the support queue and the team.",
+    data: "All customers, orders, stock and tickets",
+    userFilterParam: "admin",
+  },
+  sales_staff: {
+    key: "sales_staff",
+    name: "Sales staff",
+    purpose: "Own customers and orders",
+    desc: "Sells to customers: manages their own contacts and orders and checks product stock.",
+    data: "Own contacts and orders · stock read-only",
+    userFilterParam: "sales_staff",
+  },
+  inventory_staff: {
+    key: "inventory_staff",
+    name: "Inventory staff",
+    purpose: "Stock, receiving, assigned tickets",
+    desc: "Keeps stock accurate: receives restocks, records adjustments and damage, and works on support tickets assigned to them.",
+    data: "Tickets assigned to them · all stock",
+    userFilterParam: "inventory_staff",
+  },
+  customer: {
+    key: "customer",
+    name: "Customer",
+    purpose: "Shop, own orders and tickets",
+    desc: "Buys through the customer portal: browses the shop, places and tracks own orders, raises support tickets.",
+    data: "Own account, orders and tickets only",
+    userFilterParam: "customer",
+  },
+};
+
+const activeRoleKey = selectedRole in ROLES ? selectedRole : "super_admin";
+const currentRole = ROLES[activeRoleKey]!;
+
+// Permission matrix definition (matching PageRoles.dc.html specification)
+const ALL = "VCED";
+type GrantValue = string | [string, string];
+
+const GRANTS: Record<string, Record<string, GrantValue>> = {
+  super_admin: {
+    cust: ALL,
+    orders: ALL,
+    neworder: "C",
+    products: ALL,
+    stock: "VE",
+    receiving: ALL,
+    adjust: ALL,
+    moves: "V",
+    suppliers: ALL,
+    tickets: ALL,
+    team: ALL,
+    reports: "V",
+    settings: "VE",
+    audit: "V",
+  },
+  admin: {
+    cust: ALL,
+    orders: ALL,
+    neworder: "C",
+    products: ALL,
+    stock: "VE",
+    receiving: ALL,
+    adjust: ALL,
+    moves: "V",
+    suppliers: ALL,
+    tickets: ALL,
+    team: ["VCE", "role changes via approval"],
+    reports: "V",
+    settings: "VE",
+    audit: "",
+  },
+  sales_staff: {
+    cust: ["VCE", "own contacts"],
+    orders: ["VCE", "own"],
+    neworder: "C",
+    products: "V",
+    stock: "V",
+    receiving: "",
+    adjust: "",
+    moves: "",
+    suppliers: "",
+    tickets: "",
+    team: "",
+    reports: ["V", "own"],
+    settings: "",
+    audit: "",
+  },
+  inventory_staff: {
+    cust: "",
+    orders: "",
+    neworder: "",
+    products: "VE",
+    stock: "V",
+    receiving: "VCE",
+    adjust: "VC",
+    moves: "V",
+    suppliers: "V",
+    tickets: ["VE", "assigned only"],
+    team: "",
+    reports: "",
+    settings: "",
+    audit: "",
+  },
+  customer: {
+    cust: "",
+    orders: ["VC", "own"],
+    neworder: ["C", "via shop"],
+    products: ["V", "shop"],
+    stock: "",
+    receiving: "",
+    adjust: "",
+    moves: "",
+    suppliers: "",
+    tickets: ["VC", "own"],
+    team: "",
+    reports: "",
+    settings: "",
+    audit: "",
+  },
+};
+
+interface MatrixItem {
+  id: string;
+  label: string;
+  actions: string; // subset of VCED
+}
+
+interface MatrixGroup {
+  name: string;
+  items: MatrixItem[];
+}
+
+const GROUPS: MatrixGroup[] = [
+  {
+    name: "Sales",
+    items: [
+      { id: "cust", label: "Customers", actions: "VCED" },
+      { id: "orders", label: "Orders", actions: "VCED" },
+      { id: "neworder", label: "New order", actions: "C" },
+    ],
+  },
+  {
+    name: "Inventory",
+    items: [
+      { id: "products", label: "Products & categories", actions: "VCED" },
+      { id: "stock", label: "Stock", actions: "VE" },
+      { id: "receiving", label: "Receiving & restock", actions: "VCED" },
+      { id: "adjust", label: "Stock adjustments & damage", actions: "VCED" },
+      { id: "moves", label: "Movements", actions: "V" },
+      { id: "suppliers", label: "Suppliers", actions: "VCED" },
+    ],
+  },
+  {
+    name: "Support",
+    items: [{ id: "tickets", label: "Support tickets", actions: "VCED" }],
+  },
+  {
+    name: "Admin",
+    items: [
+      { id: "team", label: "Team / users", actions: "VCED" },
+      { id: "reports", label: "Reports", actions: "V" },
+      { id: "settings", label: "Settings", actions: "VE" },
+      { id: "audit", label: "Audit log", actions: "V" },
+    ],
+  },
+];
+
+const COLS = [
+  { key: "V", label: "View" },
+  { key: "C", label: "Create" },
+  { key: "E", label: "Edit" },
+  { key: "D", label: "Delete" },
+];
+
+const roleGrants = GRANTS[activeRoleKey] ?? {};
+---
+
+<BaseLayout title="Roles & permissions — Super Admin">
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
+
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Roles & permissions" role="super" />
+    </div>
+
+    <div class="sd__panel">
+      <NavTop section="Access" page="Roles & permissions" />
+
+      <main id="main-content" class="rp__main">
+        <header class="rp__header">
+          <div class="rp__heading-col">
+            <h1>Roles & permissions</h1>
+            <p class="rp__subtitle">The five fixed roles in this version and what each one can see and do</p>
+          </div>
+          <div class="rp__actions">
+            <a href="/super/users" class="rp__btn" title="Manage user assignments in Users">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.2 2.6 3.6 5.2"></path></svg>
+              Go to Users
+            </a>
+          </div>
+        </header>
+
+        <div class="rp__body">
+          <!-- Left Column: Role Selector Nav -->
+          <nav aria-label="Roles" class="rp__roles-nav">
+            <div class="rp__roles-nav-head">
+              <h2>Roles</h2>
+              <span class="rp__roles-count">5 fixed roles</span>
+            </div>
+
+            <div class="rp__roles-list">
+              {Object.values(ROLES).map((r) => {
+                const isActive = r.key === activeRoleKey;
+                const count = roleCounts[r.key] ?? 0;
+                return (
+                  <a
+                    href={`/super/roles?role=${r.key}`}
+                    class={`rp__role-item ${isActive ? "is-active" : ""}`}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <span class="rp__role-item-text">
+                      <span class="rp__role-item-name">{r.name}</span>
+                      <span class="rp__role-item-purpose">{r.purpose}</span>
+                    </span>
+                    <span class="rp__role-item-count">{count}</span>
+                  </a>
+                );
+              })}
+            </div>
+
+            <div class="rp__roles-nav-footer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+              <span>Roles are fixed in this version. Assign people to roles from <a href="/super/users">Users</a>.</span>
+            </div>
+          </nav>
+
+          <!-- Right Column: Role Detail & Permission Matrix -->
+          <section aria-label={`Role ${currentRole.name}`} class="rp__detail-section">
+            <div class="rp__detail-head">
+              <div class="rp__detail-title-col">
+                <div class="rp__detail-title-row">
+                  <h2>{currentRole.name}</h2>
+                  <span class="rp__fixed-badge">Fixed role</span>
+                </div>
+                <p class="rp__detail-desc">{currentRole.desc}</p>
+              </div>
+
+              <div class="rp__detail-meta-grid">
+                <div class="rp__meta-field">
+                  <span class="rp__meta-label">Members</span>
+                  <div class="rp__meta-value-row">
+                    <span class="rp__meta-count">{roleCounts[currentRole.key] ?? 0} {currentRole.key === "customer" ? "accounts" : "members"}</span>
+                    {currentRole.key === "customer" ? (
+                      <a href="/super/users?role=customer" class="rp__meta-link">Managed in Customers</a>
+                    ) : (
+                      <a href={`/super/users?role=${currentRole.userFilterParam}`} class="rp__meta-link">View users</a>
+                    )}
+                  </div>
+                </div>
+                <div class="rp__meta-field">
+                  <span class="rp__meta-label">Data access</span>
+                  <span class="rp__meta-access">{currentRole.data}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Permission Table -->
+            <div class="rp__matrix-container" role="table" aria-label={`Permissions for ${currentRole.name} (read-only)`}>
+              <div class="rp__matrix-head" role="row">
+                <span role="columnheader" class="rp__head-cell rp__head-module">Module</span>
+                {COLS.map((col) => (
+                  <span role="columnheader" class="rp__head-cell rp__head-action">{col.label}</span>
+                ))}
+              </div>
+
+              <div class="rp__matrix-body">
+                {GROUPS.map((group) => (
+                  <Fragment>
+                    <div class="rp__group-row" role="row">
+                      <span role="rowheader" class="rp__group-label">{group.name}</span>
+                    </div>
+
+                    {group.items.map((item) => {
+                      const rawGrant = roleGrants[item.id];
+                      const grantCode = Array.isArray(rawGrant) ? rawGrant[0] : (rawGrant ?? "");
+                      const scopeNote = Array.isArray(rawGrant) ? rawGrant[1] : "";
+                      const allowedActions = grantCode === ALL ? item.actions : grantCode;
+
+                      return (
+                        <div class="rp__item-row" role="row">
+                          <span role="rowheader" class="rp__item-label">
+                            <span class="rp__item-name">{item.label}</span>
+                            {scopeNote && <span class="rp__scope-pill">· {scopeNote}</span>}
+                          </span>
+
+                          {COLS.map((col) => {
+                            const isAllowed = item.actions.includes(col.key) && allowedActions.includes(col.key);
+                            return (
+                              <span role="cell" class="rp__cell-action">
+                                {isAllowed ? (
+                                  <span class="rp__check-badge" role="img" aria-label={`${col.label} ${item.label}: allowed`}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+                                  </span>
+                                ) : (
+                                  <span class="rp__dash" role="img" aria-label={`${col.label} ${item.label}: not allowed`}>—</span>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  .rp__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+  }
+  @media (max-width: 640px) {
+    .rp__main {
+      padding: 16px;
+    }
+  }
+
+  .rp__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .rp__heading-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rp__heading-col h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .rp__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+  .rp__btn {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .rp__btn:hover {
+    background: var(--sd-muted);
+  }
+
+  .rp__body {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .rp__body {
+      flex-direction: column;
+    }
+  }
+
+  /* Left Role Nav */
+  .rp__roles-nav {
+    width: 272px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 12px;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  @media (max-width: 900px) {
+    .rp__roles-nav {
+      width: 100%;
+    }
+  }
+  .rp__roles-nav-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px 10px;
+  }
+  .rp__roles-nav-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .rp__roles-count {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .rp__roles-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rp__role-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s ease;
+  }
+  .rp__role-item:hover {
+    background: var(--sd-muted);
+  }
+  .rp__role-item.is-active {
+    background: var(--sd-muted);
+  }
+  .rp__role-item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-grow: 1;
+    min-width: 0;
+  }
+  .rp__role-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--sd-fg);
+  }
+  .rp__role-item-purpose {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rp__role-item-count {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg2);
+  }
+  .rp__roles-nav-footer {
+    margin-top: auto;
+    padding: 12px 8px 4px;
+    border-top: 1px solid var(--sd-border);
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+    line-height: 1.5;
+  }
+  .rp__roles-nav-footer svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .rp__roles-nav-footer a {
+    color: var(--sd-accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  /* Right Role Detail Section */
+  .rp__detail-section {
+    flex-grow: 1;
+    min-width: 0;
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    background: var(--sd-card);
+    box-shadow: var(--sd-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .rp__detail-head {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--sd-border);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .rp__detail-title-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rp__detail-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rp__detail-title-row h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .rp__fixed-badge {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .rp__detail-desc {
+    margin: 0;
+    font-size: 14px;
+    color: var(--sd-fg2);
+  }
+  .rp__detail-meta-grid {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .rp__detail-meta-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .rp__meta-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rp__meta-label {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .rp__meta-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 14px;
+  }
+  .rp__meta-count {
+    font-weight: 600;
+  }
+  .rp__meta-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-accent);
+    text-decoration: none;
+  }
+  .rp__meta-link:hover {
+    text-decoration: underline;
+  }
+  .rp__meta-access {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--sd-fg);
+  }
+
+  /* Permission Matrix */
+  .rp__matrix-container {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-x: auto;
+  }
+  .rp__matrix-head {
+    display: grid;
+    grid-template-columns: 1fr 96px 96px 96px 96px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 20px;
+    height: 36px;
+    background: var(--sd-shell);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    min-width: 600px;
+  }
+  .rp__head-cell {
+    white-space: nowrap;
+  }
+  .rp__head-action {
+    text-align: center;
+  }
+  .rp__matrix-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 600px;
+  }
+  .rp__group-row {
+    display: grid;
+    grid-template-columns: 1fr 96px 96px 96px 96px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 20px;
+    height: 28px;
+    border-bottom: 1px solid var(--sd-border);
+    background: var(--sd-card);
+  }
+  .rp__group-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sd-muted-fg);
+  }
+  .rp__item-row {
+    display: grid;
+    grid-template-columns: 1fr 96px 96px 96px 96px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 20px;
+    height: 34px;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+  }
+  .rp__item-label {
+    padding-left: 12px;
+    color: var(--sd-fg);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+  }
+  .rp__item-name {
+    font-weight: 400;
+  }
+  .rp__scope-pill {
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .rp__cell-action {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .rp__check-badge {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .rp__dash {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+</style>
+
+<script>
+  // Theme toggle persistence
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+    }
+    document
+      .getElementById("sd-theme-toggle")
+      ?.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+</script>

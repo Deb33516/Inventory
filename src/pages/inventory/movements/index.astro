@@ -21,7 +21,8 @@ if (movementType) query = query.eq("movement_type", movementType);
 
 query = query.order("created_at", { ascending: false }).range(from, to);
 
-const { data: movements, count } = await query;
+const { data: movementRows, count } = await query;
+const movements = (movementRows ?? []) as unknown as Array<{ id: string; movement_type: string; quantity_delta: number; reason: string | null; created_at: string; products: { sku: string; name: string } | null }>;
 const totalPages = count ? Math.ceil(count / PAGE_SIZE) : 1;
 
 function buildUrl(overrides: Record<string, string | undefined>) {

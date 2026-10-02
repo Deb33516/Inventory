@@ -1,6 +1,7 @@
 ---
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "../../lib/supabase/server";
+import { getSafeInternalRedirect } from "../../lib/roles";
 
 // @supabase/ssr defaults every client to the PKCE flow, so the links
 // Supabase emails for signup confirmation and password recovery redirect
@@ -12,8 +13,8 @@ const supabase = createClient({
   cookies: Astro.cookies,
 });
 
-const next = Astro.url.searchParams.get("next") ?? "/account";
-const safeNext = next.startsWith("/") ? next : "/account";
+const nextParam = Astro.url.searchParams.get("next");
+const safeNext = getSafeInternalRedirect(nextParam, "/account");
 
 const code = Astro.url.searchParams.get("code");
 const tokenHash = Astro.url.searchParams.get("token_hash");

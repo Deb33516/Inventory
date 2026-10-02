@@ -1,28 +1,16 @@
 ---
-// Matches the Claude Design canvas's Inventory Staff artboard
-// (project/Staff.dc.html, board "Staff warehouse tasks", page id "staff")
-// as closely as technically possible. Four design sections have no backing
-// data model yet and are rendered as honest, non-fabricated empty/deferred
-// states rather than invented numbers — see the inline notes below and the
-// implementation report for the full real-vs-deferred breakdown.
+// Warehouse tasks dashboard for Inventory Staff
+// Recreated from Staff.dc.html & StaffDark.dc.html (Staff warehouse tasks)
+// Uses the shared --sd-* token shell, NavSidebar (role="inventory"), and NavTop
+// with full Light and Dark mode theme support.
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import Card from "../../components/ui/Card.astro";
-import EmptyState from "../../components/catalog/EmptyState.astro";
-import KpiCard from "../../components/dashboard/KpiCard.astro";
-import ChartCanvas from "../../components/dashboard/ChartCanvas.astro";
-import Badge from "../../components/ui/Badge.astro";
-import FilterChip from "../../components/catalog/FilterChip.astro";
+import NavSidebar from "../../components/staff/NavSidebar.astro";
+import NavTop from "../../components/staff/NavTop.astro";
 import { resolveDashboardRange } from "../../lib/dashboardRange";
-import AppShell from "../../components/layout/AppShell.astro";
-import { CHART_COLORS } from "../../lib/chartTheme";
-import { staffSidebarNav, STAFF_ICONS } from "../../lib/staffNav";
 
-const userId = Astro.locals.user!.id;
+const userId = Astro.locals.user?.id;
 
-// --- Real: low stock (existing calc, unchanged from the prior dashboard) —
-// select broadened to include product_id/sku/name too, so the exact same
-// real rows can also back the "My task queue" Restock rows below (no second
-// query, no new definition of "low stock"). ---
+// --- Real: low stock products ---
 const { data: inventoryRows } = await Astro.locals.supabase
   .from("inventory")
   .select("product_id, quantity_on_hand, reorder_level, products!inner(sku, name, is_active)")
@@ -31,19 +19,15 @@ const { data: inventoryRows } = await Astro.locals.supabase
 const rows = inventoryRows ?? [];
 const lowStockCount = rows.filter((r) => r.quantity_on_hand > 0 && r.quantity_on_hand <= r.reorder_level).length;
 
-// --- Real: my open support tickets — select broadened to include id/
-// subject/created_at too, so the same real rows can also back the "My task
-// queue" Ticket rows below (same filter that already computes
-// openTicketCount, no second query, no new definition of "open"). ---
+// --- Real: my open support tickets ---
 const { data: myTickets } = await Astro.locals.supabase
   .from("support_tickets")
   .select("id, subject, status, created_at")
-  .eq("assigned_to", userId);
+  .eq("assigned_to", userId ?? "");
 const openTickets = (myTickets ?? []).filter((t) => !["resolved", "closed"].includes(t.status));
 const openTicketCount = openTickets.length;
 
-// --- "My task queue" (real data only — see the section's own markup
-// comment below for the full real-vs-unavailable breakdown per task type).
+// --- Task Queue Data ---
 const queue = Astro.url.searchParams.get("queue") ?? "all";
 
 function buildQueueUrl(next: string) {
@@ -57,19 +41,16 @@ function buildQueueUrl(next: string) {
 interface TaskRow {
   type: "restock" | "ticket";
   pillLabel: string;
+  pillClass: string;
   reference: string;
   details: string;
   units: string;
   location: string;
   due: string;
+  isUrgent?: boolean;
   startHref: string;
 }
 
-// Restock: the exact same "low stock" rows as the KPI card above (real
-// products genuinely needing restocking) — Start links to the real
-// Receiving screen. Reference is the real SKU; Location/Due have no real
-// backing field anywhere in the schema, so both are shown as "—" rather
-// than invented.
 function productOf(row: { products: unknown }): { sku: string; name: string } {
   return row.products as unknown as { sku: string; name: string };
 }
@@ -82,36 +63,32 @@ const restockRows: TaskRow[] = [...rows]
     return {
       type: "restock",
       pillLabel: "Restock",
+      pillClass: "st-pill--info",
       reference: product.sku,
       details: `${product.name} · ${r.quantity_on_hand} on hand · reorder at ${r.reorder_level}`,
       units: String(r.quantity_on_hand),
       location: "—",
       due: "—",
+      isUrgent: r.quantity_on_hand <= Math.ceil(r.reorder_level / 2),
       startHref: "/inventory/receiving",
     };
   });
 
-// Tickets: the exact same "my open tickets" rows as the KPI card above —
-// Start links to the real ticket detail page. No sequential reference-
-// number field exists on support_tickets (just a uuid) — shown as "—"
-// rather than inventing a "TK-####" scheme. Units/Location/Due have no
-// real backing field on a ticket — all "—".
 const ticketRows: TaskRow[] = [...openTickets]
   .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   .map((t) => ({
     type: "ticket",
     pillLabel: "Ticket",
+    pillClass: "st-pill--muted",
     reference: "—",
     details: t.subject,
     units: "—",
     location: "—",
     due: "—",
+    isUrgent: false,
     startHref: `/inventory/tickets/${t.id}`,
   }));
 
-// Receive/Damage/Adjust: no incoming-shipment, pending-damage, or pending-
-// adjustment entity exists anywhere in this schema (see CLAUDE.md) — these
-// three categories are always real, honest zeros, never fabricated rows.
 const queueCounts = {
   all: restockRows.length + ticketRows.length,
   receive: 0,
@@ -122,19 +99,19 @@ const queueCounts = {
 };
 
 const QUEUE_FILTERS: { value: keyof typeof queueCounts; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "receive", label: "Receive" },
-  { value: "restock", label: "Restock" },
-  { value: "damage", label: "Damage" },
-  { value: "adjust", label: "Adjust" },
-  { value: "tickets", label: "Tickets" },
+  { value: "all", label: `All ${queueCounts.all}` },
+  { value: "receive", label: `Receive ${queueCounts.receive}` },
+  { value: "restock", label: `Restock ${queueCounts.restock}` },
+  { value: "damage", label: `Damage ${queueCounts.damage}` },
+  { value: "adjust", label: `Adjust ${queueCounts.adjust}` },
+  { value: "tickets", label: `Tickets ${queueCounts.tickets}` },
 ];
 
 const visibleTaskRows: TaskRow[] =
   queue === "restock" ? restockRows : queue === "tickets" ? ticketRows : queue === "all" ? [...restockRows, ...ticketRows] : [];
 
 const EMPTY_QUEUE_MESSAGE: Record<string, string> = {
-  all: "No task queue yet.",
+  all: "No pending tasks in your queue today.",
   receive: "Incoming-shipment tracking isn't supported in this system yet.",
   restock: "No products are currently low on stock.",
   damage: "Damage-to-record tracking isn't supported in this system yet.",
@@ -142,12 +119,7 @@ const EMPTY_QUEUE_MESSAGE: Record<string, string> = {
   tickets: "No open tickets assigned to you.",
 };
 
-// --- Real: stock movements, last 7 days, bucketed by IST calendar day into
-// in (positive quantity_delta) vs out (negative) — the design shows this
-// exact shape, but the existing dashboard_inventory_movement_summary RPC
-// only totals by movement_type over a range, not per day, so the raw rows
-// are fetched (same RLS-covered table already used by /inventory/movements)
-// and bucketed here rather than adding a new RPC/migration for this alone.
+// --- Real: Stock Movements for the Last 7 Days ---
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 function istDayKey(iso: string) {
@@ -157,9 +129,10 @@ function istDayKey(iso: string) {
 const range = resolveDashboardRange("7d");
 const { data: movementRows } = await Astro.locals.supabase
   .from("inventory_movements")
-  .select("quantity_delta, created_at")
+  .select("id, quantity_delta, movement_type, created_at, products(name, sku)")
   .gte("created_at", range.from!)
-  .lt("created_at", range.to!);
+  .lt("created_at", range.to!)
+  .order("created_at", { ascending: false });
 
 const days = Array.from({ length: 7 }, (_, i) => {
   const t = new Date(new Date(range.from!).getTime() + i * DAY_MS);
@@ -178,193 +151,908 @@ for (const m of movementRows ?? []) {
 }
 const totalIn = [...inByDay.values()].reduce((a, b) => a + b, 0);
 const totalOut = [...outByDay.values()].reduce((a, b) => a + b, 0);
-const hasMovementData = totalIn > 0 || totalOut > 0;
+
+// Calculate max chart scale
+const maxVal = Math.max(10, ...days.map((d) => Math.max(inByDay.get(d.key) ?? 0, outByDay.get(d.key) ?? 0)));
+const chartMax = Math.ceil(maxVal / 20) * 20 || 100;
+const chartMid = Math.round(chartMax / 2);
+
+// Recent activity / scans
+const recentMovements = (movementRows ?? []).slice(0, 3).map((m) => {
+  const prod = (m.products as unknown as { name?: string; sku?: string }) ?? {};
+  return {
+    name: prod.name ?? "Item movement",
+    bin: prod.sku ?? "Stock",
+    qty: m.quantity_delta > 0 ? `+${m.quantity_delta} in stock` : `${m.quantity_delta} removed`,
+  };
+});
 ---
 
 <BaseLayout title="Warehouse tasks — Inventory">
-  <AppShell
-    active="/inventory"
-    sidebarNav={staffSidebarNav(openTicketCount)}
-    sidebarBadge="INVENTORY"
-    breadcrumb={["Dashboard", "Warehouse tasks"]}
-    topbarSearch={{ placeholder: "Find product, SKU or bin…" }}
-    topbarActions={[{ label: "Report an issue", href: "/inventory/tickets" }]}
-    showNotifications
-  >
-    <Fragment slot="sidebar-widget">
-      <div class="mx-xs mb-md p-md rounded-xl bg-surface-soft border border-hairline">
-        <p class="text-xs text-muted">Shift</p>
-        <p class="mt-xxs text-sm font-bold text-ink">Not available yet</p>
-        <p class="mt-xxs text-xs text-muted">Shift scheduling isn't tracked in this system yet.</p>
-      </div>
-    </Fragment>
+  <Fragment slot="head">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" />
+  </Fragment>
 
-    <div class="flex items-end justify-between flex-wrap gap-md">
-      <div>
-        <h1 class="text-2xl font-bold text-ink">Warehouse tasks</h1>
-        <p class="mt-xxs text-sm text-muted">{lowStockCount} product{lowStockCount === 1 ? "" : "s"} low on stock</p>
-      </div>
+  <div class="sd" id="sd-root">
+    <div id="sd-sidebar-backdrop" class="sd__backdrop"></div>
+
+    <div id="sd-sidebar" class="sd__sidebar">
+      <NavSidebar active="Warehouse tasks" role="inventory" ticketBadgeCount={openTicketCount} />
     </div>
 
-    <div class="mt-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-lg">
-      <KpiCard label="Restocks to receive" value="—" sublabel="Not tracked yet" icon={STAFF_ICONS.inbox} />
-      <KpiCard
-        label="Low stock"
-        value={String(lowStockCount)}
-        tone="warning"
-        href="/inventory/stock?status=low"
-        sublabel="View low stock"
-        icon={STAFF_ICONS.alert}
+    <div class="sd__panel">
+      <NavTop
+        section="Dashboard"
+        page="Warehouse tasks"
+        searchAction="/inventory/products"
+        searchPlaceholder="Find product, SKU or bin…"
       />
-      <KpiCard label="Damage to record" value="—" sublabel="Not tracked yet" icon={STAFF_ICONS.box} />
-      <KpiCard
-        label="My open tickets"
-        value={String(openTicketCount)}
-        href={openTicketCount > 0 ? "/inventory/tickets" : undefined}
-        sublabel={openTicketCount > 0 ? "View my tickets" : "No open tickets"}
-        icon={STAFF_ICONS.support}
-      />
-    </div>
 
-    <div class="mt-lg flex flex-col lg:flex-row gap-lg items-start">
-      <section class="w-full lg:w-[740px] shrink-0 bg-canvas border border-hairline rounded-xl shadow-sm overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between flex-wrap gap-sm px-lg pt-lg pb-sm">
-          <h2 class="text-sm font-bold text-ink">My task queue</h2>
-          <div role="group" aria-label="Filter tasks" class="flex flex-wrap gap-xs">
-            {
-              QUEUE_FILTERS.map((f) => (
-                <FilterChip href={buildQueueUrl(f.value)} active={queue === f.value || (queue === "all" && f.value === "all")}>
-                  {`${f.label} ${queueCounts[f.value]}`}
-                </FilterChip>
-              ))
-            }
+      <main id="main-content" class="st__main">
+        <div class="st__header">
+          <div class="st__header-text">
+            <h1>Warehouse tasks</h1>
+            <span class="st__subtitle">
+              {queueCounts.all} task{queueCounts.all === 1 ? "" : "s"} today · {lowStockCount} restock{lowStockCount === 1 ? "" : "s"} low on stock
+            </span>
           </div>
         </div>
 
-        <div class="overflow-x-auto">
-          <div
-            class="grid gap-sm px-lg h-9 items-center bg-surface-soft border-t border-b border-hairline text-xs font-bold text-muted uppercase tracking-[0.5px]"
-            style="grid-template-columns: 96px 84px 1fr 52px 72px 52px 64px; min-width: 620px;"
-          >
-            <span>Task</span>
-            <span>Reference</span>
-            <span>Details</span>
-            <span class="text-right">Units</span>
-            <span>Location</span>
-            <span>Due</span>
-            <span></span>
+        <!-- 4 KPI Cards -->
+        <div class="st__kpis">
+          <div class="st__kpi">
+            <div class="st__kpi-top">
+              <span class="st__kpi-label">Restocks to receive</span>
+              <span class="st__kpi-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z"></path></svg>
+              </span>
+            </div>
+            <div class="st__kpi-bot">
+              <span class="st__kpi-value">—</span>
+              <span class="st__kpi-sub">Not tracked yet</span>
+            </div>
           </div>
 
-          {
-            visibleTaskRows.length > 0 ? (
-              <div>
-                {visibleTaskRows.map((t) => (
-                  <div
-                    class="grid gap-sm px-lg items-center border-b border-hairline text-sm"
-                    style="grid-template-columns: 96px 84px 1fr 52px 72px 52px 64px; min-width: 620px; height: 54px;"
-                  >
-                    <span>
-                      <Badge tone={t.type === "restock" ? "warning" : "neutral"}>{t.pillLabel}</Badge>
-                    </span>
-                    <span class="font-bold text-ink">{t.reference}</span>
-                    <span class="text-body truncate">{t.details}</span>
-                    <span class="text-right font-bold text-ink">{t.units}</span>
-                    <span class="text-xs text-body">{t.location}</span>
-                    <span class="text-xs text-body">{t.due}</span>
+          <div class="st__kpi">
+            <div class="st__kpi-top">
+              <span class="st__kpi-label">Low stock</span>
+              <span class="st__kpi-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4M12 17h.01"></path></svg>
+              </span>
+            </div>
+            <div class="st__kpi-bot">
+              <span class="st__kpi-value">{lowStockCount}</span>
+              <a href="/inventory/products" class="st__kpi-link">View low stock</a>
+            </div>
+          </div>
+
+          <div class="st__kpi">
+            <div class="st__kpi-top">
+              <span class="st__kpi-label">Damage to record</span>
+              <span class="st__kpi-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5zM3 7.5 12 12l9-4.5M12 12v9"></path></svg>
+              </span>
+            </div>
+            <div class="st__kpi-bot">
+              <span class="st__kpi-value">—</span>
+              <span class="st__kpi-sub">Not tracked yet</span>
+            </div>
+          </div>
+
+          <div class="st__kpi">
+            <div class="st__kpi-top">
+              <span class="st__kpi-label">My open tickets</span>
+              <span class="st__kpi-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v12H8l-4 4z"></path></svg>
+              </span>
+            </div>
+            <div class="st__kpi-bot">
+              <span class="st__kpi-value">{openTicketCount}</span>
+              {
+                openTicketCount > 0 ? (
+                  <a href="/inventory/tickets" class="st__kpi-link">View my tickets</a>
+                ) : (
+                  <span class="st__kpi-sub">No open tickets</span>
+                )
+              }
+            </div>
+          </div>
+        </div>
+
+        <!-- Two Columns Layout -->
+        <div class="st__columns">
+          <!-- Left Column: Task Queue -->
+          <section aria-label="My task queue" class="st__queue-card">
+            <div class="st__queue-head">
+              <h2>My task queue</h2>
+              <div role="group" aria-label="Filter tasks" class="st__filters">
+                {
+                  QUEUE_FILTERS.map((f) => (
                     <a
-                      href={t.startHref}
-                      class="h-9 box-border rounded-lg border border-hairline bg-canvas text-xs font-bold text-ink flex items-center justify-center hover:border-hairline-strong"
+                      href={buildQueueUrl(f.value)}
+                      class:list={["st__filter-btn", { "is-active": queue === f.value || (queue === "all" && f.value === "all") }]}
                     >
-                      Start
+                      {f.label}
                     </a>
-                  </div>
-                ))}
+                  ))
+                }
               </div>
-            ) : (
-              <EmptyState class="m-lg" title={EMPTY_QUEUE_MESSAGE[queue] ?? EMPTY_QUEUE_MESSAGE.all} />
-            )
-          }
-        </div>
-      </section>
-
-      <div class="flex-grow w-full flex flex-col gap-lg">
-        <Card>
-          <h2 class="text-sm font-bold text-ink">Scan to look up or receive</h2>
-          <p class="mt-xxs text-xs text-muted">Product barcode, SKU or name</p>
-          <label class="mt-md h-14 box-border px-md border-2 border-primary rounded-lg bg-surface-soft flex items-center gap-md text-muted">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M7 12h10" />
-            </svg>
-            <input
-              id="staff-lookup-input"
-              type="text"
-              aria-label="Scan barcode or type SKU"
-              placeholder="Scan barcode or type SKU"
-              class="border-0 outline-none bg-transparent text-base flex-grow text-ink"
-            />
-          </label>
-          <div class="mt-md">
-            <p class="text-xs font-bold text-muted">Recent scans</p>
-            <EmptyState class="mt-sm" title="No recent scans yet" message="Scan history isn't tracked in this system yet." />
-          </div>
-        </Card>
-
-        <Card>
-          <div class="flex items-start justify-between">
-            <div>
-              <h2 class="text-sm font-bold text-ink">Stock movements this week</h2>
-              <p class="mt-xxs text-xs text-muted">Units received vs sold · last 7 days</p>
             </div>
-            <div class="flex flex-col gap-xxs text-xs text-muted">
-              <span class="flex items-center gap-xs"><span class="w-2 h-2 rounded-sm" style={`background:${CHART_COLORS.ink}`}></span>In {totalIn}</span>
-              <span class="flex items-center gap-xs"><span class="w-2 h-2 rounded-sm" style={`background:${CHART_COLORS.mute}`}></span>Out {totalOut}</span>
+
+            <div class="st__table-scroll">
+              <div class="st__table-head">
+                <span>Task</span>
+                <span>Reference</span>
+                <span>Details</span>
+                <span class="st__col-right">Units</span>
+                <span>Location</span>
+                <span>Due</span>
+                <span></span>
+              </div>
+
+              {
+                visibleTaskRows.length > 0 ? (
+                  <div class="st__table-rows">
+                    {visibleTaskRows.map((t) => (
+                      <div class="st__table-row">
+                        <span>
+                          <span class:list={["st-pill", t.pillClass]}>{t.pillLabel}</span>
+                        </span>
+                        <span class="st__table-ref">{t.reference}</span>
+                        <span class="st__table-details" title={t.details}>{t.details}</span>
+                        <span class="st__col-right st__table-units">{t.units}</span>
+                        <span class="st__table-loc">{t.location}</span>
+                        <span class:list={["st__table-due", { "is-urgent": t.isUrgent }]}>{t.due}</span>
+                        <a href={t.startHref} class="st__start-btn">Start</a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div class="st__empty-queue">
+                    <p>{EMPTY_QUEUE_MESSAGE[queue] ?? EMPTY_QUEUE_MESSAGE.all}</p>
+                  </div>
+                )
+              }
             </div>
-          </div>
-          <div class="mt-sm">
-            {
-              hasMovementData ? (
-                <ChartCanvas
-                  id="staff-weekly-movements"
-                  type="bar"
-                  height={226}
-                  data={{
-                    labels: days.map((d) => d.label),
-                    datasets: [
-                      { label: "In", data: days.map((d) => inByDay.get(d.key) ?? 0), backgroundColor: CHART_COLORS.ink },
-                      { label: "Out", data: days.map((d) => outByDay.get(d.key) ?? 0), backgroundColor: CHART_COLORS.mute },
-                    ],
-                  }}
-                  options={{ plugins: { legend: { display: false } } }}
+          </section>
+
+          <!-- Right Column: Scan Box & Weekly Movement Chart -->
+          <div class="st__right-col">
+            <!-- Scan Box -->
+            <section aria-label="Scan to look up or receive" class="st__scan-card">
+              <div class="st__card-title-group">
+                <h2>Scan to look up or receive</h2>
+                <span class="st__card-sub">Product barcode, SKU or restock slip</span>
+              </div>
+
+              <label class="st__scan-input-wrap">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M7 12h10"></path></svg>
+                <input
+                  type="text"
+                  id="staff-lookup-input"
+                  aria-label="Scan barcode or type SKU"
+                  placeholder="Scan barcode or type SKU"
                 />
-              ) : (
-                <EmptyState title="No movements in the last 7 days" />
-              )
-            }
+              </label>
+
+              <div class="st__scans-section">
+                <span class="st__scans-label">Recent scans</span>
+                {
+                  recentMovements.length > 0 ? (
+                    <div class="st__scans-list">
+                      {recentMovements.map((s) => (
+                        <div class="st__scan-row">
+                          <span class="st__scan-dot">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
+                          </span>
+                          <span class="st__scan-name">{s.name}</span>
+                          <span class="st__scan-bin">{s.bin}</span>
+                          <span class="st__scan-qty">{s.qty}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div class="st__scans-empty">
+                      <span>No recent scans recorded today</span>
+                    </div>
+                  )
+                }
+              </div>
+            </section>
+
+            <!-- Stock Movements Chart -->
+            <section aria-label="Stock movements this week" class="st__movements-card">
+              <div class="st__movements-head">
+                <div class="st__card-title-group">
+                  <h2>Stock movements this week</h2>
+                  <span class="st__card-sub">Units received vs sold · last 7 days</span>
+                </div>
+                <div class="st__movements-legend">
+                  <span class="st__legend-item"><span class="st__dot st__dot--accent"></span>In {totalIn}</span>
+                  <span class="st__legend-item"><span class="st__dot st__dot--chart2"></span>Out {totalOut}</span>
+                </div>
+              </div>
+
+              <!-- Pure Responsive SVG Bar Chart matching Staff.dc.html -->
+              <div class="st__chart-wrap">
+                <svg width="100%" height="226" viewBox="0 0 322 226" role="img" aria-label={`Units in versus out over last 7 days: ${totalIn} received and ${totalOut} sold.`}>
+                  <!-- Grid lines -->
+                  <g class="st-chart__grid">
+                    <path d="M30 65H322M30 127.5H322"></path>
+                  </g>
+                  <path d="M30 190H322" class="st-chart__axis"></path>
+
+                  <!-- Y-Axis Labels -->
+                  <g font-size="11" class="st-chart__axis-text" text-anchor="end" font-family="Geist, sans-serif">
+                    <text x="22" y="69">{chartMax}</text>
+                    <text x="22" y="131">{chartMid}</text>
+                    <text x="22" y="194">0</text>
+                  </g>
+
+                  <!-- Bars for each day -->
+                  {days.map((d, i) => {
+                    const inVal = inByDay.get(d.key) ?? 0;
+                    const outVal = outByDay.get(d.key) ?? 0;
+                    const inH = chartMax > 0 ? Math.min(150, Math.round((inVal / chartMax) * 150)) : 0;
+                    const outH = chartMax > 0 ? Math.min(150, Math.round((outVal / chartMax) * 150)) : 0;
+                    const baseX = 35.8 + i * 41.7;
+                    const inY = 190 - inH;
+                    const outY = 190 - outH;
+
+                    return (
+                      <g>
+                        {inH > 0 && (
+                          <rect x={baseX} y={inY} width="14" height={inH} rx="3" class="st-chart__bar-in"></rect>
+                        )}
+                        {outH > 0 && (
+                          <rect x={baseX + 16} y={outY} width="14" height={outH} rx="3" class="st-chart__bar-out"></rect>
+                        )}
+                        <text x={baseX + 15} y="210" class="st-chart__axis-text" text-anchor="middle" font-size="11" font-family="Geist, sans-serif">
+                          {d.label}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+            </section>
           </div>
-        </Card>
-      </div>
+        </div>
+      </main>
     </div>
-  </AppShell>
+  </div>
 </BaseLayout>
 
+<style>
+  /* ---------- Shared Design System Shell Tokens ---------- */
+  .sd {
+    --sd-shell: #fafafa;
+    --sd-panel: #ffffff;
+    --sd-card: #ffffff;
+    --sd-fg: #0a0a0a;
+    --sd-fg2: #404040;
+    --sd-muted: #f5f5f5;
+    --sd-muted-fg: #737373;
+    --sd-border: #e5e5e5;
+    --sd-input: #e5e5e5;
+    --sd-grid: #f0f0f0;
+    --sd-primary: #171717;
+    --sd-primary-fg: #fafafa;
+    --sd-success-bg: #ecfdf3;
+    --sd-success-fg: #15803d;
+    --sd-warn-bg: #fef3e2;
+    --sd-warn-fg: #9a3412;
+    --sd-danger-bg: #feecec;
+    --sd-danger-fg: #b91c1c;
+    --sd-info-bg: #eef2ff;
+    --sd-info-fg: #3538cd;
+    --sd-accent: #2b50e0;
+    --sd-accent-soft: rgba(43, 80, 224, 0.10);
+    --sd-chart2: #d9731f;
+    --sd-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    color-scheme: light;
+
+    min-height: 100vh;
+    display: flex;
+    background: var(--sd-shell);
+    color: var(--sd-fg);
+    font-family: "Geist", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd[data-theme="dark"] {
+    --sd-shell: #0a0a0a;
+    --sd-panel: #0f0f0f;
+    --sd-card: #171717;
+    --sd-fg: #fafafa;
+    --sd-fg2: #d4d4d4;
+    --sd-muted: #262626;
+    --sd-muted-fg: #a3a3a3;
+    --sd-border: #262626;
+    --sd-input: #363636;
+    --sd-grid: #232323;
+    --sd-primary: #fafafa;
+    --sd-primary-fg: #171717;
+    --sd-success-bg: #0f2a1c;
+    --sd-success-fg: #4ade80;
+    --sd-warn-bg: #2e1f0e;
+    --sd-warn-fg: #fdba74;
+    --sd-danger-bg: #2d1414;
+    --sd-danger-fg: #f87171;
+    --sd-info-bg: #1e2240;
+    --sd-info-fg: #a5b4fc;
+    --sd-accent: #6b8afb;
+    --sd-accent-soft: rgba(107, 138, 251, 0.16);
+    --sd-chart2: #e8894a;
+    --sd-shadow: none;
+    color-scheme: dark;
+  }
+
+  .sd__backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 20;
+  }
+  .sd__sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  @media (max-width: 1023px) {
+    .sd__sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sd__sidebar.is-open {
+      transform: translateX(0);
+    }
+    .sd__backdrop.is-open {
+      display: block;
+    }
+  }
+  .sd__panel {
+    flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 8px 0;
+    background: var(--sd-panel);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--sd-shadow);
+  }
+  @media (max-width: 1023px) {
+    .sd__panel {
+      margin: 8px;
+    }
+  }
+
+  /* ---------- Main Page Layout ---------- */
+  .st__main {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  @media (max-width: 640px) {
+    .st__main {
+      padding: 16px;
+      gap: 16px;
+    }
+  }
+
+  .st__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .st__header-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__header h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .st__subtitle {
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* ---------- 4 KPI Cards ---------- */
+  .st__kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 1024px) {
+    .st__kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 540px) {
+    .st__kpis {
+      grid-template-columns: 1fr;
+    }
+  }
+  .st__kpi {
+    height: 118px;
+    box-sizing: border-box;
+    padding: 18px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .st__kpi-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .st__kpi-label {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+  .st__kpi-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .st__kpi-bot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .st__kpi-value {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  .st__kpi-sub {
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__kpi-link {
+    font-size: 12px;
+    color: var(--sd-accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .st__kpi-link:hover {
+    text-decoration: underline;
+  }
+
+  /* ---------- Two Columns Layout ---------- */
+  .st__columns {
+    display: flex;
+    gap: 16px;
+    flex-grow: 1;
+    align-items: stretch;
+  }
+  @media (max-width: 1120px) {
+    .st__columns {
+      flex-direction: column;
+    }
+  }
+
+  /* ---------- Left Column: Task Queue Card ---------- */
+  .st__queue-card {
+    flex: 1 1 700px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 18px 0 0;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+  }
+  .st__queue-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px 14px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .st__queue-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .st__filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .st__filter-btn {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    color: var(--sd-fg2);
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .st__filter-btn.is-active {
+    background: var(--sd-fg);
+    color: var(--sd-primary-fg);
+    border-color: var(--sd-fg);
+  }
+
+  /* Table Grid */
+  .st__table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .st__table-head {
+    display: grid;
+    grid-template-columns: 110px 88px 1fr 48px 64px 52px 64px;
+    gap: 8px;
+    padding: 0 20px;
+    height: 34px;
+    align-items: center;
+    background: var(--sd-shell);
+    border-top: 1px solid var(--sd-border);
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+    min-width: 580px;
+  }
+  .st__table-rows {
+    display: flex;
+    flex-direction: column;
+  }
+  .st__table-row {
+    display: grid;
+    grid-template-columns: 110px 88px 1fr 48px 64px 52px 64px;
+    gap: 8px;
+    padding: 0 20px;
+    height: 54px;
+    align-items: center;
+    border-bottom: 1px solid var(--sd-border);
+    font-size: 14px;
+    min-width: 580px;
+  }
+  .st__table-row:last-child {
+    border-bottom: 0;
+  }
+  .st__col-right {
+    text-align: right;
+  }
+  .st__table-ref {
+    font-weight: 500;
+    color: var(--sd-fg);
+  }
+  .st__table-details {
+    color: var(--sd-fg2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .st__table-units {
+    font-weight: 600;
+    color: var(--sd-fg);
+  }
+  .st__table-loc {
+    font-size: 13px;
+    color: var(--sd-fg2);
+  }
+  .st__table-due {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--sd-fg2);
+  }
+  .st__table-due.is-urgent {
+    font-weight: 600;
+    color: var(--sd-danger-fg);
+  }
+  .st__start-btn {
+    height: 34px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--sd-input);
+    background: var(--sd-card);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--sd-fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .st__start-btn:hover {
+    background: var(--sd-muted);
+    border-color: var(--sd-border);
+  }
+  .st__empty-queue {
+    padding: 32px 20px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Badge pills */
+  .st-pill {
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    display: inline-block;
+  }
+  .st-pill--info {
+    background: var(--sd-info-bg);
+    color: var(--sd-info-fg);
+  }
+  .st-pill--success {
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+  }
+  .st-pill--warn {
+    background: var(--sd-warn-bg);
+    color: var(--sd-warn-fg);
+  }
+  .st-pill--danger {
+    background: var(--sd-danger-bg);
+    color: var(--sd-danger-fg);
+  }
+  .st-pill--muted {
+    background: var(--sd-muted);
+    color: var(--sd-fg2);
+  }
+
+  /* ---------- Right Column Cards ---------- */
+  .st__right-col {
+    flex: 1 1 360px;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .st__card-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .st__card-title-group h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .st__card-sub {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Scan Card */
+  .st__scan-card {
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .st__scan-input-wrap {
+    height: 54px;
+    box-sizing: border-box;
+    padding: 0 16px;
+    border: 2px solid var(--sd-accent);
+    border-radius: 8px;
+    background: var(--sd-shell);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--sd-muted-fg);
+    cursor: text;
+  }
+  .st__scan-input-wrap input {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 15px;
+    flex-grow: 1;
+    color: var(--sd-fg);
+  }
+  .st__scans-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .st__scans-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sd-muted-fg);
+  }
+  .st__scans-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .st__scan-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .st__scan-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--sd-success-bg);
+    color: var(--sd-success-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .st__scan-name {
+    flex-grow: 1;
+    color: var(--sd-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .st__scan-bin {
+    color: var(--sd-muted-fg);
+    font-size: 12px;
+  }
+  .st__scan-qty {
+    font-weight: 600;
+    color: var(--sd-fg);
+    font-size: 12px;
+  }
+  .st__scans-empty {
+    font-size: 13px;
+    color: var(--sd-muted-fg);
+  }
+
+  /* Movements Card */
+  .st__movements-card {
+    flex-grow: 1;
+    box-sizing: border-box;
+    padding: 20px;
+    background: var(--sd-card);
+    border: 1px solid var(--sd-border);
+    border-radius: 12px;
+    box-shadow: var(--sd-shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .st__movements-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .st__movements-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--sd-muted-fg);
+  }
+  .st__legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .st__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+  .st__dot--accent {
+    background: var(--sd-accent);
+  }
+  .st__dot--chart2 {
+    background: var(--sd-chart2);
+  }
+
+  /* SVG Chart */
+  .st__chart-wrap {
+    width: 100%;
+    margin-top: 4px;
+  }
+  .st-chart__grid {
+    stroke: var(--sd-grid);
+  }
+  .st-chart__axis {
+    stroke: var(--sd-input);
+  }
+  .st-chart__axis-text {
+    fill: var(--sd-muted-fg);
+  }
+  .st-chart__bar-in {
+    fill: var(--sd-accent);
+  }
+  .st-chart__bar-out {
+    fill: var(--sd-chart2);
+  }
+</style>
+
 <script>
-  // /inventory/stock has real, working ?search= filtering today;
-  // /inventory/products does not (confirmed by reading its source — it
-  // only handles ?created=/?updated=), so both search entry points here
-  // route to stock rather than silently doing nothing on products.
+  // Search action
   const input = document.querySelector<HTMLInputElement>("#staff-lookup-input");
   input?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     const value = input.value.trim();
     if (!value) return;
-    window.location.href = `/inventory/stock?search=${encodeURIComponent(value)}`;
+    window.location.href = `/inventory/products?search=${encodeURIComponent(value)}`;
   });
 
-  const topbarSearch = document.querySelector<HTMLInputElement>('input[aria-label="Search"]');
-  topbarSearch?.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    const value = topbarSearch.value.trim();
-    if (!value) return;
-    window.location.href = `/inventory/stock?search=${encodeURIComponent(value)}`;
+  // --- Theme + sidebar chrome ---
+  const sdRoot = document.getElementById("sd-root");
+  const THEME_KEY = "landing-theme";
+
+  function applySdTheme(theme: "light" | "dark") {
+    if (!sdRoot) return;
+    if (theme === "dark") {
+      sdRoot.setAttribute("data-theme", "dark");
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.body.setAttribute("data-theme", "dark");
+    } else {
+      sdRoot.removeAttribute("data-theme");
+      document.documentElement.removeAttribute("data-theme");
+      document.body.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore — private browsing / storage disabled
+    }
+  }
+
+  let storedSdTheme: string | null = null;
+  try {
+    storedSdTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  if (storedSdTheme === "dark") applySdTheme("dark");
+
+  document.getElementById("sd-theme-toggle")?.addEventListener("click", () => {
+    applySdTheme(sdRoot?.getAttribute("data-theme") === "dark" ? "light" : "dark");
   });
 </script>
